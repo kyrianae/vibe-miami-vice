@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Test nouveaux endpoints backend",
+			"type": "shell",
+			"command": "/home/james/docker/miami-vice/.venv/bin/python tests/python/test_api.py && /home/james/docker/miami-vice/.venv/bin/python tests/schemas/test_schemas.py",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Test nouveaux endpoints backend",
+			"type": "shell",
+			"command": "/home/james/docker/miami-vice/.venv/bin/python tests/python/test_api.py && /home/james/docker/miami-vice/.venv/bin/python tests/schemas/test_schemas.py",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		}
+	]
+}

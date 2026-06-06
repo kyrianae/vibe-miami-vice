@@ -1,0 +1,61 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "personne",
+    "classes": [
+        {
+            "class": "personne_physique",
+            "displayname": "{{prenom}} {{nom}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "prenom",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "role",
+            "displayname": "{{nom}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "membres",
+                    "type": "joint-1-1",
+                    "classes":                    [
+                        "personne_physique"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "groupe",
+            "displayname": "{{nom}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "membres",
+                    "type": "joint-1-n",
+                    "classes":                    [
+                        "personne_physique",
+                        "groupe"
+                    ]
+                }
+            ]
+        }
+    ]
+}

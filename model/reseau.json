@@ -1,0 +1,44 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "element_avec_ip",
+    "classes": [
+        {
+            "class": "addresse_ip",
+            "displayname": "{{adresse_ip}}",
+            "attributes": [
+                {
+                    "domain": "network",
+                    "name": "adresse_ip",
+                    "type": "string",
+                    "constraint": "^(\\d{1,3}\\.){3}\\d{1,3}$",
+                    "sql_constraint": "UNIQUE VALUE"
+                }
+            ]
+        },
+        {
+            "class": "vlan",
+            "displayname": "{{nom}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "network",
+                    "name": "definition",
+                    "type": "string",
+                    "constraint": "(\\d{1,3}\\.){3}\\d{1,3}\\/\\d{1,2}$"
+                },
+                {
+                    "domain": "network",
+                    "name": "membres",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "addresse_ip"
+                    ]
+                }
+            ]
+        }
+    ]
+}

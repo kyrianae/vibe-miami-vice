@@ -1,0 +1,82 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: miami_vice
+      POSTGRES_USER: miami
+      POSTGRES_PASSWORD: vice
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./model:/docker-entrypoint-initdb.d/model
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U miami -d miami_vice"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://miami:vice@db:5432/miami_vice
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./model:/model
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  # ldap:
+  #   image: osixia/openldap:1.5.0
+  #   environment:
+  #     LDAP_ORGANISATION: "Miami Vice"
+  #     LDAP_DOMAIN: "miami-vice.local"
+  #     LDAP_ADMIN_PASSWORD: "admin"
+  #   ports:
+  #     - "389:389"
+  #     - "636:636"
+  #   volumes:
+  #     - ldapdata:/var/lib/ldap
+  #     - ldapconfig:/etc/ldap/slapd.d
+  #     - ./ldap/init.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/init.ldif
+  #   command: --copy-service
+
+  # lam:
+  #   image: ldapaccountmanager/lam:stable
+  #   ports:
+  #     - "8080:80"
+  #   environment:
+  #     LAM_SKIP_PRECONFIGURE: "false"
+  #     LDAP_SERVER: ldap://ldap:389
+  #     LDAP_DOMAIN: miami-vice.local
+  #     LDAP_BASE_DN: dc=miami-vice,dc=local
+  #     ADMIN_USER: cn=admin,dc=miami-vice,dc=local
+  #     LAM_LANG: fr_FR
+  #     LAM_PASSWORD: lam
+  #   depends_on:
+  #     - ldap
+
+volumes:
+  pgdata:
+  ldapdata:
+  ldapconfig:

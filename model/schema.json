@@ -1,0 +1,74 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "required": ["meta_class", "classes"],
+    "properties": {
+        "meta_class": {
+            "type": "string",
+            "description": "Nom de la meta-classe regroupant les classes"
+        },
+        "classes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["class", "attributes"],
+                "properties": {
+                    "class": {
+                        "type": "string",
+                        "description": "Nom de la classe"
+                    },
+                    "displayname": {
+                        "type": "string",
+                        "description": "Template d'affichage de l'objet avec {{attribut}}. Si vide, concaténation des attributs du domaine 'details' séparés par des espaces."
+                    },
+                    "attributes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["domain", "name", "type"],
+                            "properties": {
+                                "domain": {
+                                    "type": "string",
+                                    "description": "Domaine de l'attribut"
+                                },
+                                "name": {
+                                    "type": "string",
+                                    "description": "Nom de l'attribut"
+                                },
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["string", "integer", "float", "joint-1-1", "joint-1-n"],
+                                    "description": "Type de la valeur de l'attribut (joint-1-1 pour liaison 1:1, joint-1-n pour liaison 1:N)"
+                                },
+                                "classes": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "description": "Classes cibles autorisées pour une jointure (requis si type = joint)"
+                                },
+                                "constraint": {
+                                    "type": "string",
+                                    "description": "Expression régulière de validation (uniquement pour type = string)"
+                                },
+                                "sql_constraint": {
+                                    "type": "string",
+                                    "description": "Contrainte SQL supplémentaire appliquée à l'attribut"
+                                }
+                            },
+                            "additionalProperties": false,
+                            "if": {
+                                "properties": { "type": { "enum": ["joint-1-1", "joint-1-n"] } }
+                            },
+                            "then": {
+                                "required": ["classes"]
+                            }
+                        }
+                    }
+                },
+                "additionalProperties": false
+            }
+        }
+    },
+    "additionalProperties": false
+}

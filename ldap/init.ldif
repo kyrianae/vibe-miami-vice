@@ -1,0 +1,38 @@
+dn: ou=users,dc=miami-vice,dc=local
+objectClass: organizationalUnit
+ou: users
+
+dn: ou=groups,dc=miami-vice,dc=local
+objectClass: organizationalUnit
+ou: groups
+
+dn: uid=admin,ou=users,dc=miami-vice,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: admin
+cn: Admin
+sn: Admin
+userPassword: admin
+mail: admin@miami-vice.local
+
+dn: uid=user,ou=users,dc=miami-vice,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: user
+cn: User
+sn: User
+userPassword: user
+mail: user@miami-vice.local
+
+dn: cn=miami-admins,ou=groups,dc=miami-vice,dc=local
+objectClass: groupOfNames
+cn: miami-admins
+member: uid=admin,ou=users,dc=miami-vice,dc=local
+
+dn: cn=miami-users,ou=groups,dc=miami-vice,dc=local
+objectClass: groupOfNames
+cn: miami-users
+member: uid=admin,ou=users,dc=miami-vice,dc=local
+member: uid=user,ou=users,dc=miami-vice,dc=local
