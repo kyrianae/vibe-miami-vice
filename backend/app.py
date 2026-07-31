@@ -2,7 +2,7 @@ import os
 import json
 import psycopg2
 import psycopg2.extras
-from flask import Flask, jsonify, request, abort
+from flask import Flask, jsonify, request, abort, g
 
 app = Flask(__name__)
 
@@ -11,9 +11,18 @@ SCHEMA_PATH = os.environ.get("SCHEMA_PATH", "/model/schema.json")
 
 
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = False
-    return conn
+    """Ouvre une nouvelle connexion à la base de données si aucune n'existe pour le contexte actuel."""
+    if 'db' not in g:
+        g.db = psycopg2.connect(DATABASE_URL)
+        g.db.autocommit = False
+    return g.db
+
+@app.teardown_appcontext
+def close_db(e=None):
+    """Ferme la connexion à la base de données à la fin de la requête."""
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
 
 
 def load_schema():
@@ -29,10 +38,9 @@ def load_schema():
 def list_classes():
     """Liste toutes les classes définies."""
     conn = get_db()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT id, meta_class, data FROM definition ORDER BY meta_class")
-            rows = cur.fetchall()
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT id, meta_class, data FROM definition ORDER BY meta_class")
+        rows = cur.fetchall()
 
         classes = []
         for row in rows:
@@ -44,31 +52,24 @@ def list_classes():
                     "attributes": cls["attributes"]
                 })
         return jsonify(classes)
-    finally:
-        conn.close()
 
 
 @app.route("/api/read/meta_class", methods=["GET"])
 def list_meta_classes():
     """Liste toutes les meta-classes."""
     conn = get_db()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT id, meta_class FROM definition ORDER BY meta_class")
-            rows = cur.fetchall()
-        return jsonify([{"id": r["id"], "meta_class": r["meta_class"]} for r in rows])
-    finally:
-        conn.close()
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT id, meta_class FROM definition ORDER BY meta_class")
+        rows = cur.fetchall()
+    return jsonify([{"id": r["id"], "meta_class": r["meta_class"]} for r in rows])
 
 
 @app.route("/api/read/class/<int:class_id>", methods=["GET"])
 def get_class_by_id(class_id):
     """Récupère une classe par son ID (index global parmi toutes les classes)."""
-    conn = get_db()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT id, meta_class, data FROM definition ORDER BY meta_class")
-            rows = cur.fetchall()
+    with get_db().cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT id, meta_class, data FROM definition ORDER BY meta_class")
+        rows = cur.fetchall()
 
         index = 0
         for row in rows:
@@ -83,17 +84,13 @@ def get_class_by_id(class_id):
                         "attributes": cls["attributes"]
                     })
         abort(404, description="Classe non trouvée")
-    finally:
-        conn.close()
 
 
 @app.route("/api/read/<string:meta_class>", methods=["GET"])
 def get_classes_by_meta_class(meta_class):
     """Récupère toutes les classes d'une meta-classe."""
-    conn = get_db()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
+    with get_db().cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
                 "SELECT id, meta_class, data FROM definition WHERE meta_class = %s",
                 (meta_class,)
             )
@@ -110,34 +107,27 @@ def get_classes_by_meta_class(meta_class):
                 "attributes": cls["attributes"]
             })
         return jsonify({"meta_class": row["meta_class"], "classes": classes})
-    finally:
-        conn.close()
 
 
 @app.route("/api/read/objects", methods=["GET"])
 def list_objects():
     """Liste tous les objets sans leurs attributs."""
-    conn = get_db()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT id, meta_class, class FROM object ORDER BY id")
-            rows = cur.fetchall()
-        return jsonify(rows)
-    finally:
-        conn.close()
+    with get_db().cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT id, meta_class, class FROM object ORDER BY id")
+        rows = cur.fetchall()
+    return jsonify(rows)
 
 
 @app.route("/api/read/object/<int:object_id>", methods=["GET"])
 def get_object_by_id(object_id):
     """Récupère un objet avec tous ses attributs et valeurs."""
     conn = get_db()
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT id, meta_class, class FROM object WHERE id = %s", (object_id,))
-            obj = cur.fetchone()
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT id, meta_class, class FROM object WHERE id = %s", (object_id,))
+        obj = cur.fetchone()
 
-        if not obj:
-            abort(404, description="Objet non trouvé")
+    if not obj:
+        abort(404, description="Objet non trouvé")
 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
@@ -173,8 +163,6 @@ def get_object_by_id(object_id):
 
         obj["attributes"] = list(attributes.values())
         return jsonify(obj)
-    finally:
-        conn.close()
 
 
 # ---------------------
@@ -203,17 +191,17 @@ def write_object():
 
     conn = get_db()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur: # RealDictCursor pour la lecture
             # Chercher la définition de la classe
             cur.execute("SELECT data FROM definition WHERE meta_class = %s", (body["meta_class"],))
             defn = cur.fetchone()
 
-        class_def = None
-        if defn:
-            for cls in defn["data"].get("classes", []):
-                if cls["class"] == body["class"]:
-                    class_def = cls
-                    break
+            class_def = None
+            if defn:
+                for cls in defn["data"].get("classes", []):
+                    if cls["class"] == body["class"]:
+                        class_def = cls
+                        break
 
         object_id = body.get("id")
 
@@ -271,11 +259,9 @@ def write_object():
         conn.commit()
         action = "updated" if body.get("id") else "created"
         return jsonify({"status": "ok", "id": object_id, "action": action}), 200 if action == "updated" else 201
-    except Exception:
+    except Exception as e:
         conn.rollback()
-        raise
-    finally:
-        conn.close()
+        raise e
 
 
 def _insert_value(cur, attribute_id, value):
@@ -310,15 +296,15 @@ def write_attribute_value(cls, object_id, attribute, value):
     """
     conn = get_db()
     try:
-        # Vérifier que l'objet existe et correspond à la classe
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # Vérifier que l'objet existe et correspond à la classe
             cur.execute("SELECT id, class FROM object WHERE id = %s", (object_id,))
             obj = cur.fetchone()
 
-        if not obj:
-            abort(404, description="Objet non trouvé")
-        if obj["class"] != cls:
-            abort(400, description=f"L'objet {object_id} n'est pas de classe '{cls}'")
+            if not obj:
+                abort(404, description="Objet non trouvé")
+            if obj["class"] != cls:
+                abort(400, description=f"L'objet {object_id} n'est pas de classe '{cls}'")
 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # Chercher l'attribut existant
@@ -376,11 +362,9 @@ def write_attribute_value(cls, object_id, attribute, value):
 
         conn.commit()
         return jsonify({"status": "ok", "object_id": object_id, "attribute": attribute, "value": value})
-    except Exception:
+    except Exception as e:
         conn.rollback()
-        raise
-    finally:
-        conn.close()
+        raise e
 
 @app.route("/api/write/class", methods=["POST"])
 def write_class():
@@ -407,15 +391,15 @@ def write_class():
 
     conn = get_db()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur: # RealDictCursor pour la lecture
             cur.execute(
                 "SELECT id, data FROM definition WHERE meta_class = %s",
                 (meta_class_name,)
             )
             row = cur.fetchone()
 
-        if not row:
-            abort(404, description=f"Meta-classe '{meta_class_name}' non trouvée. Créez-la d'abord avec /api/write/metaclass")
+            if not row:
+                abort(404, description=f"Meta-classe '{meta_class_name}' non trouvée. Créez-la d'abord avec /api/write/metaclass")
 
         data = row["data"]
         # Remplacer si la classe existe déjà, sinon ajouter
@@ -439,11 +423,9 @@ def write_class():
         conn.commit()
 
         return jsonify({"status": "ok", "action": "updated" if replaced else "created", "class": new_class["class"]}), 200 if replaced else 201
-    except Exception:
+    except Exception as e:
         conn.rollback()
-        raise
-    finally:
-        conn.close()
+        raise e
 
 
 @app.route("/api/write/metaclass", methods=["POST"])
@@ -465,7 +447,7 @@ def write_metaclass():
 
     conn = get_db()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur: # RealDictCursor pour la lecture
             cur.execute(
                 "SELECT id FROM definition WHERE meta_class = %s",
                 (meta_class_name,)
@@ -488,11 +470,9 @@ def write_metaclass():
         conn.commit()
 
         return jsonify({"status": "ok", "action": action, "meta_class": meta_class_name}), 200 if action == "updated" else 201
-    except Exception:
+    except Exception as e:
         conn.rollback()
-        raise
-    finally:
-        conn.close()
+        raise e
 
 
 # ---------------------
@@ -507,33 +487,31 @@ def init_from_model_files():
 
     conn = get_db()
     try:
-        for filename in os.listdir(model_dir):
-            if filename.endswith(".json") and filename != "schema.json":
-                filepath = os.path.join(model_dir, filename)
-                with open(filepath) as f:
-                    data = json.load(f)
+        with conn.cursor() as cur:
+            for filename in os.listdir(model_dir):
+                if filename.endswith(".json") and filename != "schema.json":
+                    filepath = os.path.join(model_dir, filename)
+                    with open(filepath) as f:
+                        data = json.load(f)
 
-                if "meta_class" not in data or "classes" not in data:
-                    continue
+                    if "meta_class" not in data or "classes" not in data:
+                        continue
 
-                meta_class_name = data["meta_class"]
-                store_data = {"meta_class": meta_class_name, "classes": data["classes"]}
+                    meta_class_name = data["meta_class"]
+                    store_data = {"meta_class": meta_class_name, "classes": data["classes"]}
 
-                with conn.cursor() as cur:
                     cur.execute(
-                        """INSERT INTO definition (meta_class, data) VALUES (%s, %s)
-                           ON CONFLICT (meta_class) DO UPDATE SET data = EXCLUDED.data""",
-                        (meta_class_name, json.dumps(store_data))
-                    )
-                loaded.append(meta_class_name)
+                            """INSERT INTO definition (meta_class, data) VALUES (%s, %s)
+                               ON CONFLICT (meta_class) DO UPDATE SET data = EXCLUDED.data""",
+                            (meta_class_name, json.dumps(store_data))
+                        )
+                    loaded.append(meta_class_name)
 
         conn.commit()
         return jsonify({"status": "ok", "loaded": loaded})
-    except Exception:
+    except Exception as e:
         conn.rollback()
-        raise
-    finally:
-        conn.close()
+        raise e
 
 
 if __name__ == "__main__":
