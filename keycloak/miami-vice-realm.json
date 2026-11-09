@@ -1,0 +1,65 @@
+{
+  "realm": "miami-vice",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "accessTokenLifespan": 1800,
+  "bruteForceProtected": true,
+  "clients": [
+    {
+      "clientId": "miami-vice-service",
+      "name": "Miami Vice - compte de service (automatisation)",
+      "description": "Client confidentiel client_credentials, pour scripts/purge (action 6.2) et intégrations serveur à serveur. Pas d'utilisateur humain.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "miami-vice-service-secret-dev",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "fullScopeAllowed": true
+    },
+    {
+      "clientId": "miami-vice-direct",
+      "name": "Miami Vice - login direct (frontend)",
+      "description": "Client public, Direct Access Grants (Resource Owner Password Credentials) pour le formulaire de login du frontend tant qu'il n'y a pas de routeur pour un flux Authorization Code.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "fullScopeAllowed": true
+    }
+  ],
+  "users": [
+    {
+      "username": "testuser",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "testuser@miami-vice.local",
+      "firstName": "Test",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "testuser123",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

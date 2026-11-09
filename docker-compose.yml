@@ -11,6 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./sql/00-keycloak-db.sql:/docker-entrypoint-initdb.d/00-keycloak-db.sql
       - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql
       - ./model:/docker-entrypoint-initdb.d/model
     healthcheck:
@@ -18,6 +19,46 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      # Réutilise les identifiants Postgres déjà présents (miami/vice) :
+      # la base "keycloak" leur appartient (créée par
+      # sql/00-keycloak-db.sql), ce qui évite un rôle dédié pour ce premier
+      # passage dev. À durcir (rôle Keycloak séparé, secrets non versionnés)
+      # avant tout usage hors développement.
+      KC_DB_USERNAME: miami
+      KC_DB_PASSWORD: vice
+      # Hostname fixé explicitement (pas de mode "request based") : le
+      # navigateur appelle Keycloak via http://localhost:8080 (port publié
+      # sur l'hôte), tandis que le backend l'appelle via l'URL interne
+      # Docker http://keycloak:8080 pour récupérer les clés JWKS. Sans
+      # KC_HOSTNAME fixé, l'émetteur ("iss") des tokens dépendrait du Host
+      # vu par Keycloak au moment de la requête (localhost:8080 depuis le
+      # navigateur) et serait incohérent avec un éventuel appel interne
+      # (client_credentials futur depuis le backend via keycloak:8080) :
+      # fixer KC_HOSTNAME garantit un "iss" unique et stable
+      # (http://localhost:8080/realms/miami-vice), quelle que soit l'origine
+      # de la requête. KC_HOSTNAME_STRICT=false est nécessaire pour que
+      # Keycloak accepte quand même les requêtes dont l'en-tête Host ne
+      # correspond pas à KC_HOSTNAME (cas du backend qui appelle via
+      # "keycloak:8080", pas "localhost:8080").
+      KC_HOSTNAME: "http://localhost:8080"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./keycloak/miami-vice-realm.json:/opt/keycloak/data/import/miami-vice-realm.json
 
   backend:
     build:
@@ -27,6 +68,8 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://miami:vice@db:5432/miami_vice
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/miami-vice
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/miami-vice/protocol/openid-connect/certs
     depends_on:
       db:
         condition: service_healthy

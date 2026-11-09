@@ -2,12 +2,105 @@ import os
 import json
 import psycopg2
 import psycopg2.extras
+import jwt
+from jwt import PyJWKClient
 from flask import Flask, jsonify, request, abort, g
 
 app = Flask(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://miami:vice@localhost:5432/miami_vice")
 SCHEMA_PATH = os.environ.get("SCHEMA_PATH", "/model/schema.json")
+MAX_DEPTH = 5
+
+# ---------------------
+# Authentification (Keycloak) — voir plan.md action 7, doc/choix-authent.md
+# ---------------------
+#
+# ATTENTION, point de vigilance explicite : les rôles/groupes Keycloak
+# vérifiés ici ne servent qu'à l'authentification/autorisation d'accès à
+# l'API (qui a le droit d'écrire). Ils ne doivent JAMAIS être confondus
+# avec les classes métier "role"/"groupe" du modèle applicatif
+# (model/personnes.json), qui sont des objets métier ordinaires, éditables
+# librement via l'UI générique (POST /api/write/object) et n'ont aucun
+# rapport avec les droits d'accès à cette API.
+
+KEYCLOAK_ISSUER = os.environ.get("KEYCLOAK_ISSUER", "http://localhost:8080/realms/miami-vice")
+KEYCLOAK_JWKS_URL = os.environ.get(
+    "KEYCLOAK_JWKS_URL",
+    "http://keycloak:8080/realms/miami-vice/protocol/openid-connect/certs",
+)
+
+# PyJWKClient gère nativement le cache + TTL (5 minutes par défaut) du jeu
+# de clés JWKS, et ne refait un appel réseau que si le cache a expiré ou si
+# le "kid" du token n'est pas (encore) dans le cache courant — jamais un
+# appel réseau systématique à chaque requête protégée. Important ici : le
+# backend tourne avec un seul worker Gunicorn synchrone (voir
+# backend/Dockerfile), donc ce cache réduit très fortement (sans
+# l'éliminer) le risque de blocage du worker sur un appel JWKS : un
+# rafraîchissement du cache expiré (TTL dépassé) ou un "kid" inconnu peut
+# encore déclencher, à ce moment précis, un appel réseau bloquant vers
+# Keycloak si celui-ci est lent ou indisponible — rare en pratique, mais
+# pas impossible.
+_jwk_client = None
+
+
+def get_jwk_client():
+    global _jwk_client
+    if _jwk_client is None:
+        _jwk_client = PyJWKClient(KEYCLOAK_JWKS_URL, cache_jwk_set=True, lifespan=300)
+    return _jwk_client
+
+
+# Routes mutantes à protéger, listées explicitement (pas un simple
+# startswith('/api/write') qui oublierait /api/init et la future
+# /api/purge de l'action 6.2, cf. plan.md action 7).
+_PROTECTED_PREFIXES = ("/api/write/", "/api/delete/")
+_PROTECTED_EXACT_PATHS = ("/api/init", "/api/purge")
+
+
+def _requires_auth(path):
+    return path.startswith(_PROTECTED_PREFIXES) or path in _PROTECTED_EXACT_PATHS
+
+
+@app.before_request
+def require_auth():
+    """Protège les routes d'écriture/suppression avec un Bearer JWT Keycloak.
+
+    Les routes /api/read/* restent entièrement ouvertes (pas de contrôle).
+    """
+    if not _requires_auth(request.path):
+        return
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        abort(401, description="Authentification requise (en-tête 'Authorization: Bearer <token>' manquant)")
+
+    token = auth_header[len("Bearer "):].strip()
+    try:
+        signing_key = get_jwk_client().get_signing_key_from_jwt(token)
+        claims = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            issuer=KEYCLOAK_ISSUER,
+            # Pas de vérification stricte de "aud" : par défaut, Keycloak
+            # n'ajoute pas automatiquement l'audience du client appelant
+            # dans les tokens émis (il faudrait un protocol mapper dédié,
+            # non configuré dans ce premier passage, cf. rapport du worker
+            # pour ce choix). On vérifie à la place "azp" (authorized
+            # party, toujours présent) contre les clients applicatifs
+            # connus, ce qui donne une garantie équivalente ici.
+            options={"verify_aud": False},
+        )
+    except jwt.PyJWTError as e:
+        abort(401, description=f"Token invalide ou expiré : {e}")
+    except jwt.PyJWKClientError as e:
+        abort(401, description=f"Impossible de vérifier le token (JWKS Keycloak injoignable ou kid inconnu) : {e}")
+
+    if claims.get("azp") not in ("miami-vice-direct", "miami-vice-service"):
+        abort(401, description="Token émis pour un client inattendu")
+
+    g.auth_claims = claims
 
 
 def get_db():
@@ -49,6 +142,7 @@ def list_classes():
                 classes.append({
                     "meta_class": row["meta_class"],
                     "class": cls["class"],
+                    "displayname": cls.get("displayname"),
                     "attributes": cls["attributes"]
                 })
         return jsonify(classes)
@@ -81,6 +175,7 @@ def get_class_by_id(class_id):
                         "id": index,
                         "meta_class": row["meta_class"],
                         "class": cls["class"],
+                        "displayname": cls.get("displayname"),
                         "attributes": cls["attributes"]
                     })
         abort(404, description="Classe non trouvée")
@@ -94,7 +189,7 @@ def get_classes_by_meta_class(meta_class):
                 "SELECT id, meta_class, data FROM definition WHERE meta_class = %s",
                 (meta_class,)
             )
-            row = cur.fetchone()
+        row = cur.fetchone()
 
         if not row:
             abort(404, description=f"Meta-classe '{meta_class}' non trouvée")
@@ -104,6 +199,7 @@ def get_classes_by_meta_class(meta_class):
         for cls in data.get("classes", []):
             classes.append({
                 "class": cls["class"],
+                "displayname": cls.get("displayname"),
                 "attributes": cls["attributes"]
             })
         return jsonify({"meta_class": row["meta_class"], "classes": classes})
@@ -118,51 +214,133 @@ def list_objects():
     return jsonify(rows)
 
 
-@app.route("/api/read/object/<int:object_id>", methods=["GET"])
-def get_object_by_id(object_id):
-    """Récupère un objet avec tous ses attributs et valeurs."""
-    conn = get_db()
+def _build_object_payload(object_id, conn):
+    """Construit le dict {id, meta_class, class, attributes} d'un objet.
+
+    Retourne None si l'objet n'existe pas (pas d'abort ici : c'est à
+    l'appelant de décider comment traiter une absence, notamment pour une
+    jointure résolue en profondeur, où « non trouvé » ne doit pas être une
+    erreur HTTP).
+    """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SELECT id, meta_class, class FROM object WHERE id = %s", (object_id,))
         obj = cur.fetchone()
 
     if not obj:
+        return None
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("""
+            SELECT a.id AS attribute_id, a.domain, a.name,
+                   av.id AS value_id, av.value_integer, av.value_float, av.value_string, av.joint_id
+            FROM attribute a
+            LEFT JOIN attribute_value av ON av.attribute_id = a.id
+            WHERE a.object_id = %s
+            ORDER BY a.id, av.id
+        """, (object_id,))
+        attr_rows = cur.fetchall()
+
+    attributes = {}
+    for row in attr_rows:
+        attr_key = row["attribute_id"]
+        if attr_key not in attributes:
+            attributes[attr_key] = {
+                "domain": row["domain"],
+                "name": row["name"],
+                "values": []
+            }
+        if row["value_id"] is not None:
+            value = None
+            if row["value_integer"] is not None:
+                value = row["value_integer"]
+            elif row["value_float"] is not None:
+                value = row["value_float"]
+            elif row["value_string"] is not None:
+                value = row["value_string"]
+            elif row["joint_id"] is not None:
+                value = {"joint_id": row["joint_id"]}
+            attributes[attr_key]["values"].append(value)
+
+    obj["attributes"] = list(attributes.values())
+    return obj
+
+
+@app.route("/api/read/object/<int:object_id>", methods=["GET"])
+def get_object_by_id(object_id):
+    """Récupère un objet avec tous ses attributs et valeurs.
+
+    Paramètres de requête optionnels :
+    - deref=1|true|True : active la résolution récursive des jointures
+      (clé "resolved" ajoutée à côté de "joint_id" dans les attributs).
+    - depth : profondeur de résolution (entier entre 0 et MAX_DEPTH),
+      ignoré si deref n'est pas actif. Défaut 1 si deref actif sans depth.
+    """
+    conn = get_db()
+    obj = _build_object_payload(object_id, conn)
+
+    if not obj:
         abort(404, description="Objet non trouvé")
 
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-                SELECT a.id AS attribute_id, a.domain, a.name,
-                       av.id AS value_id, av.value_integer, av.value_float, av.value_string, av.joint_id
-                FROM attribute a
-                LEFT JOIN attribute_value av ON av.attribute_id = a.id
-                WHERE a.object_id = %s
-                ORDER BY a.id, av.id
-            """, (object_id,))
-            attr_rows = cur.fetchall()
-
-        attributes = {}
-        for row in attr_rows:
-            attr_key = row["attribute_id"]
-            if attr_key not in attributes:
-                attributes[attr_key] = {
-                    "domain": row["domain"],
-                    "name": row["name"],
-                    "values": []
-                }
-            if row["value_id"] is not None:
-                value = None
-                if row["value_integer"] is not None:
-                    value = row["value_integer"]
-                elif row["value_float"] is not None:
-                    value = row["value_float"]
-                elif row["value_string"] is not None:
-                    value = row["value_string"]
-                elif row["joint_id"] is not None:
-                    value = {"joint_id": row["joint_id"]}
-                attributes[attr_key]["values"].append(value)
-
-        obj["attributes"] = list(attributes.values())
+    deref = request.args.get('deref') in ('1', 'true', 'True')
+    if not deref:
         return jsonify(obj)
+
+    depth_param = request.args.get('depth')
+    if depth_param is None:
+        depth = 1
+    else:
+        try:
+            depth = int(depth_param)
+        except ValueError:
+            abort(400, description=f"depth doit être un entier entre 0 et {MAX_DEPTH}")
+        if depth < 0 or depth > MAX_DEPTH:
+            abort(400, description=f"depth doit être un entier entre 0 et {MAX_DEPTH}")
+
+    cache = {object_id: obj}
+    in_progress = {object_id}
+
+    def resolve_attributes(payload, remaining_depth):
+        for attr in payload["attributes"]:
+            attr["values"] = [
+                _resolve_joint_value(v, remaining_depth) if isinstance(v, dict) and "joint_id" in v else v
+                for v in attr["values"]
+            ]
+
+    def _resolve_joint_value(v, remaining_depth):
+        # Compromis assumé : le cache {object_id: payload} est partagé entre
+        # toutes les branches de résolution, sans tenir compte de la
+        # remaining_depth utilisée au moment où l'objet a été mis en cache.
+        # Un objet caché via une branche à faible profondeur restante sera
+        # réutilisé tel quel (résolution potentiellement partielle) pour une
+        # autre branche qui aurait eu droit à une profondeur plus grande,
+        # sans aucun flag "truncated" pour signaler cette troncature
+        # silencieuse. Ce choix évite de recalculer la résolution et garantit
+        # l'absence de boucle infinie ; ce n'est pas un bug.
+        joint_id = v["joint_id"]
+
+        if joint_id in in_progress:
+            return {"joint_id": joint_id, "cycle": True}
+
+        if remaining_depth <= 0:
+            return {"joint_id": joint_id}
+
+        if joint_id in cache:
+            return {"joint_id": joint_id, "resolved": cache[joint_id]}
+
+        in_progress.add(joint_id)
+        try:
+            target = _build_object_payload(joint_id, conn)
+            if target is None:
+                return {"joint_id": joint_id}
+            resolve_attributes(target, remaining_depth - 1)
+            cache[joint_id] = target
+        finally:
+            in_progress.discard(joint_id)
+
+        return {"joint_id": joint_id, "resolved": target}
+
+    resolve_attributes(obj, depth)
+    return jsonify(obj)
 
 
 # ---------------------

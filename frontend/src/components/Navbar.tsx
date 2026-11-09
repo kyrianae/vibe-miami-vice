@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import { apiLogin, getAuthToken, setAuthToken } from '../api';
+
 type Theme = 'dark' | 'midnight' | 'light';
 
 const THEME_LABELS: Record<Theme, string> = {
@@ -16,6 +19,30 @@ interface NavbarProps {
 }
 
 export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly, theme, onThemeChange }: NavbarProps) {
+  const [loggedIn, setLoggedIn] = useState<boolean>(() => !!getAuthToken());
+  const [showLogin, setShowLogin] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      await apiLogin(username, password);
+      setLoggedIn(true);
+      setShowLogin(false);
+      setPassword('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur de connexion');
+    }
+  };
+
+  const handleLogout = () => {
+    setAuthToken(null);
+    setLoggedIn(false);
+  };
+
   return (
     <nav className="navbar">
       <h1>Miami Vice</h1>
@@ -53,6 +80,47 @@ export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly,
           <div className="rw-thumb" />
         </div>
         <span className={`rw-label ${!readOnly ? 'rw-active' : ''}`}>RW</span>
+      </div>
+      <div className="auth-box" style={{ position: 'relative' }}>
+        {loggedIn ? (
+          <button onClick={handleLogout}>Déconnexion</button>
+        ) : (
+          <button onClick={() => setShowLogin((v) => !v)}>Connexion</button>
+        )}
+        {showLogin && !loggedIn && (
+          <form
+            onSubmit={handleLogin}
+            style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              background: 'var(--bg-secondary, #222)',
+              padding: '0.75rem',
+              borderRadius: '4px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.5rem',
+              zIndex: 10,
+              minWidth: '200px',
+            }}
+          >
+            <input
+              type="text"
+              placeholder="Utilisateur"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoFocus
+            />
+            <input
+              type="password"
+              placeholder="Mot de passe"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button type="submit">Se connecter</button>
+            {error && <span style={{ color: 'red', fontSize: '0.85em' }}>{error}</span>}
+          </form>
+        )}
       </div>
     </nav>
   );
