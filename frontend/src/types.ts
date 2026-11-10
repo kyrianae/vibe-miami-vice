@@ -12,6 +12,10 @@ export interface AttributeDefinition {
 export interface ClassDefinition {
   class: string;
   displayname?: string;
+  // RBAC multi-tenant (plan.md action 11) : tenants autorisés à utiliser
+  // cette classe (noms de groupes Keycloak, sans '/'). Absent/vide =
+  // utilisable dans tous les tenants.
+  tenants?: string[];
   attributes: AttributeDefinition[];
 }
 
@@ -29,6 +33,7 @@ export interface ClassInfo {
   meta_class: string;
   class: string;
   displayname?: string;
+  tenants?: string[];
   attributes: AttributeDefinition[];
 }
 
@@ -36,6 +41,10 @@ export interface ObjectSummary {
   id: number;
   meta_class: string;
   class: string;
+  // RBAC multi-tenant (plan.md action 11.1) : liste de tenants (noms de
+  // groupes Keycloak, sans '/'). Absente/vide = objet hors tenant,
+  // visible/éditable depuis tous les tenants.
+  tenants?: string[];
 }
 
 export interface AttributeValue {

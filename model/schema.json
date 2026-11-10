@@ -21,6 +21,13 @@
                         "type": "string",
                         "description": "Template d'affichage de l'objet avec {{attribut}}. Si vide, concaténation des attributs du domaine 'details' séparés par des espaces."
                     },
+                    "tenants": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "RBAC multi-tenant (plan.md action 11) : tenants (noms de groupes Keycloak, sans '/') autorisés à utiliser/éditer cette classe. Absent ou vide = utilisable dans tous les tenants."
+                    },
                     "attributes": {
                         "type": "array",
                         "items": {

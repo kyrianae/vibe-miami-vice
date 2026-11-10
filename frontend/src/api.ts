@@ -22,8 +22,21 @@ export function setAuthToken(token: string | null): void {
   }
 }
 
+// Attache systématiquement l'en-tête Authorization: Bearer <token> (depuis
+// le localStorage) quand un token est présent, y compris pour les routes de
+// lecture : action 7 ne l'exigeait que pour les écritures (protégées côté
+// backend), mais action 11 (RBAC multi-tenant) en a besoin aussi en lecture
+// pour que le backend puisse filtrer les objets par tenant quand l'identité
+// de l'appelant est connue. Les routes /api/read/* restent ouvertes côté
+// backend (pas de 401 si le token est absent) : attacher ce header ne
+// change donc rien pour un visiteur non connecté.
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const token = getAuthToken();
+  const headers = new Headers(init?.headers);
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const res = await fetch(url, { ...init, headers });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`${res.status}: ${body}`);
@@ -31,19 +44,12 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-// Mêmes requêtes que fetchJson, avec l'en-tête Authorization: Bearer
-// <token> injecté depuis le localStorage - utilisé uniquement par les
-// appels d'écriture (POST/PUT/DELETE), protégés côté backend (plan.md
-// action 7). Les routes /api/read/* restent ouvertes, pas besoin de ce
-// helper pour elles.
-async function fetchJsonAuth<T>(url: string, init?: RequestInit): Promise<T> {
-  const token = getAuthToken();
-  const headers = new Headers(init?.headers);
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  return fetchJson<T>(url, { ...init, headers });
-}
+// Alias historique : les routes d'écriture utilisaient un helper dédié pour
+// attacher le Bearer ; fetchJson le fait désormais pour toutes les requêtes
+// (voir commentaire ci-dessus), donc fetchJsonAuth n'est plus qu'un simple
+// alias, conservé pour ne pas renommer tous les appels existants et garder
+// la distinction sémantique "cet appel nécessite d'être authentifié".
+const fetchJsonAuth = fetchJson;
 
 // READ - Definitions
 export const apiReadMetaClasses = () =>
@@ -87,8 +93,8 @@ export const apiWriteClass = (metaClass: string, cls: { class: string; attribute
   );
 
 // WRITE - Objects
-export const apiWriteObject = (data: { id?: number; meta_class: string; class: string; attributes: Record<string, unknown> }) =>
-  fetchJsonAuth<{ status: string; id: number }>(
+export const apiWriteObject = (data: { id?: number; meta_class: string; class: string; attributes: Record<string, unknown>; tenants?: string[] | null }) =>
+  fetchJsonAuth<{ status: string; id: number; tenants?: string[] }>(
     `${BASE}/write/object`,
     {
       method: 'POST',

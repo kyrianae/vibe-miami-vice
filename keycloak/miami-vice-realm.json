@@ -6,6 +6,30 @@
   "resetPasswordAllowed": false,
   "accessTokenLifespan": 1800,
   "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "global-admin",
+        "description": "RBAC multi-tenant (plan.md action 11) : accès complet, tous tenants, lecture/écriture/schéma sans restriction."
+      },
+      {
+        "name": "tenant-admin",
+        "description": "RBAC multi-tenant (plan.md action 11) : lecture/écriture restreinte au(x) tenant(s) de l'utilisateur (groupes Keycloak) + aux objets/classes non tenantés (globaux)."
+      },
+      {
+        "name": "tenant-readonly",
+        "description": "RBAC multi-tenant (plan.md action 11) : lecture seule restreinte au(x) tenant(s) de l'utilisateur + aux objets/classes non tenantés ; toute écriture est rejetée (403)."
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "tenant1"
+    },
+    {
+      "name": "tenant2"
+    }
+  ],
   "clients": [
     {
       "clientId": "miami-vice-service",
@@ -24,7 +48,23 @@
       "authorizationServicesEnabled": false,
       "redirectUris": [],
       "webOrigins": [],
-      "fullScopeAllowed": true
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "tenants-group-membership",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "claim.name": "tenants"
+          }
+        }
+      ]
     },
     {
       "clientId": "miami-vice-direct",
@@ -42,7 +82,23 @@
       "authorizationServicesEnabled": false,
       "redirectUris": ["*"],
       "webOrigins": ["*"],
-      "fullScopeAllowed": true
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "tenants-group-membership",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "claim.name": "tenants"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -59,7 +115,81 @@
           "value": "testuser123",
           "temporary": false
         }
-      ]
+      ],
+      "realmRoles": ["global-admin"]
+    },
+    {
+      "username": "service-account-miami-vice-service",
+      "enabled": true,
+      "serviceAccountClientId": "miami-vice-service",
+      "realmRoles": ["global-admin"]
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin@miami-vice.local",
+      "firstName": "Global",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["global-admin"]
+    },
+    {
+      "username": "tenant1-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "tenant1-admin@miami-vice.local",
+      "firstName": "Tenant1",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "tenant1admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["tenant-admin"],
+      "groups": ["/tenant1"]
+    },
+    {
+      "username": "tenant1-readonly",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "tenant1-readonly@miami-vice.local",
+      "firstName": "Tenant1",
+      "lastName": "Readonly",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "tenant1readonly123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["tenant-readonly"],
+      "groups": ["/tenant1"]
+    },
+    {
+      "username": "tenant2-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "tenant2-admin@miami-vice.local",
+      "firstName": "Tenant2",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "tenant2admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["tenant-admin"],
+      "groups": ["/tenant2"]
     }
   ]
 }

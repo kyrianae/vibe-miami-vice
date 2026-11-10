@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { apiLogin, getAuthToken, setAuthToken } from '../api';
+import { getAuthInfo, type AuthInfo } from '../auth';
 
 type Theme = 'dark' | 'midnight' | 'light';
 
@@ -16,14 +17,28 @@ interface NavbarProps {
   onToggleReadOnly: (v: boolean) => void;
   theme: Theme;
   onThemeChange: (t: Theme) => void;
+  onAuthChange: (info: AuthInfo) => void;
 }
 
-export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly, theme, onThemeChange }: NavbarProps) {
+export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly, theme, onThemeChange, onAuthChange }: NavbarProps) {
   const [loggedIn, setLoggedIn] = useState<boolean>(() => !!getAuthToken());
+  const [authInfo, setAuthInfo] = useState<AuthInfo>(() => getAuthInfo(getAuthToken()));
   const [showLogin, setShowLogin] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  // Synchronise l'état RBAC décodé vers App au montage (y compris pour un
+  // utilisateur déjà connecté via un token persisté en localStorage).
+  useEffect(() => {
+    onAuthChange(authInfo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const updateAuthInfo = (info: AuthInfo) => {
+    setAuthInfo(info);
+    onAuthChange(info);
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,6 +48,7 @@ export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly,
       setLoggedIn(true);
       setShowLogin(false);
       setPassword('');
+      updateAuthInfo(getAuthInfo(getAuthToken()));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur de connexion');
     }
@@ -41,6 +57,7 @@ export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly,
   const handleLogout = () => {
     setAuthToken(null);
     setLoggedIn(false);
+    updateAuthInfo(getAuthInfo(null));
   };
 
   return (
@@ -52,12 +69,16 @@ export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly,
       >
         Navigation
       </button>
-      <button
-        className={page === 'configuration' ? 'active' : ''}
-        onClick={() => onPageChange('configuration')}
-      >
-        Configuration
-      </button>
+      {/* RBAC multi-tenant (plan.md action 11) : entrée de menu entièrement
+          masquée (pas juste désactivée) pour le rôle tenant-readonly. */}
+      {!authInfo.isTenantReadonly && (
+        <button
+          className={page === 'configuration' ? 'active' : ''}
+          onClick={() => onPageChange('configuration')}
+        >
+          Configuration
+        </button>
+      )}
       <button
         className={page === 'diagramme' ? 'active' : ''}
         onClick={() => onPageChange('diagramme')}

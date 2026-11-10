@@ -2,8 +2,16 @@
 CREATE TABLE object (
     id SERIAL PRIMARY KEY,
     meta_class TEXT NOT NULL,
-    class TEXT NOT NULL
+    class TEXT NOT NULL,
+    -- RBAC multi-tenant (plan.md action 11.1) : NULL/chaîne vide = objet
+    -- hors tenant, visible/éditable depuis tous les tenants ; sinon liste de
+    -- noms de tenants (groupes Keycloak sans le '/' préfixe) séparés par des
+    -- virgules, ex. "tenant1,tenant2". Filtrage en lecture via
+    -- string_to_array(tenants, ',') && %s::text[] (overlap Postgres).
+    tenants TEXT NULL
 );
+
+CREATE INDEX idx_object_tenants ON object(tenants);
 
 CREATE TABLE attribute (
     id SERIAL PRIMARY KEY,

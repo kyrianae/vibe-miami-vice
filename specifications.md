@@ -694,7 +694,7 @@ authentification, ni lecture d'annuaire : ce sont des services prêts à
   bloquer tout le backend pour tous les utilisateurs, un vecteur de déni
   de service trivial à exploiter. `MAX_DEPTH` reste figé à 5.
 
-### 10.2 Multi-tenant (ouvert — dépend de l'authentification §10.3)
+### 10.2 Multi-tenant (acté — voir `plan.md` action 11)
 
 Idée : ajouter une notion de tenant dans la configuration — des classes
 accessibles seulement dans certains tenants, des objets rattachés à un ou

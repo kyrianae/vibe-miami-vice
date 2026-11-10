@@ -1,9 +1,22 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { apiReadMetaClass, apiWriteMetaClass, apiInit, apiReadClasses } from '../api';
 import type { MetaClassDefinition, ClassDefinition, AttributeDefinition, ClassInfo } from '../types';
+import type { AuthInfo } from '../auth';
 
 interface ConfigurationPageProps {
   selectedMetaClass: string | null;
+  authInfo: AuthInfo;
+}
+
+// RBAC multi-tenant (plan.md action 11) : une classe est visible/éditable
+// par un tenant-admin si elle n'a aucun tenant déclaré (classe globale) ou
+// si l'un de ses tenants correspond à l'un des siens. Pas de filtrage pour
+// global-admin (ni pour la compat ascendante sans rôle RBAC reconnu, cf.
+// auth.ts) : authInfo.isTenantAdmin est alors false, donc tout reste visible.
+function isClassVisibleForTenant(cls: { tenants?: string[] }, authInfo: AuthInfo): boolean {
+  if (!authInfo.isTenantAdmin) return true;
+  const tenants = cls.tenants || [];
+  return tenants.length === 0 || tenants.some((t) => authInfo.tenants.includes(t));
 }
 
 const ATTR_TYPES: AttributeDefinition['type'][] = ['string', 'integer', 'float', 'joint-1-1', 'joint-1-n'];
@@ -16,7 +29,7 @@ function emptyClass(): ClassDefinition {
   return { class: '', displayname: '', attributes: [emptyAttribute()] };
 }
 
-export default function ConfigurationPage({ selectedMetaClass }: ConfigurationPageProps) {
+export default function ConfigurationPage({ selectedMetaClass, authInfo }: ConfigurationPageProps) {
   const [metaClassName, setMetaClassName] = useState('');
   const [classDefs, setClassDefs] = useState<ClassDefinition[]>([emptyClass()]);
   const [toasts, setToasts] = useState<{ id: number; type: 'success' | 'error'; text: string; fading: boolean }[]>([]);
@@ -34,10 +47,14 @@ export default function ConfigurationPage({ selectedMetaClass }: ConfigurationPa
     }, 5000);
   }, []);
 
-  // Load all classes for joint target suggestions
+  // Load all classes for joint target suggestions (filtrées par tenant pour
+  // un tenant-admin, cf. isClassVisibleForTenant)
   useEffect(() => {
-    apiReadClasses().then(setAllClasses).catch(() => {});
-  }, []);
+    apiReadClasses()
+      .then((cls) => setAllClasses(cls.filter((c) => isClassVisibleForTenant(c, authInfo))))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authInfo]);
 
   const allClassNames = [...new Set([
     ...allClasses.map((c) => c.class),
@@ -55,9 +72,19 @@ export default function ConfigurationPage({ selectedMetaClass }: ConfigurationPa
     setLoading(true);
     apiReadMetaClass(selectedMetaClass)
       .then((data) => {
+        // RBAC multi-tenant (action 11) : un tenant-admin ne voit/n'édite
+        // que les classes dans son périmètre - voir isClassVisibleForTenant.
+        // Limitation connue (documentée dans le rapport worker) : si la
+        // meta-classe contient aussi des classes hors périmètre, elles
+        // disparaissent de cette vue d'édition ; le backend refuse alors la
+        // sauvegarde complète (write_metaclass vérifie que les classes
+        // existantes restent dans le périmètre avant tout remplacement),
+        // donc aucune perte de données silencieuse, mais l'édition de ce
+        // type de meta-classe mixte n'est pas possible depuis cette UI.
+        const visibleClasses = data.classes.filter((c) => isClassVisibleForTenant(c, authInfo));
         setMetaClassName(data.meta_class);
-        setClassDefs(data.classes.length > 0 ? data.classes : [emptyClass()]);
-        setExpandedClasses(new Set(data.classes.map((_, i) => i)));
+        setClassDefs(visibleClasses.length > 0 ? visibleClasses : [emptyClass()]);
+        setExpandedClasses(new Set(visibleClasses.map((_, i) => i)));
       })
       .catch(() => {
         setMetaClassName(selectedMetaClass);
@@ -65,7 +92,8 @@ export default function ConfigurationPage({ selectedMetaClass }: ConfigurationPa
         setExpandedClasses(new Set([0]));
       })
       .finally(() => setLoading(false));
-  }, [selectedMetaClass]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMetaClass, authInfo]);
 
   // --- Class operations ---
   const updateClass = (idx: number, patch: Partial<ClassDefinition>) => {
@@ -166,6 +194,7 @@ export default function ConfigurationPage({ selectedMetaClass }: ConfigurationPa
           });
         const def: ClassDefinition = { class: c.class, attributes: cleanAttrs };
         if (c.displayname) def.displayname = c.displayname;
+        if (c.tenants && c.tenants.length > 0) def.tenants = c.tenants;
         return def;
       });
 
@@ -284,8 +313,8 @@ export default function ConfigurationPage({ selectedMetaClass }: ConfigurationPa
 
                 {isExpanded && (
                   <div style={{ marginTop: 12 }}>
-                    {/* Class name + displayname */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                    {/* Class name + displayname + tenants */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
                       <div className="form-group" style={{ marginBottom: 0 }}>
                         <label style={{ fontSize: 12 }}>Nom de la classe</label>
                         <input type="text" value={cls.class}
@@ -297,6 +326,14 @@ export default function ConfigurationPage({ selectedMetaClass }: ConfigurationPa
                         <input type="text" value={cls.displayname || ''}
                           onChange={(e) => updateClass(classIdx, { displayname: e.target.value })}
                           placeholder="ex: {{prenom}} {{nom}}" style={smallInput} />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label style={{ fontSize: 12 }}>Tenants <span style={{ color: 'var(--color-text-muted)' }}>(vide = tous)</span></label>
+                        <input type="text" value={(cls.tenants || []).join(', ')}
+                          onChange={(e) => updateClass(classIdx, {
+                            tenants: e.target.value.split(',').map((t) => t.trim()).filter(Boolean),
+                          })}
+                          placeholder="ex: tenant1, tenant2" style={smallInput} />
                       </div>
                     </div>
 

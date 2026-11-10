@@ -268,6 +268,16 @@ curl -X POST http://localhost:8000/api/write/object \
   }'
 ```
 
+### Tests backend (RBAC multi-tenant)
+
+Pas de suite de tests automatisés formelle sur l'ensemble du projet, mais le scénario de non-régression du bug de re-tagging silencieux des classes (action 11, §11.2) est couvert par `backend/test_rbac_class_tenant_scope.py` (monkeypatch de `get_db`/`get_auth_context`, aucune dépendance à une vraie base ou à un vrai Keycloak) :
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+pytest test_rbac_class_tenant_scope.py -v
+```
+
 ## 📚 Dépendances principales
 
 ### Backend

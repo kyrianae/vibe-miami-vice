@@ -1,4 +1,16 @@
-# Plan d'action — correction des anomalies de miami-vice
+# Plan d'action — Mark 1 (clos) — correction des anomalies de miami-vice
+
+> **Mark 1 — FINALISÉ (2026-11-10)** : ce document est désormais figé en
+> l'état. Les actions effectivement menées à terme dans ce cycle sont 1,
+> 2, 2bis, 3, 4, 7 (Keycloak, users locaux) et 11 (multi-tenant/RBAC,
+> 11.0-11.3). Les points restés ouverts à la clôture — 7a (résiduel,
+> `DiagramPage.tsx`), 5, 8, 6.0-6.4, 9, 10 — ne seront **pas** poursuivis
+> ici : ils ont été repris tels quels comme point de départ de
+> [`plan-mark2.md`](plan-mark2.md), qui devient le document vivant à
+> partir de maintenant. Le contenu détaillé de ces actions reste visible
+> ci-dessous à titre d'historique/justification (ne pas le considérer
+> comme à faire depuis ce fichier), chacune annotée **« reporté → voir
+> plan-mark2.md »**.
 
 > Ce plan découle directement de `specifications.md`, en particulier de sa
 > section §9 « Récapitulatif des anomalies constatées (par gravité) ». Les
@@ -403,7 +415,8 @@
   validation casse immédiatement le chargement des fichiers d'exemple
   fournis (`model/personnes.json`, `model/reseau.json`), qui contiennent
   tous deux une clé `$schema` non déclarée.
-- **Statut** : ⬜ à faire.
+- **Statut** : ⬜ **reporté → voir `plan-mark2.md`** (clôture Mark 1,
+  2026-11-10). Jamais commencé dans ce cycle.
 
 ## 6. [Absence de fonctionnalité] Aucune route de suppression — révisée pour intégrer l'historisation
 
@@ -469,7 +482,8 @@
 - **Fichiers** : `sql/init.sql`, `backend/app.py` (`write_object`,
   `_build_object_payload`, `list_objects`, et toute autre requête de
   lecture des attributs).
-- **Statut** : ⬜ à faire.
+- **Statut** : ⬜ **reporté → voir `plan-mark2.md`** (clôture Mark 1,
+  2026-11-10). Jamais commencé dans ce cycle.
 
 ### 6.1 Suppression logique d'un objet
 
@@ -493,13 +507,14 @@
 - **Fichiers** : `backend/app.py`, `frontend/src/api.ts`,
   `frontend/src/pages/NavigationPage.tsx`.
 - **Dépendance** : nécessite 6.0 (colonnes `deleted_at`/`valid_to`).
-- **Statut** : ⬜ à faire.
+- **Statut** : ⬜ **reporté → voir `plan-mark2.md`** (clôture Mark 1,
+  2026-11-10). Jamais commencé dans ce cycle.
 
 ### 6.2 Purge physique différée
 
 - **Principe** : après une période de grâce suivant `deleted_at`
-  (constante `PURGE_GRACE_PERIOD_DAYS`, **valeur provisoire proposée :
-  30 jours — à confirmer/ajuster par l'utilisateur**), un mécanisme de
+  (constante `PURGE_GRACE_PERIOD_DAYS = 30` jours — **confirmé par
+  l'utilisateur le 2026-11-10**), un mécanisme de
   purge supprime **physiquement** les lignes `attribute_value`/
   `attribute` de l'objet. Décision à prendre au moment de l'implémentation :
   conserver la ligne `object` elle-même (avec juste ses attributs
@@ -516,7 +531,15 @@
   amélioration possible mais hors périmètre de ce correctif minimal.
 - **Fichiers** : `backend/app.py`.
 - **Dépendance** : nécessite 6.1.
-- **Statut** : ⬜ à faire.
+- **Statut** : ⬜ **reporté → voir `plan-mark2.md`** (clôture Mark 1,
+  2026-11-10). Jamais commencé dans ce cycle. ~~Valeur
+  `PURGE_GRACE_PERIOD_DAYS = 30` jours actée (voir plus bas) : à reporter
+  telle quelle dans `plan-mark2.md`, pas à rediscuter.~~ — **révisé le
+  2026-11-10, le même jour, après la clôture de ce document** : la
+  période de grâce sera configurable par l'administrateur, pas une
+  constante figée ; 30 jours reste la valeur par défaut. Voir
+  `plan-mark2.md` action 6.2 pour la conception actuelle, qui prévaut sur
+  ce qui est écrit ci-dessus.
 
 ### 6.3 Suppression d'une classe (schéma — suppression physique, inchangée)
 
@@ -532,7 +555,8 @@
   les objets déjà créés sous cette classe (aucune FK entre `object` et
   `definition`, §3.4).
 - **Fichiers** : `backend/app.py`.
-- **Statut** : ⬜ à faire.
+- **Statut** : ⬜ **reporté → voir `plan-mark2.md`** (clôture Mark 1,
+  2026-11-10). Jamais commencé dans ce cycle.
 
 ### 6.4 Suppression d'une meta-classe (schéma — suppression physique, inchangée)
 
@@ -543,12 +567,15 @@
   supprime pas les objets déjà créés sous cette meta-classe (cohérent
   avec le constat §3.4 : aucune FK entre `object` et `definition`).
 - **Fichiers** : `backend/app.py`.
-- **Statut** : ⬜ à faire.
+- **Statut** : ⬜ **reporté → voir `plan-mark2.md`** (clôture Mark 1,
+  2026-11-10). Jamais commencé dans ce cycle.
 
 - **Effort global de l'action 6** : conséquent (6.0 = réécriture d'un
   endpoint central + migration de schéma ; 6.1/6.2 = nouvelles routes ;
   6.3/6.4 = routes simples déjà conçues, inchangées).
-- **Statut global** : ⬜ à faire (sous-actions détaillées ci-dessus).
+- **Statut global** : ⬜ **reporté → voir `plan-mark2.md`** (clôture
+  Mark 1, 2026-11-10) — action 6 entière (6.0 à 6.4) jamais commencée
+  dans ce cycle, reprise intégralement comme point de départ de Mark 2.
 
 ## 7. [Absence de sécurité] Aucune authentification/autorisation
 
@@ -675,7 +702,11 @@
   `backend/app.py`, `docker-compose.yml`, `keycloak/miami-vice-realm.json`
   (nouveau), `frontend/src/api.ts` (volet Keycloak).
 - **Statut** :
-  - ⬜ à faire (volet frontend `readOnly` propagé à Configuration/Diagramme — action 7a, non traité dans ce cycle).
+  - ⬜ **reporté → voir `plan-mark2.md`** (action 7a, clôture Mark 1,
+    2026-11-10). Réduit depuis le 2026-11-10 à son seul périmètre
+    restant, `DiagramPage.tsx` : la partie Configuration de ce point est
+    devenue sans objet, couverte par le masquage réel de l'action 11.3
+    (✅ fait).
   - ~~⬜ clé API statique intermédiaire~~ — **annulé (2026-11-09)**, voir note ci-dessus.
   - ✅ **fait (2026-11-09)** — Keycloak (utilisateurs locaux). Validé en
     2 itérations d'arbitrage : 1ʳᵉ itération OK fonctionnellement, 4
@@ -738,7 +769,8 @@
 - **Fichiers** : `model/schema.json`.
 - **Dépendance** : doit précéder (ou accompagner dans le même commit)
   l'activation de la validation JSON Schema de l'action 5.
-- **Statut** : ⬜ à faire.
+- **Statut** : ⬜ **reporté → voir `plan-mark2.md`** (clôture Mark 1,
+  2026-11-10). Jamais commencé dans ce cycle.
 
 ## 9. [Évolution, ajoutée le 2026-11-09] Partitionnement PostgreSQL par type d'objet
 
@@ -786,7 +818,9 @@
   avec des tables partitionnées).
 - **Fichiers** : `sql/init.sql`, `backend/app.py` (`write_class`,
   `write_metaclass`).
-- **Statut** : ⬜ à faire (commencer par l'évaluation préalable).
+- **Statut** : ⬜ **reporté → voir `plan-mark2.md`** (clôture Mark 1,
+  2026-11-10). Jamais commencé dans ce cycle, y compris l'évaluation
+  préalable de volumétrie.
 
 ## 10. [Évolution, ajoutée le 2026-11-09] Liens transitifs du graphe au filtrage de classe
 
@@ -845,17 +879,229 @@
   garde-fou de volume à tester sur un graphe réaliste avec plusieurs
   niveaux de jointures masquées).
 - **Fichiers** : `frontend/src/pages/DiagramPage.tsx`.
-- **Statut** : ⬜ à faire.
+- **Statut** : ⬜ **reporté → voir `plan-mark2.md`** (clôture Mark 1,
+  2026-11-10). Jamais commencé dans ce cycle.
+
+## 11. [Évolution, ajoutée le 2026-11-09] Multi-tenant avec gestion des droits (RBAC)
+
+> Concrétise le point ouvert `specifications.md` §10.2, débloqué par la
+> décision Keycloak de l'action 7. Décision utilisateur : implémentation
+> complète (pas seulement les identités Keycloak), avec application
+> réelle des droits côté backend et gestion des tenants dans l'IHM.
+
+### 11.0 Modèle d'autorisation (Keycloak)
+
+- **Rôles realm** : `global-admin` (accès total, aucun filtre de tenant),
+  `tenant-admin` (admin scopé à son/ses tenant(s)), `tenant-readonly`
+  (lecture seule scopée à son/ses tenant(s)).
+- **Tenants = groupes Keycloak** (`/tenant1`, `/tenant2`, ...) — un
+  utilisateur appartient à un ou plusieurs groupes, qui déterminent son
+  périmètre. Combinaison rôle + groupe(s) plutôt qu'un rôle par tenant
+  (évite l'explosion combinatoire `tenant1-admin`, `tenant2-admin`, ... à
+  chaque nouveau tenant).
+- **Mapper de protocole** : exposer les groupes de l'utilisateur dans le
+  JWT sous une claim `tenants` (liste de noms, sans le `/` préfixe), en
+  plus des rôles déjà exposés par `realm_access.roles`.
+- **4 comptes demandés**, à créer dans `keycloak/miami-vice-realm.json` :
+  - `admin` — rôle `global-admin`, aucun groupe (accès total).
+  - `tenant1-admin` — rôle `tenant-admin`, groupe `/tenant1`.
+  - `tenant1-readonly` — rôle `tenant-readonly`, groupe `/tenant1`.
+  - `tenant2-admin` — rôle `tenant-admin`, groupe `/tenant2` (hypothèse
+    retenue par symétrie avec tenant1-admin — à corriger si un autre
+    niveau de droit était voulu pour ce 4ᵉ compte).
+- **Statut** : ✅ fait (2026-11-10). Rôles, groupes, mapper de protocole et
+  les 4 comptes créés dans `keycloak/miami-vice-realm.json` ; `testuser`
+  et le compte de service `miami-vice-service` explicitement rattachés à
+  `global-admin` (nécessaire pour la correction fail-closed de 11.2). Bug
+  latent découvert et corrigé en cours de route : le mapper de la claim
+  `tenants` utilisait des clés de config au pluriel
+  (`access.token.claims`...) alors que Keycloak 26 attend le singulier
+  (`access.token.claim`) — la claim n'avait donc jamais fonctionné depuis
+  l'action 7 (non détecté alors car `testuser` n'a aucun groupe). Confirmé
+  par décodage réel des JWT des 4 comptes (`testeur`, puis re-vérifié par
+  `testeur-global`).
+
+### 11.1 Schéma de données
+
+> **Correction de conception (2026-11-09, après revue croisée + retour
+> utilisateur)** : remplace la version scalaire ci-dessous — `object`
+> porte désormais potentiellement **plusieurs** tenants, pas un seul.
+
+- `object` (`sql/init.sql`) : colonne `tenants TEXT NULL`
+  (renommée depuis `tenant`), stockant une liste de noms de tenants
+  séparés par des virgules (ex. `"tenant1,tenant2"`). `NULL` ou chaîne
+  vide = **visible par tout le monde**, quel que soit le rôle/tenant de
+  l'appelant — règle absolue, y compris après une édition ultérieure de
+  l'objet (voir correctif du bug de re-tagging silencieux en §11.2).
+  Filtrage SQL via `string_to_array(tenants, ',') && %s::text[]`
+  (opérateur overlap Postgres) plutôt qu'un simple `=`.
+- `definition.data` (classes, `model/schema.json`) : champ optionnel
+  `"tenants": ["tenant1", ...]` par classe — inchangé, déjà une liste.
+- **Statut** : ✅ fait (2026-11-10). Colonne `object.tenants TEXT NULL`
+  (+ index) en place dans `sql/init.sql`, migration appliquée manuellement
+  sur le volume `pgdata` déjà initialisé (gotcha connu, voir action 7),
+  champ `tenants` présent dans `model/schema.json`. Filtrage SQL par
+  overlap (`string_to_array(...) && array[...]`) confirmé fonctionnel en
+  lecture réelle par `testeur`/`testeur-global` (anonyme et
+  `tenant1-readonly` ne voient pas les objets tenant2 ; `global-admin`
+  voit les 26/26).
+
+### 11.2 Application des droits côté backend (`backend/app.py`)
+
+> **2 corrections bloquantes** identifiées par la revue croisée
+> (pessimiste + candide) sur le premier passage du worker, à appliquer
+> avant toute nouvelle validation :
+
+- **Correction bloquante 1 — fail-open anonyme (sécurité)** : le premier
+  passage traite tout appelant sans rôle RBAC reconnu (y compris anonyme,
+  token absent, ou JWKS injoignable sur une route non protégée) comme
+  `global-admin` par défaut → n'importe qui sans identifiant valide voit
+  les données de tous les tenants. Correctif retenu (proposition de
+  `candide`) : **fail-closed par défaut** — l'absence de rôle RBAC
+  reconnu n'accorde aucun droit étendu (traiter comme le rôle le plus
+  restrictif, pas comme `global-admin`) ; assigner explicitement le rôle
+  `global-admin` à `testuser` et au compte de service
+  `miami-vice-service` dans `keycloak/miami-vice-realm.json` pour
+  préserver leur usage actuel (déjà validé lors du cycle Keycloak) sans
+  rouvrir cette brèche pour quiconque d'autre.
+- **Correction bloquante 2 — re-tagging silencieux d'objets globaux** :
+  éditer un objet existant dont `tenants` est `NULL`/vide (visible par
+  tous) ne doit **jamais** le faire basculer silencieusement vers le(s)
+  tenant(s) de l'éditeur. Règle : l'auto-tag à l'écriture ne s'applique
+  qu'à la **création** (objet qui n'existe pas encore) ; sur une mise à
+  jour, préserver la valeur `tenants` existante telle quelle, sauf si le
+  corps de la requête fournit explicitement une nouvelle valeur
+  `tenants` (et dans ce cas, valider qu'elle est cohérente avec les
+  tenants de l'appelant comme déjà prévu).
+- Extraire du JWT (déjà validé par le garde de l'action 7) : rôle(s) et
+  claim `tenants` (désormais une liste, cohérent avec le nouveau champ
+  `object.tenants`).
+- **Lecture** (`/api/read/objects`, `/api/read/object/<id>`, et la
+  résolution `deref` de l'action 2bis) : `global-admin` voit tout ;
+  `tenant-admin`/`tenant-readonly` voient les objets dont
+  `tenants IS NULL OR tenants = '' OR string_to_array(tenants, ',') && <leurs tenants>` ;
+  filtrer au niveau SQL, pas en post-traitement Python.
+- **Écriture d'objets** (`POST /api/write/object`,
+  `PUT /api/write/attribute/...`) : `tenant-readonly` → `403` ;
+  `tenant-admin` → autorisé uniquement sur les classes accessibles dans
+  son tenant (vérifier `tenants` de la classe, §11.1) ; **à la création**
+  uniquement, l'objet est automatiquement tagué des tenants de l'admin
+  (ou des tenants explicitement fournis s'ils correspondent aux siens) ;
+  refuser `403` si la classe n'est pas accessible dans ce tenant.
+- **Configuration/schéma** (`POST /api/write/class`,
+  `POST /api/write/metaclass`, `POST /api/init`) : réservé aux rôles
+  `global-admin`/`tenant-admin` (jamais `tenant-readonly`, `403` sinon).
+  Pour un `tenant-admin`, restreindre les classes qu'il peut créer/modifier
+  à celles taguées de son tenant (`403` s'il tente d'écrire une classe
+  d'un autre tenant ou une classe « hors tenant » existante).
+- **Statut** : ✅ fait (2026-11-10). Validé en **4 itérations** de revue
+  croisée + arbitrage :
+  1. Correction bloquante 1 (fail-open anonyme) et 2 (re-tagging
+     silencieux d'objets) appliquées et confirmées par test réel
+     (anonyme/token invalide → rôle le plus restrictif, plus
+     `global-admin` par défaut ; objet `tenants=NULL` édité par un
+     tenant-admin reste `tenants=NULL`).
+  2-3. Itérations de stabilisation sur le passage scalaire→liste
+     (`_tenants_list_to_db`/`_tenants_db_to_list`/`_normalize_tenants_input`,
+     sentinel `_UNSET` pour ne jamais réécrire `tenants` sans valeur
+     explicite dans la requête).
+  4. **Correction bloquante 3, trouvée par l'arbitre en lecture directe du
+     code** (pas remontée par les 3 rapports de revue précédents) :
+     `_check_existing_class_tenant_scope` ne bloquait que l'écrasement
+     d'une classe taguée à un *autre* tenant, pas celui d'une classe
+     globale non taguée — un tenant-admin pouvait donc re-tagger
+     silencieusement une classe globale via `/api/init`. Corrigé :
+     la fonction bloque désormais aussi ce cas ; `/api/init` retravaillé
+     en skip-and-report par classe (`skipped: [...]` dans la réponse) au
+     lieu d'un tout-ou-rien. Couvert par une nouvelle suite pytest
+     (`backend/test_rbac_class_tenant_scope.py`, 8/8, premier test
+     automatisé du dépôt), exécutée réellement à la fois en `.venv` et
+     dans le conteneur `backend` par `testeur-global`.
+  `testeur-global` ✅ PASS sur l'ensemble (pas seulement ce périmètre) :
+  tokens réels pour les 5 comptes (service, testuser, admin,
+  tenant1-readonly, tenant1-admin), lecture/écriture/filtrage tenant,
+  cross-tenant → 403, écriture sans token → 401, `/api/read/class` et
+  `/api/read/meta_class` restent publics et non filtrés (conforme).
+
+### 11.3 Frontend — gestion des tenants dans l'IHM
+
+- **Page Configuration masquée pour `tenant-readonly`** (pas seulement
+  désactivée comme l'actuel toggle `readOnly` — `specifications.md` dit
+  « la configuration est visible uniquement par l'admin ») : vérifier le
+  rôle extrait du JWT côté client avant même d'afficher l'entrée de menu
+  « Configuration » dans `Navbar.tsx`/`App.tsx`.
+  Rappel : ceci reste une protection UX, la vraie sécurité est le garde
+  serveur de 11.2 — ne jamais s'y substituer.
+- **Scoping tenant dans Configuration** : pour un `tenant-admin`,
+  n'afficher/éditer que les classes accessibles dans son tenant (filtrer
+  côté client en complément du filtrage serveur).
+- **Sélection/affichage du tenant à la création d'un objet**
+  (`NavigationPage.tsx`) : si l'utilisateur appartient à plusieurs
+  tenants, lui permettre de choisir dans lequel créer l'objet ; sinon
+  tenant implicite (son unique groupe).
+- **Statut** : ✅ fait (2026-11-10). `Navbar.tsx` masque l'entrée
+  Configuration pour `tenant-readonly` (`isTenantReadonly`), scoping
+  tenant appliqué dans `ConfigurationPage.tsx`/`NavigationPage.tsx`,
+  `auth.ts` (nouveau) porte le décodage JWT local + la même logique
+  fail-closed que le backend. Validé par compilation TS propre
+  (`tsc -b --force` dans le conteneur frontend réel : 3 erreurs restantes,
+  toutes préexistantes dans `DiagramPage.tsx` et confirmées hors diff de
+  cette action via `git diff`) et par lecture de code. **Limite notée par
+  `testeur-global`, non bloquante** : pas de contrôle visuel dans un vrai
+  navigateur du masquage effectif du menu — à faire manuellement par
+  l'utilisateur sur `http://localhost:3000` avant de considérer ce point
+  définitivement clos.
+
+- **Effort global** : important (modèle d'autorisation Keycloak, 2
+  colonnes/champs de schéma, garde sur la quasi-totalité des routes
+  d'écriture et de lecture, UI de scoping dans 2 pages frontend).
+- **Fichiers** : `keycloak/miami-vice-realm.json`, `sql/init.sql`,
+  `model/schema.json`, `backend/app.py`, `frontend/src/App.tsx`,
+  `frontend/src/components/Navbar.tsx`,
+  `frontend/src/pages/ConfigurationPage.tsx`,
+  `frontend/src/pages/NavigationPage.tsx`, `frontend/src/auth.ts`
+  (nouveau), `frontend/src/api.ts`, `frontend/src/types.ts`,
+  `backend/test_rbac_class_tenant_scope.py` (nouveau),
+  `backend/requirements-dev.txt` (nouveau).
+- **Dépendance** : nécessite l'action 7 (Keycloak) déjà faite ✅.
+- **Statut global de l'action 11** : ✅ **fait (2026-11-10)**, les 4
+  sous-points validés individuellement ci-dessus, `testeur-global` ✅ PASS
+  sur l'ensemble du projet (pas seulement ce périmètre) après rebuild
+  complet réel de la stack (`docker compose up -d --build`, 4 services
+  `db`/`keycloak`/`backend`/`frontend` tous up sans erreur). Identifiants
+  de test (realm `miami-vice`, dev uniquement) :
+  - `admin` / `admin123` — `global-admin`, aucun groupe (accès total).
+  - `tenant1-admin` / `tenant1admin123` — `tenant-admin`, groupe `/tenant1`.
+  - `tenant1-readonly` / `tenant1readonly123` — `tenant-readonly`, groupe `/tenant1`.
+  - `tenant2-admin` / `tenant2admin123` — `tenant-admin`, groupe `/tenant2`.
+  **Dette documentée, non bloquante** : pas de contrôle visuel navigateur
+  du masquage du menu Configuration (voir 11.3) ; pas de test de
+  volumétrie/charge sur le filtrage tenant ; LDAP/Google restent hors
+  scope (différés, voir action 7) ; `PURGE_GRACE_PERIOD_DAYS` (action 6.2)
+  toujours en attente de confirmation utilisateur, sans lien direct avec
+  cette action mais toujours ouvert. **Travail de l'action 11 non commité
+  à ce stade** (à la différence des actions 1-4/2bis/7 déjà committées en
+  `4a09f0b`).
 
 ## Ordre d'exécution recommandé
 
-**Vague 1 — débloquer le démarrage (action 1)**
+> **Reprioritisation (2026-11-09)** : l'ordre ci-dessous était l'ordre
+> *recommandé initialement*, conçu avant que l'authentification ne soit
+> tranchée. Décision utilisateur : une fois l'action 11 terminée,
+> l'authentification/les droits (actions 7 et 11) passent **devant**
+> la validation de schéma, l'historisation/suppression et les évolutions
+> de confort — reflété dans la numérotation de vagues ci-dessous. Les
+> vagues 1-3 n'ont pas changé (déjà exécutées dans cet ordre). Les
+> anciennes vagues 4-5-6-7 sont conservées plus bas, barrées, pour
+> mémoire de l'ordre d'origine — ne plus s'y référer pour la suite.
+
+**Vague 1 — débloquer le démarrage (action 1)** ✅ fait
 Rien d'autre n'est observable ni testable tant que `backend/app.py` ne
 compile pas : c'est un préalable strict à toutes les vagues suivantes,
 y compris pour simplement vérifier qu'une correction ultérieure fonctionne.
 
 **Vague 2 — corriger les bugs backend qui faussent le comportement visible
-(actions 2 et 3)**
+(actions 2, 2bis et 3)** ✅ fait
 Une fois le backend démarrable, corriger en premier les deux bugs qui
 produisent des réponses API incorrectes silencieusement acceptées par le
 frontend (500 sur la lecture d'un objet existant, `displayname` jamais
@@ -863,54 +1109,88 @@ renvoyé). Ces deux corrections sont indépendantes entre elles mais toutes
 deux nécessaires avant de toucher au frontend, car plusieurs correctifs
 frontend (vague 3) dépendent d'un backend qui répond correctement.
 
-**Vague 3 — corriger les bugs/messages trompeurs côté frontend (action 4,
-et le volet frontend de l'action 7)**
+**Vague 3 — corriger les bugs/messages trompeurs côté frontend (action 4)**
+✅ fait (action 4) / ⬜ à faire (7a, non traité, voir note ci-dessous)
 `saveInlineEdit` (action 4) doit être corrigé après la vague 2 : son
 rafraîchissement post-écriture (`apiReadObject`) ne peut être validé tant
-que l'action 2 n'est pas en place. Le volet frontend de l'action 7
-(propagation de `readOnly` à `ConfigurationPage`/`DiagramPage`) est
-indépendant et peut être traité en parallèle, sans dépendance sur le
-backend.
+que l'action 2 n'est pas en place. Le volet frontend de l'action 7a
+(propagation de `readOnly` à `ConfigurationPage`/`DiagramPage`) reste
+indépendant et peut être traité à tout moment — repoussé après
+l'authentification/RBAC (vague 4) car il sera probablement recouvert ou
+rendu partiellement obsolète par le masquage réel de Configuration prévu
+en 11.3.
 
-**Vague 4 — activer les validations manquantes (actions 8 puis 5)**
-L'action 8 (déclarer `$schema` dans `model/schema.json`) doit précéder
-l'action 5 (appeler enfin `jsonschema.validate`), sans quoi activer la
-validation casse immédiatement le chargement des fichiers d'exemple
-fournis avec le dépôt. Cette vague est placée après les vagues 2-3 car
-elle introduit des réponses `400` nouvelles qui doivent être testées sur
-un backend déjà fonctionnellement correct, pour ne pas confondre un rejet
-de validation légitime avec un bug résiduel des actions précédentes.
+> **Réévaluation (2026-11-10, 11.3 fait)** : le masquage réel de
+> Configuration pour `tenant-readonly` est en place (`Navbar.tsx`), donc
+> 7a n'a plus d'intérêt propre sur ce point précis. Il en garde un pour
+> `DiagramPage.tsx`, jamais couvert par le RBAC de l'action 11 (page
+> purement backend-readonly aujourd'hui, mais le prop `readOnly` n'y est
+> toujours pas propagé depuis `App.tsx` par cohérence d'interface, cf.
+> texte d'origine de l'action 7). Reste donc ⬜, mais réduit à ce seul
+> périmètre restant — à traiter en vague 5 ou laissé en l'état si jugé non
+> prioritaire au moment venu.
 
-**Vague 5 — combler les fonctionnalités absentes (action 6 dans l'ordre
-6.0→6.1→6.2→6.3/6.4, puis volet structurant de l'action 7)**
-L'action 6 révisée a une dépendance interne stricte : 6.0 (historisation
-du modèle, colonnes `valid_from`/`valid_to`/`deleted_at` + réécriture de
-`write_object`) doit précéder 6.1 (suppression logique, qui s'appuie sur
-`deleted_at`), qui doit elle-même précéder 6.2 (purge physique, qui
-s'appuie sur des objets déjà marqués `deleted_at`). 6.3/6.4 (suppression
-physique de classe/meta-classe, inchangées) sont indépendantes de 6.0-6.2
-et peuvent être faites en parallèle. Cette vague est placée après la
-vague 4 pour être testée sur un backend déjà validé par la validation de
-schéma, notamment parce que la suppression d'une classe doit respecter le
-même format JSON que les écritures désormais validées.
-L'authentification serveur réelle (volet structurant de l'action 7) est
-traitée en dernier : c'est le changement le plus large (nouvelle
-configuration, secret partagé, garde sur toutes les routes d'écriture et
-de suppression), et il doit s'appliquer à une API dont les routes
-d'écriture/suppression sont déjà stabilisées, pour éviter de devoir
-retoucher la garde d'authentification à chaque nouvelle route ajoutée.
-Elle doit aussi protéger la nouvelle route `POST /api/purge` (6.2).
+**Vague 4 (reprioritée) — authentification et droits (actions 7 et 11)**
+✅ fait (action 7, Keycloak, users locaux) / ✅ fait (action 11,
+multi-tenant/RBAC, 2026-11-10, 4 itérations de correction — voir détail
+par sous-point ci-dessus). Décision utilisateur du 2026-11-09 : ce
+chantier passe devant la validation de schéma et l'historisation, car il
+conditionne désormais la vraie sécurité de toutes les routes d'écriture
+existantes et futures — plus tôt il est en place, moins il y a de routes
+à retoucher rétroactivement pour y ajouter le garde. Ordre interne :
+7 (Keycloak) avant 11 (RBAC, qui s'appuie sur le JWT déjà validé par 7).
+**Vague 4 entièrement close.**
 
-**Vague 6 — évolutions ajoutées le 2026-11-09 (actions 9 et 10)**
-Indépendantes l'une de l'autre et du reste du plan (aucune des deux ne
-modifie une route existante ni n'est modifiée par une vague précédente).
-L'action 9 (partitionnement) doit commencer par son évaluation préalable
-de volumétrie avant tout DDL — elle peut être menée à tout moment, y
-compris en parallèle des autres vagues, mais sa partie implémentation
-(si justifiée) est plus sûre une fois le modèle stabilisé par les vagues
-1-5. L'action 10 (liens transitifs du graphe) est purement frontend,
-sans dépendance sur le backend ; peut être traitée à tout moment après
-la vague 1.
+**Vague 5 (reprioritée) — activer les validations manquantes
+(actions 8 puis 5)**
+Inchangée dans son contenu par rapport à l'ancienne vague 4 (voir
+ci-dessous), seulement renumérotée : L'action 8 (déclarer `$schema` dans
+`model/schema.json`) doit précéder l'action 5 (appeler enfin
+`jsonschema.validate`), sans quoi activer la validation casse
+immédiatement le chargement des fichiers d'exemple fournis avec le
+dépôt. Note nouvelle : l'action 5 devra aussi valider le nouveau champ
+`tenants` ajouté aux classes par l'action 11.1 si celui-ci est déjà en
+place à ce moment.
+
+**Vague 6 (reprioritée) — combler les fonctionnalités absentes (action 6
+dans l'ordre 6.0→6.1→6.2→6.3/6.4)**
+Inchangée dans son contenu par rapport à l'ancienne vague 5 (le volet
+authentification de l'ancienne vague 5 a été anticipé en vague 4 — voir
+ci-dessous) : L'action 6 révisée a une dépendance interne stricte : 6.0
+(historisation du modèle, colonnes `valid_from`/`valid_to`/`deleted_at` +
+réécriture de `write_object`) doit précéder 6.1 (suppression logique, qui
+s'appuie sur `deleted_at`), qui doit elle-même précéder 6.2 (purge
+physique, qui s'appuie sur des objets déjà marqués `deleted_at`). 6.3/6.4
+(suppression physique de classe/meta-classe, inchangées) sont
+indépendantes de 6.0-6.2 et peuvent être faites en parallèle. La route
+`POST /api/purge` (6.2) doit être protégée par le garde d'authentification
+de la vague 4 (déjà en place à ce stade).
+
+**Vague 7 — évolutions de confort (actions 9 et 10)**
+Indépendantes l'une de l'autre et du reste du plan. L'action 9
+(partitionnement) doit commencer par son évaluation préalable de
+volumétrie avant tout DDL. L'action 10 (liens transitifs du graphe) est
+purement frontend, sans dépendance sur le backend.
+
+---
+
+<details>
+<summary>Ordre d'origine des vagues 4-7 (avant reprioritisation du
+2026-11-09) — conservé pour mémoire, ne plus utiliser</summary>
+
+~~**Vague 4 — activer les validations manquantes (actions 8 puis 5)**~~
+~~**Vague 5 — combler les fonctionnalités absentes (action 6, puis volet
+structurant de l'action 7)**~~ — l'authentification y était traitée en
+dernier, après la stabilisation des routes d'écriture/suppression ;
+reprioritée en vague 4 à la demande de l'utilisateur.
+~~**Vague 6 — évolutions ajoutées le 2026-11-09 (actions 9 et 10)**~~
+~~**Vague 7 — multi-tenant/RBAC (action 11)**~~ — dépendait de l'action 7
+(Keycloak) et était initialement placée après les vagues 4-6 ; reprioritée
+en vague 4 (juste après Keycloak) à la demande explicite de l'utilisateur
+du 2026-11-09 : « après cette étape, réorganiser les vagues pour
+prioriser les droits et Keycloak ».
+
+</details>
 
 ## Récapitulatif d'avancement
 
@@ -924,23 +1204,54 @@ la vague 1.
 | 2bis | 2 | Déréférencement optionnel des jointures (`deref`/`depth`) | ✅ |
 | 3 | 2 | `displayname` jamais renvoyé par les endpoints de lecture de classes | ✅ |
 | 4 | 3 | Édition inline (scalaire / jointure 1-1) n'écrit jamais rien | ✅ |
-| 7a | 3 | Propagation du prop `readOnly` à Configuration/Diagramme (volet frontend) | ⬜ |
-| 8 | 4 | `$schema` non déclaré dans `model/schema.json` | ⬜ |
-| 5 | 4 | Validation de schéma, `constraint`, cohérence meta_class/class | ⬜ |
-| 6.0 | 5 | Historisation du modèle (`valid_from`/`valid_to`/`deleted_at` + réécriture `write_object`) | ⬜ |
-| 6.1 | 5 | Suppression logique d'un objet | ⬜ |
-| 6.2 | 5 | Purge physique différée (période de grâce à confirmer) | ⬜ |
-| 6.3 | 5 | Suppression d'une classe (physique, inchangée) | ⬜ |
-| 6.4 | 5 | Suppression d'une meta-classe (physique, inchangée) | ⬜ |
-| 7b-intermédiaire | 5 | ~~Clé API statique (avant Keycloak)~~ | ❌ annulé |
-| 7b-keycloak | 5 | Authentification Keycloak (comptes de service + login direct, users locaux) | ✅ |
-| 9 | 6 | Partitionnement PostgreSQL par type d'objet (évaluation puis implémentation conditionnelle) | ⬜ |
-| 10 | 6 | Liens transitifs du graphe au filtrage de classe | ⬜ |
+| 7a | 3/4 | Propagation du prop `readOnly` à Configuration/Diagramme (réduit à `DiagramPage.tsx` depuis 11.3, voir note vague 3) | ⬜→Mark 2 |
+| 7b-intermédiaire | 4 | ~~Clé API statique (avant Keycloak)~~ | ❌ annulé |
+| 7b-keycloak | 4 | Authentification Keycloak (comptes de service + login direct, users locaux) | ✅ |
+| 8 | 5 | `$schema` non déclaré dans `model/schema.json` | ⬜→Mark 2 |
+| 5 | 5 | Validation de schéma, `constraint`, cohérence meta_class/class | ⬜→Mark 2 |
+| 6.0 | 6 | Historisation du modèle (`valid_from`/`valid_to`/`deleted_at` + réécriture `write_object`) | ⬜→Mark 2 |
+| 6.1 | 6 | Suppression logique d'un objet | ⬜→Mark 2 |
+| 6.2 | 6 | Purge physique différée (période de grâce confirmée : 30 jours) | ⬜→Mark 2 |
+| 6.3 | 6 | Suppression d'une classe (physique, inchangée) | ⬜→Mark 2 |
+| 6.4 | 6 | Suppression d'une meta-classe (physique, inchangée) | ⬜→Mark 2 |
+| 9 | 7 | Partitionnement PostgreSQL par type d'objet (évaluation puis implémentation conditionnelle) | ⬜→Mark 2 |
+| 10 | 7 | Liens transitifs du graphe au filtrage de classe | ⬜→Mark 2 |
+| 11.0 | 4 | Modèle d'autorisation Keycloak (rôles + groupes-tenants, 4 comptes) | ✅ |
+| 11.1 | 4 | Schéma tenant (`object.tenants` liste, `tenants` sur les classes) | ✅ |
+| 11.2 | 4 | Application des droits backend (lecture/écriture filtrées par tenant+rôle) | ✅ |
+| 11.3 | 4 | Gestion des tenants dans l'IHM (Configuration masquée, scoping) | ✅ |
 
-**Décision en attente de confirmation** : `PURGE_GRACE_PERIOD_DAYS`
-(action 6.2) — valeur provisoire proposée de 30 jours, à confirmer ou
-ajuster avant l'implémentation de 6.2.
-**Point encore ouvert, non planifié dans le tableau ci-dessus** :
-notion de tenant (`specifications.md` §10.2) — authentification désormais
-tranchée (Keycloak, §10.3), donc ce point peut être conçu en détail
-quand souhaité ; pas encore une action du plan.
+> Légende : `⬜→Mark 2` = reporté tel quel comme point de départ de
+> [`plan-mark2.md`](plan-mark2.md) à la clôture de Mark 1 (2026-11-10),
+> jamais commencé ici.
+
+**Décision actée** : `PURGE_GRACE_PERIOD_DAYS` (action 6.2) = **30 jours**,
+confirmé par l'utilisateur le 2026-11-10 — valeur à reporter telle quelle
+dans `plan-mark2.md`, pas à rediscuter.
+
+## Clôture de Mark 1 (2026-11-10)
+
+**Fait dans ce cycle** : actions 1, 2, 2bis, 3, 4 (bugs bloquants/
+fonctionnels backend+frontend), 7-Keycloak (authentification, users
+locaux), 11.0-11.3 (multi-tenant/RBAC complet, backend+frontend, 4
+itérations de correction). `testeur-global` ✅ PASS sur l'ensemble du
+projet à la clôture, stack réellement redémarrée et testée de bout en
+bout (voir détail action 11 ci-dessus).
+
+**Reporté à `plan-mark2.md`, jamais commencé dans ce cycle** : 7a
+(résiduel, `DiagramPage.tsx`), 8, 5, 6.0-6.4 (historisation/suppression/
+purge), 9 (partitionnement), 10 (liens transitifs du graphe).
+
+**Non commité à la clôture de Mark 1** : le travail de l'action 11
+(multi-tenant/RBAC) n'a pas encore fait l'objet d'un commit git distinct
+du commit `4a09f0b` (qui couvrait les actions 1-4/2bis/7).
+
+**Points restés ouverts, non repris dans `plan-mark2.md` par choix
+explicite (hors scope, pas oubliés)** : fédération LDAP/Google pour
+Keycloak (différée « à un test ultérieur », voir action 7) ; flux OIDC
+Authorization Code complet (nécessiterait un routeur frontend) ;
+durcissement des credentials Postgres dédiés à la base `keycloak`.
+
+*(Note devenue obsolète, conservée barrée pour mémoire : ~~« notion de
+tenant (`specifications.md` §10.2) — pas encore une action du plan »~~ —
+tranchée et implémentée en totalité par l'action 11 ci-dessus.)*

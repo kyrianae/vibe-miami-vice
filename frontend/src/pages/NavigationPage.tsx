@@ -1,11 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { apiReadObjects, apiReadObject, apiWriteObject, apiWriteAttribute, apiReadClasses } from '../api';
 import type { ObjectSummary, ObjectDetail, ClassInfo, AttributeDefinition } from '../types';
+import type { AuthInfo } from '../auth';
 
 interface NavigationPageProps {
   selectedMetaClass: string | null;
   selectedClass: string | null;
   readOnly: boolean;
+  authInfo: AuthInfo;
 }
 
 // État d'édition inline d'une cellule
@@ -23,7 +25,7 @@ interface JointEdit {
   selected: number[];
 }
 
-export default function NavigationPage({ selectedMetaClass, selectedClass, readOnly }: NavigationPageProps) {
+export default function NavigationPage({ selectedMetaClass, selectedClass, readOnly, authInfo }: NavigationPageProps) {
   const [objects, setObjects] = useState<ObjectSummary[]>([]);
   const [detailCache, setDetailCache] = useState<Record<number, ObjectDetail>>({});
   const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
@@ -52,6 +54,12 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
   const [newMetaClass, setNewMetaClass] = useState('');
   const [newClass, setNewClass] = useState('');
   const [newAttrs, setNewAttrs] = useState<Record<string, string>>({});
+  // RBAC multi-tenant (plan.md action 11) : tenant explicite à poser sur un
+  // objet en cours de création, utile uniquement pour un tenant-admin
+  // multi-tenant (cas secondaire - un tenant-admin à un seul tenant est
+  // auto-tagué côté backend sans action requise ici). Non géré en édition
+  // (choix simple assumé pour ce premier passage, cf. rapport worker).
+  const [objectTenant, setObjectTenant] = useState('');
   const [jointValues, setJointValues] = useState<Record<string, number[]>>({});
   const [candidateLabels, setCandidateLabels] = useState<Record<number, string>>({});
 
@@ -352,6 +360,7 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
         attributes,
       };
       if (editingObjectId) payload.id = editingObjectId;
+      else if (authInfo.isTenantAdmin && authInfo.tenants.length > 1 && objectTenant) payload.tenants = [objectTenant];
 
       const res = await apiWriteObject(payload as { meta_class: string; class: string; attributes: Record<string, unknown> });
       const action = editingObjectId ? 'mis à jour' : 'créé';
@@ -374,6 +383,7 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
     setEditingObjectId(null);
     setNewAttrs({});
     setJointValues({});
+    setObjectTenant('');
   };
 
   // --- Inline cell click ---
@@ -791,6 +801,21 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
               );
             })}
 
+            {/* RBAC multi-tenant (action 11) : un tenant-admin à un seul
+                tenant est auto-tagué côté backend sans rien à faire ici
+                (cas simple visé par la conception) ; ce sélecteur ne
+                s'affiche que pour le cas secondaire multi-tenant, en
+                création uniquement. */}
+            {!editingObjectId && authInfo.isTenantAdmin && authInfo.tenants.length > 1 && (
+              <div className="form-group">
+                <label>Tenant</label>
+                <select value={objectTenant} onChange={(e) => setObjectTenant(e.target.value)}>
+                  <option value="">-- Sélectionner --</option>
+                  {authInfo.tenants.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            )}
+
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={closeModal}>Annuler</button>
               <button className="btn btn-primary" onClick={handleSave}>
@@ -922,7 +947,12 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                           style={{ cursor: readOnly ? 'default' : 'pointer' }}
                           title={readOnly ? '' : 'Double-clic pour modifier l\'objet'}
                         >
-                          <td style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>{obj.id}</td>
+                          <td style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>
+                            {obj.id}
+                            {obj.tenants && obj.tenants.length > 0 && (
+                              <span className="badge" style={{ marginLeft: 6, fontSize: 10 }} title="Tenants">{obj.tenants.join(', ')}</span>
+                            )}
+                          </td>
                           {attrNames.map((name) => {
                             const isInlineEditing = inlineEdit?.objectId === obj.id && inlineEdit?.attrName === name;
                             const attrDef = attrDefs.find((a) => a.name === name);

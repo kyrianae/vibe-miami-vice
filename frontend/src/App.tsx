@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar';
 import ConfigurationPage from './pages/ConfigurationPage';
 import NavigationPage from './pages/NavigationPage';
 import DiagramPage from './pages/DiagramPage';
+import { getAuthInfo, type AuthInfo } from './auth';
 
 type Page = 'configuration' | 'navigation' | 'diagramme';
 type Theme = 'dark' | 'midnight' | 'light';
@@ -15,14 +16,25 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>('dark');
   const [selectedMetaClass, setSelectedMetaClass] = useState<string | null>(null);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
+  const [authInfo, setAuthInfo] = useState<AuthInfo>(() => getAuthInfo(null));
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
+  // RBAC multi-tenant (plan.md action 11) : si la page Configuration est
+  // affichée et que l'utilisateur devient (ou est) tenant-readonly, on la
+  // quitte automatiquement - l'entrée de menu correspondante est elle-même
+  // masquée côté Navbar, donc cette page ne doit jamais rester accessible.
+  useEffect(() => {
+    if (page === 'configuration' && authInfo.isTenantReadonly) {
+      setPage('navigation');
+    }
+  }, [page, authInfo.isTenantReadonly]);
+
   return (
     <>
-      <Navbar page={page} onPageChange={setPage} readOnly={readOnly} onToggleReadOnly={setReadOnly} theme={theme} onThemeChange={setTheme} />
+      <Navbar page={page} onPageChange={setPage} readOnly={readOnly} onToggleReadOnly={setReadOnly} theme={theme} onThemeChange={setTheme} onAuthChange={setAuthInfo} />
       <div className="layout">
         <button
           className={`sidebar-toggle ${sidebarOpen ? 'shifted' : ''}`}
@@ -42,6 +54,7 @@ export default function App() {
           {page === 'configuration' ? (
             <ConfigurationPage
               selectedMetaClass={selectedMetaClass}
+              authInfo={authInfo}
             />
           ) : page === 'diagramme' ? (
             <DiagramPage
@@ -53,6 +66,7 @@ export default function App() {
               selectedMetaClass={selectedMetaClass}
               selectedClass={selectedClass}
               readOnly={readOnly}
+              authInfo={authInfo}
             />
           )}
         </div>
