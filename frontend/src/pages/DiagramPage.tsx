@@ -17,6 +17,20 @@ const CLASS_COLORS = [
   '#56b6c2', '#d19a66', '#be5046', '#7ec8e3', '#f0a0c0',
 ];
 
+// Nœuds masqués consécutifs max traversés pour reconstituer un lien transitif
+// (A -[membres]-> B -[employeur]-> C avec B masqué = 1 nœud masqué ; avec un
+// second masquage derrière C on irait jusqu'à 2). Au-delà, on arrête la
+// traversée : un lien reconstitué sur une trop longue chaîne de nœuds masqués
+// perd son sens visuel et risque de dégrader le rendu sur un graphe très connecté.
+const MAX_HIDDEN_CHAIN_DEPTH = 2;
+// Plafond du nombre total d'arêtes reconstituées traversant un même nœud
+// masqué donné (toutes arêtes entrantes confondues). Sans ce plafond, un
+// nœud masqué à fort fan-in/fan-out (ex. 10 entrées x 10 sorties) générerait
+// une explosion combinatoire d'arêtes synthétiques qui dégraderait le rendu
+// ECharts. 20 est un compromis arbitraire : assez large pour rester utile sur
+// un graphe réaliste, assez bas pour ne pas noyer la vue.
+const MAX_RECONSTRUCTED_EDGES_PER_HIDDEN_NODE = 20;
+
 interface DiagramPageProps {
   selectedMetaClass: string | null;
   selectedClass: string | null;
@@ -118,6 +132,65 @@ export default function DiagramPage({ selectedMetaClass, selectedClass }: Diagra
   // Build graph data
   const graphData = useMemo(() => {
     const visibleIds = new Set(filteredObjects.map((o) => o.id));
+
+    // 1. Graphe d'adjacence complet (tous les objets de `details`, toutes les
+    // arêtes), construit AVANT tout filtrage de visibilité, pour permettre la
+    // reconstruction de liens transitifs à travers des nœuds masqués.
+    type AdjEdge = { targetId: number; attrName: string };
+    const adjacency = new Map<number, AdjEdge[]>();
+    for (const obj of objects) {
+      const detail = details[obj.id];
+      if (!detail) continue;
+      const edges: AdjEdge[] = [];
+      for (const attr of detail.attributes) {
+        for (const val of attr.values) {
+          if (typeof val === 'object' && val !== null && 'joint_id' in val) {
+            edges.push({ targetId: val.joint_id, attrName: attr.name });
+          }
+        }
+      }
+      adjacency.set(obj.id, edges);
+    }
+
+    // 2. Fermeture transitive locale : depuis un nœud masqué, suit ses arêtes
+    // sortantes jusqu'à atteindre des nœuds visibles. `visitedOnPath` protège
+    // contre les cycles du chemin de traversée courant (même principe que
+    // `in_progress` côté backend pour deref/depth, backend/app.py) — le modèle
+    // comporte de vraies jointures récursives (groupe.membres -> groupe).
+    const resolveVisibleTargets = (
+      hiddenId: number,
+      visitedOnPath: Set<number>,
+      remainingHiddenDepth: number,
+      budget: number
+    ): number[] => {
+      if (budget <= 0) return [];
+      const edges = adjacency.get(hiddenId) || [];
+      const result: number[] = [];
+      for (const edge of edges) {
+        if (result.length >= budget) break;
+        const targetId = edge.targetId;
+        if (visitedOnPath.has(targetId)) continue;
+        if (visibleIds.has(targetId)) {
+          result.push(targetId);
+          continue;
+        }
+        if (remainingHiddenDepth <= 0) continue;
+        visitedOnPath.add(targetId);
+        const deeper = resolveVisibleTargets(
+          targetId,
+          visitedOnPath,
+          remainingHiddenDepth - 1,
+          budget - result.length
+        );
+        visitedOnPath.delete(targetId);
+        for (const t of deeper) {
+          if (result.length >= budget) break;
+          result.push(t);
+        }
+      }
+      return result;
+    };
+
     const nodes: echarts.GraphNodeItemOption[] = [];
     const links: echarts.GraphEdgeItemOption[] = [];
     const categories: { name: string; itemStyle: { color: string } }[] = [];
@@ -130,6 +203,17 @@ export default function DiagramPage({ selectedMetaClass, selectedClass }: Diagra
       categories.push({ name: cls, itemStyle: { color: classColorMap[cls] || '#888' } });
     });
 
+    const reconstructedEdgeCountByEntryNode = new Map<number, number>();
+    const addedReconstructedLinks = new Set<string>();
+    const addedDirectLinks = new Set<string>();
+    const hiddenEdgesToProcess: { objId: number; entryHiddenId: number }[] = [];
+
+    // Passe 1 : nœuds + arêtes directes. Remplit entièrement `addedDirectLinks`
+    // pour tous les objets visibles avant toute reconstruction (passe 2) : le
+    // dédoublonnage lien direct / lien reconstitué ne doit pas dépendre de
+    // l'ordre d'itération des arêtes (ex. arête masquée traitée avant l'arête
+    // directe vers la même cible, issue d'un autre attribut/objet). Les arêtes
+    // vers une cible masquée sont seulement collectées ici, traitées en passe 2.
     for (const obj of filteredObjects) {
       const detail = details[obj.id];
       const label = detail ? resolveDisplayName(detail) : `${obj.class} #${obj.id}`;
@@ -143,26 +227,58 @@ export default function DiagramPage({ selectedMetaClass, selectedClass }: Diagra
         label: { show: true, color: '#fff', fontSize: 11 },
       });
 
-      // Extract joint links
-      if (detail) {
-        for (const attr of detail.attributes) {
-          for (const val of attr.values) {
-            if (typeof val === 'object' && 'joint_id' in val) {
-              if (visibleIds.has(val.joint_id)) {
-                links.push({
-                  source: String(obj.id),
-                  target: String(val.joint_id),
-                  label: { show: true, formatter: attr.name, fontSize: 9, color: 'var(--color-text-muted, #999)' },
-                });
-              }
-            }
-          }
+      const edges = adjacency.get(obj.id) || [];
+      for (const edge of edges) {
+        if (visibleIds.has(edge.targetId)) {
+          addedDirectLinks.add(`${obj.id}=>${edge.targetId}`);
+          links.push({
+            source: String(obj.id),
+            target: String(edge.targetId),
+            label: { show: true, formatter: edge.attrName, fontSize: 9, color: 'var(--color-text-muted, #999)' },
+            lineStyle: { type: 'solid' },
+          });
+          continue;
         }
+        hiddenEdgesToProcess.push({ objId: obj.id, entryHiddenId: edge.targetId });
       }
     }
 
+    // Passe 2 : fermeture transitive vers un/des nœud(s) visible(s) pour chaque
+    // arête vers une cible masquée, `addedDirectLinks` étant désormais complet.
+    for (const { objId, entryHiddenId } of hiddenEdgesToProcess) {
+      const alreadyCount = reconstructedEdgeCountByEntryNode.get(entryHiddenId) || 0;
+      const remainingBudget = MAX_RECONSTRUCTED_EDGES_PER_HIDDEN_NODE - alreadyCount;
+      if (remainingBudget <= 0) continue;
+
+      const visitedOnPath = new Set<number>([objId, entryHiddenId]);
+      const reachable = resolveVisibleTargets(
+        entryHiddenId,
+        visitedOnPath,
+        MAX_HIDDEN_CHAIN_DEPTH - 1,
+        remainingBudget
+      );
+
+      let added = 0;
+      for (const targetId of reachable) {
+        const key = `${objId}=>${targetId}`;
+        if (addedReconstructedLinks.has(key)) continue;
+        // Un lien direct existe déjà pour cette même paire (ex. groupe/sous-groupe
+        // partageant un membre direct par ailleurs) : ne pas superposer un pointillé
+        // redondant par-dessus un trait plein déjà présent.
+        if (addedDirectLinks.has(key)) continue;
+        addedReconstructedLinks.add(key);
+        links.push({
+          source: String(objId),
+          target: String(targetId),
+          lineStyle: { type: 'dashed' },
+        });
+        added++;
+      }
+      reconstructedEdgeCountByEntryNode.set(entryHiddenId, alreadyCount + added);
+    }
+
     return { nodes, links, categories };
-  }, [filteredObjects, details, resolveDisplayName, classColorMap]);
+  }, [filteredObjects, objects, details, resolveDisplayName, classColorMap]);
 
   // Toggle class visibility
   const toggleClass = (cls: string) => {

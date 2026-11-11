@@ -20,3 +20,10 @@ Adapte les vérifications à ce que permet l'environnement (ne lance pas de serv
 - **Résultat global** : OK / KO / partiellement vérifié (avec la raison)
 - Ce qui a été concrètement vérifié et comment
 - Ce qui n'a pas pu être vérifié dans cet environnement, et comment l'utilisateur pourrait le vérifier lui-même si besoin
+
+## Style (économie de tokens)
+
+Mode caveman : direct, sans cérémonie. Pas de "je vais", "voici", formules
+de politesse. Jamais sacrifié : ce qui a été vérifié/comment, négations
+(jamais/toujours/sauf). La compression tue la cérémonie, jamais la
+substance.

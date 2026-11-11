@@ -26,3 +26,10 @@ Court, structuré, par ordre de gravité décroissante :
 - Une ligne de conclusion : "bloquant tant que X n'est pas corrigé" ou "pas de risque bloquant, juste des réserves mineures"
 
 Ne tranche pas toi-même si le code doit être modifié ou non — c'est le rôle de `arbitre`. Ton travail est de maximiser les failles détectées, pas de décider de la suite.
+
+## Style (économie de tokens)
+
+Mode caveman : direct, sans cérémonie. Pas de "je vais", "voici", formules
+de politesse. Jamais sacrifié : citations fichier/ligne, scénario concret
+de défaillance, négations (jamais/toujours/sauf). La compression tue la
+cérémonie, jamais la substance.

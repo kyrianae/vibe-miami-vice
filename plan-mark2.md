@@ -156,7 +156,21 @@
   validation casse immédiatement le chargement des fichiers d'exemple
   fournis (`model/personnes.json`, `model/reseau.json`), qui contiennent
   tous deux une clé `$schema` non déclarée.
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-10). Option B actée (attribut non déclaré
+  dans le modèle → 400). `_store_typed_value` factorisée (`write_object` +
+  `write_attribute_value`), typage piloté par `attr_def["type"]`,
+  validation `constraint` (regex) et `jsonschema.validate`
+  (`write_class`/`write_metaclass`/`init_from_model_files`,
+  skip-and-report) en place. 2 itérations de revue : it.1 a trouvé
+  2 points bloquants convergents (regex contournable via
+  `write_attribute_value` ; regex malformée → 500 non catché) + 1 point
+  d'harmonisation (ordre RBAC/validation dans `write_metaclass`) ; it.2 :
+  les 3 corrigés et revérifiés (28/28 tests, tests dédiés ajoutés dans
+  `backend/test_model_driven_typing.py` et
+  `backend/test_rbac_class_tenant_scope.py`). Arbitre final ✅ OK. Dette
+  non bloquante actée : messages jsonschema verbeux/anglais, `skipped` à
+  2 formes, type `"number"` mort, pas de validation de compilabilité de
+  `constraint` à la déclaration de classe. Non commité.
 
 ## 6. [Absence de fonctionnalité] Aucune route de suppression — avec historisation
 
@@ -216,7 +230,22 @@
   `attribute`/`attribute_value` (`_build_object_payload`, `list_objects`,
   etc.) doivent filtrer `WHERE av.valid_to IS NULL` par défaut (version
   courante uniquement) ; toute lecture d'objet doit filtrer
-  `WHERE deleted_at IS NULL` par défaut.
+  `WHERE deleted_at IS NULL` par défaut — concrètement, dans
+  `_build_object_payload` (`backend/app.py` lignes ~487-496), ajouter
+  `AND deleted_at IS NULL` dans **les deux branches** de la requête objet
+  (celle utilisée quand `tenant_filter is None` et celle avec le filtre
+  `string_to_array(tenants, ',') && %s::text[]`) — oublier une seule des
+  deux rendrait le comportement incohérent entre `global-admin` et un
+  rôle tenant face à un objet supprimé. Avec ce filtre, un objet cible
+  soft-deleted produit `obj = None`, donc `_resolve_joint_value` retombe
+  naturellement sur le chemin orphelin déjà existant (`{"joint_id": N}`
+  sans `resolved`) — pas de nouvelle clé `deleted` nécessaire, cf. 6.1.
+- **Index requis (conception finalisée du 2026-11-10, issue de l'arbitrage
+  6.1/6.2)** : `CREATE INDEX idx_attribute_value_joint_id ON
+  attribute_value(joint_id);` dans `sql/init.sql`, à créer en même temps
+  que les colonnes ci-dessus — requis par la cascade de 6.1 et la purge
+  de 6.2, qui filtrent toutes deux sur `joint_id` ; sans lui, chaque
+  suppression/purge scanne `attribute_value` entièrement.
 - **Hors périmètre explicite (TODO documenté, pas implémenté ici)** :
   l'affichage d'un historique des versions (UI de consultation des
   anciennes valeurs d'un attribut, ou des objets supprimés) est reporté —
@@ -226,24 +255,98 @@
 - **Fichiers** : `sql/init.sql`, `backend/app.py` (`write_object`,
   `_build_object_payload`, `list_objects`, et toute autre requête de
   lecture des attributs).
-- **Statut** : ⬜ à faire.
+- **Statut** : 🔄 en cours (2026-11-10) — implémentation worker terminée :
+  schéma migré (`valid_from`/`valid_to` sur `attribute_value`,
+  `deleted_at` sur `object`, index `idx_attribute_value_joint_id`),
+  migration manuelle appliquée sur le volume `pgdata` existant via
+  `docker compose exec db psql -U miami -d miami_vice -c "ALTER TABLE ..."`
+  (voir rapport worker pour le détail des 4 commandes), `write_object`
+  réécrit en logique de diff (réutilise la même ligne `attribute`
+  existante, ferme/insère uniquement les `attribute_value` effectivement
+  changées), lectures (`_build_object_payload` x2 branches, `list_objects`)
+  filtrées `valid_to IS NULL`/`deleted_at IS NULL`. Vérifié réellement
+  (stack Docker, `/api/init`, écritures/lectures via `psql`) : historisation
+  scalaire, diff ciblé sur un attribut multi-valué (`groupe.membres`,
+  1 seul membre historisé sur 5), fermeture complète d'un attribut omis,
+  lecture n'exposant jamais l'historique, filtre `deleted_at` effectif
+  (objet masqué + chemin orphelin `{"joint_id":...}` sans `resolved`).
+  Suites pytest (28 tests, `test_rbac_class_tenant_scope.py` +
+  `test_model_driven_typing.py`) toutes vertes après ajout d'un seul
+  pattern SQL au `FakeCursor` (`UPDATE attribute_value SET valid_to`).
+  En attente de validation testeur/arbitre.
 
 ### 6.1 Suppression logique d'un objet
 
-- **Correctif** : `DELETE /api/delete/object/<int:object_id>` : vérifier
-  l'existence et que l'objet n'est pas déjà supprimé (404 si absent ou
-  si `deleted_at IS NOT NULL`), puis dans la même transaction :
-  `UPDATE object SET deleted_at = now() WHERE id = %s`, et
+> **Conception finalisée (2026-11-10)** : les points ci-dessous, laissés
+> ouverts à la rédaction initiale puis objets d'une proposition de
+> l'utilisateur ("gérer à la suppression la cascade sur les jointures et
+> passer la jointure à supprimée en ajoutant la date de fin"), ont été
+> tranchés après une revue croisée (optimiste/pessimiste/candide) ayant
+> révélé une vraie brèche RBAC dans la proposition brute, puis un
+> arbitrage de synthèse. Décision finale ci-dessous — ne plus rediscuter
+> sans élément nouveau.
+
+- **Correctif** : `DELETE /api/delete/object/<int:object_id>` : dans une
+  seule transaction, `SELECT id, deleted_at FROM object WHERE id = %s FOR
+  UPDATE` (verrou explicite, voir garde-fous d'écriture ci-dessous — 404
+  si absent, 404 si `deleted_at IS NOT NULL` déjà supprimé, 403 RBAC si
+  `tenant-admin` hors de son périmètre), puis
+  `UPDATE object SET deleted_at = now() WHERE id = %s`, puis
   `UPDATE attribute_value SET valid_to = now() WHERE valid_to IS NULL AND attribute_id IN (SELECT id FROM attribute WHERE object_id = %s)`
-  (ferme toutes les valeurs actives de l'objet), `conn.commit()`,
+  (ferme toutes les valeurs actives de l'objet lui-même), `conn.commit()`,
   réponse `200 {"status":"ok","id":object_id,"deleted_at":"..."}`.
-- **Jointures entrantes** : `joint_id` reste intact (l'objet existe
-  toujours physiquement tant que la purge 6.2 n'est pas passée) — la
-  résolution `deref` (Mark 1 action 2bis) doit considérer un objet cible
-  `deleted_at IS NOT NULL` comme non résolvable par défaut (même
-  traitement que le cas « orphelin » déjà géré : `{"joint_id": N}` sans
-  `resolved`), sauf si l'équipe préfère exposer un flag `deleted: true`
-  explicite — à trancher au moment de l'implémentation.
+- **Cascade sur les jointures entrantes — scopée au périmètre tenant de
+  l'acteur** : une cascade immédiate et non scopée (fermer *toutes* les
+  jointures entrantes dès la suppression logique, quel que soit le tenant
+  de l'objet source) ouvrirait une brèche confirmée en lisant le code :
+  aucune contrainte ne lie le tenant d'un objet source à celui de la
+  cible d'un `joint_id`, et le RBAC de `write_object`/de cette route ne
+  vérifie que le périmètre de l'objet qu'on écrit/supprime directement —
+  un `tenant-admin` du tenant A supprimant X déclencherait sinon un effet
+  d'écriture sur un objet Y d'un tenant B, sans aucun contrôle RBAC sur Y.
+  Décision : fermer uniquement les jointures entrantes dont l'objet
+  source Y est dans le **même périmètre tenant que l'acteur** (ou toutes,
+  si l'acteur est `global-admin`). Les jointures cross-tenant résiduelles
+  restent actives mais inoffensives (le filtre `deleted_at IS NULL` de
+  6.0 les masque déjà en lecture, cf. ci-dessus) et seront nettoyées
+  définitivement à la purge (6.2, `global-admin`, autorité universelle).
+  Pas de clé `deleted: true` explicite — le traitement orphelin existant
+  suffit (voir le correctif lecture de 6.0 ci-dessus). SQL (à filtrer
+  **directement** sur `av.joint_id`, jamais via un sous-select sur
+  `attribute_id`, qui fermerait à tort les valeurs sœurs d'un attribut
+  multi-valué `joint-1-n`) :
+  ```sql
+  -- global-admin (pas de restriction tenant) :
+  UPDATE attribute_value SET valid_to = now()
+  WHERE joint_id = %s AND valid_to IS NULL;
+
+  -- tenant-admin (restreint aux objets sources de son périmètre) :
+  UPDATE attribute_value av
+  SET valid_to = now()
+  FROM attribute a, object o
+  WHERE av.attribute_id = a.id AND a.object_id = o.id
+    AND av.joint_id = %s AND av.valid_to IS NULL
+    AND (o.tenants IS NULL OR o.tenants = '' OR string_to_array(o.tenants, ',') && %s::text[]);
+  ```
+- **Garde-fous d'écriture contre une cible/un objet déjà supprimé
+  (nouveau, issu de l'arbitrage)** — sans ça, un gap confirmé permettrait
+  de créer indéfiniment de nouvelles jointures vers un objet déjà
+  supprimé, ou d'éditer un objet déjà soft-deleted (état « zombie »
+  invisible de l'UI mais présent en base) :
+  - `_insert_value` (`backend/app.py` lignes 736-757) : avant d'insérer
+    un `{"joint_id": N}`, `SELECT deleted_at FROM object WHERE id = %s
+    FOR SHARE` ; `400` si absent ou déjà supprimé. Ce verrou partagé et
+    le `FOR UPDATE` de la suppression (ci-dessus) portent sur la même
+    ligne `object` : ils s'excluent mutuellement le temps de la
+    transaction, fermant la fenêtre de course sans risque de deadlock
+    (une seule ressource verrouillée par transaction). Ne pas appliquer
+    ce garde dans `write_attribute_value` : les jointures ne transitent
+    jamais par cette route (déjà acté actions 4/5 de ce plan).
+  - `write_object` (branche UPDATE, ligne ~672) : charger aussi
+    `deleted_at` dans le `SELECT` existant, `404` si non NULL — même
+    sémantique que « n'existe pas ».
+  - `write_attribute_value` (ligne ~774) : même garde, `404` si
+    `deleted_at IS NOT NULL`, avant toute vérification RBAC.
 - **Câblage frontend minimal** : `apiDeleteObject` dans `api.ts`, bouton
   de suppression dans `NavigationPage.tsx` pour un objet — le strict
   minimum pour que la fonctionnalité soit utilisable.
@@ -253,7 +356,8 @@
   tenant (même logique que l'écriture, §11.2 de `plan-mark1.md`).
 - **Fichiers** : `backend/app.py`, `frontend/src/api.ts`,
   `frontend/src/pages/NavigationPage.tsx`.
-- **Dépendance** : nécessite 6.0 (colonnes `deleted_at`/`valid_to`).
+- **Dépendance** : nécessite 6.0 (colonnes `deleted_at`/`valid_to`, index
+  `idx_attribute_value_joint_id`).
 - **Statut** : ⬜ à faire.
 
 ### 6.2 Purge physique différée
@@ -266,11 +370,41 @@
 
 - **Principe** : après une période de grâce suivant `deleted_at`, un
   mécanisme de purge supprime **physiquement** les lignes
-  `attribute_value`/`attribute` de l'objet. Décision à prendre au moment
-  de l'implémentation : conserver la ligne `object` elle-même (avec juste
-  ses attributs purgés, préservant la trace des jointures entrantes) ou
-  la supprimer entièrement (active le `ON DELETE SET NULL`/`CASCADE` déjà
-  en place sur les jointures restantes).
+  `attribute_value`/`attribute` de l'objet.
+- **Conception finalisée (2026-11-10, arbitrage 6.1/6.2)** : **suppression
+  totale** de la ligne `object` elle-même (pas de coquille vide), à
+  condition impérative que la purge supprime d'abord, explicitement et
+  **inconditionnellement**, TOUTE ligne `attribute_value` référençant cet
+  objet en `joint_id` — active (`valid_to IS NULL`) **ou déjà fermée**
+  (`valid_to IS NOT NULL`, par une édition normale avant la suppression,
+  ou par la cascade de 6.1). Cette garde est nécessaire : si la purge ne
+  nettoyait que les jointures entrantes encore actives et oubliait des
+  lignes déjà historiquement closes qui référencent encore l'objet,
+  supprimer sa ligne `object` déclencherait quand même le FK
+  `ON DELETE SET NULL` sur ces lignes résiduelles → les 4 colonnes de
+  `attribute_value` deviendraient NULL → violation de la contrainte CHECK
+  → `POST /api/purge` échouerait de façon répétée et bloquante pour cet
+  objet (le même piège déjà rencontré et corrigé en Mark 1 action 6).
+  En purgeant TOUTES les jointures entrantes sans condition avant de
+  supprimer la ligne `object`, plus aucune ligne ne la référence au
+  moment du `DELETE FROM object` : le FK `ON DELETE SET NULL` n'a plus
+  rien à faire, le risque CHECK est éliminé structurellement — pas besoin
+  de prouver un nettoyage exhaustif au cas par cas. SQL (ordre strict,
+  même transaction, `now()` stable via `transaction_timestamp()`) :
+  ```sql
+  WITH candidates AS (
+      SELECT id FROM object
+      WHERE deleted_at IS NOT NULL
+        AND deleted_at < now() - make_interval(days => %(grace_days)s::integer)
+  )
+  -- 1. D'ABORD : purge inconditionnelle des jointures entrantes (actives ou closes)
+  DELETE FROM attribute_value WHERE joint_id IN (SELECT id FROM candidates);
+
+  -- 2. ENSUITE : suppression des objets eux-mêmes (cascade déjà en place vers
+  --    attribute puis attribute_value pour les propres attributs de l'objet,
+  --    plus aucun risque CHECK puisque l'étape 1 a déjà tout nettoyé)
+  DELETE FROM object WHERE id IN (SELECT id FROM candidates);
+  ```
 - **Stockage de la période de grâce (configurable)** :
   - Nouvelle table `sql/init.sql` : `app_config (key TEXT PRIMARY KEY,
     value TEXT NOT NULL)`, générique (clé/valeur), pour rester cohérent
@@ -399,7 +533,13 @@
 - **Fichiers** : `model/schema.json`.
 - **Dépendance** : doit précéder (ou accompagner dans le même commit)
   l'activation de la validation JSON Schema de l'action 5.
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-10). testeur 5/5 PASS (validité du schéma,
+  validation réelle de personnes.json/reseau.json, non-régression
+  additionalProperties:false, $schema confirmé non-required). Analyse
+  croisée combinée (optimiste/pessimiste/candide) : accepté tel quel,
+  re-dérivation indépendante convergente. Remarques non bloquantes :
+  collision de nom $schema méta-schéma/instance (note de clarté). Non
+  commité.
 
 ## 9. Partitionnement PostgreSQL par type d'objet
 
@@ -499,11 +639,117 @@
      construction des liens doit rester cohérent entre les 3 layouts
      (Force/Circulaire/Organigramme), qui consomment tous la même
      structure de données.
+  7. **Correctif doublon visuel (verdict arbitre 🔧 à corriger, 2026-11-11)** :
+     avant d'ajouter un lien reconstitué (pointillé) pour une paire
+     `(obj.id, targetId)`, vérifier qu'aucun lien **direct** n'existe déjà
+     pour cette même paire — sans ce garde-fou, un groupe et un sous-groupe
+     partageant un membre direct (`model/personnes.json`, classe `groupe`
+     masquée) peuvent produire un trait plein (direct) **et** un pointillé
+     (reconstitué) superposés entre les deux mêmes nœuds. Implémenté via un
+     `Set` `addedDirectLinks` (clé `${source}=>${target}`), alimenté au fil
+     de l'ajout des arêtes directes et consulté, en plus de
+     `addedReconstructedLinks`, avant tout ajout d'arête reconstituée.
+  8. **Correctif complémentaire — construction en 2 passes (réserve testeur
+     de confirmation finale, 2026-11-11)** : le garde-fou du point 7
+     (`addedDirectLinks`) ne protégeait correctement contre le doublon
+     visuel que si, dans la boucle unique mêlant arêtes directes et
+     masquées, l'arête directe vers une cible était itérée **avant**
+     l'arête masquée résolvant vers la même cible — ordre qui dépendait de
+     `ORDER BY a.id, av.id` côté backend (`sql/init.sql`/`backend/app.py`).
+     Non exploitable avec le schéma à 3 classes actuel du projet, mais
+     risque latent en cas d'évolution du modèle (classe à 2 attributs
+     joints distincts vers des cibles masquables indépendamment). Ce risque
+     a été **éliminé structurellement** en remplaçant la boucle unique par
+     une construction en 2 passes : passe 1, itération de toutes les
+     arêtes de tous les objets visibles, ajout de toutes les arêtes
+     directes dans `links` et remplissage complet de `addedDirectLinks`
+     (les arêtes vers une cible masquée sont seulement collectées dans
+     `hiddenEdgesToProcess`, pas encore traitées) ; passe 2, traitement des
+     seules arêtes collectées en passe 1, avec consultation d'un
+     `addedDirectLinks` désormais complet pour tous les objets visibles
+     avant tout ajout de lien reconstitué. Le dédoublonnage ne dépend plus
+     de l'ordre d'itération des arêtes, quelle que soit la requête SQL
+     source.
 - **Effort** : moyen (logique de fermeture transitive + anti-cycle +
   garde-fou de volume à tester sur un graphe réaliste avec plusieurs
   niveaux de jointures masquées).
 - **Fichiers** : `frontend/src/pages/DiagramPage.tsx`.
-- **Statut** : ⬜ à faire.
+- **Dette actée (non bloquante, documentée par l'arbitre, pas à corriger ce
+  cycle)** :
+  1. **Organigramme — perte silencieuse de branches en cas de fan-in** : le
+     layout « Organigramme » (`buildTree`, `visited` global) a une
+     limitation **préexistante** (pas introduite par cette action) : en cas
+     de fan-in (plusieurs sources vers un même nœud cible), une branche peut
+     se retrouver vide sans erreur ni signal (le `visited` global fait que
+     le premier parent à atteindre un nœud se l'approprie, les suivants le
+     filtrent silencieusement via `.filter(Boolean)`). Ce diff (liens
+     transitifs) **exacerbe** cette limitation (plus de liens reconstitués
+     = plus de fan-in possible) mais ne l'introduit pas. Une vraie
+     correction nécessiterait de passer d'une structure d'arbre à un DAG
+     pour ce layout — hors périmètre de l'action 10, qui ne demandait
+     qu'une vérification de cohérence (faite, limitation documentée ici).
+  2. **Plafond `MAX_RECONSTRUCTED_EDGES_PER_HIDDEN_NODE` par nœud masqué,
+     pas global** : masquer plusieurs classes simultanément pourrait
+     cumuler un nombre d'arêtes reconstituées non plafonné globalement
+     (N nœuds masqués × 20). Sans impact sur le dataset actuel du projet ;
+     à surveiller si le modèle grossit significativement.
+  Par ailleurs, l'absence de style pointillé sur les arêtes reconstituées
+  dans le layout Organigramme (série ECharts `tree`) a été évaluée et jugée
+  **non pertinente à corriger** : le point 3 ci-dessus (« distinction
+  visuelle obligatoire ») ciblait explicitement la série `graph`
+  (Force/Circulaire), pas `tree`.
+- **Statut** : ✅ fait (2026-11-10) — implémentation worker terminée puis
+  validée. Résumé : la fonction `graphData` construit d'abord une map
+  d'adjacence complète (`adjacency`, depuis `objects`/`details` non
+  filtrés), puis pour chaque arête dont la cible est masquée,
+  `resolveVisibleTargets` suit récursivement les arêtes sortantes du nœud
+  masqué (anti-cycle via `visitedOnPath`, même principe que `in_progress`
+  dans `backend/app.py`) jusqu'à un nœud visible. Arêtes directes en trait
+  plein avec label d'attribut ; arêtes reconstituées en trait pointillé
+  (`lineStyle.type: 'dashed'`) sans label. Garde-fous :
+  `MAX_HIDDEN_CHAIN_DEPTH = 2` (profondeur de nœuds masqués consécutifs) et
+  `MAX_RECONSTRUCTED_EDGES_PER_HIDDEN_NODE = 20` (plafond d'arêtes
+  reconstituées par nœud masqué, toutes sources confondues) — validé par un
+  test synthétique (fan-in 10 × fan-out 10 → 20 arêtes au lieu de 100) et
+  par un test de cycle réel (chaîne récursive type `groupe.membres` →
+  `groupe` avec boucle A↔B, 1ms, pas de dépassement de pile). Correctif
+  doublon visuel (point 7 ci-dessus, verdict arbitre 🔧) appliqué :
+  `addedDirectLinks` empêche la superposition d'un lien reconstitué par-
+  dessus un lien direct déjà présent pour la même paire — vérifié par
+  script Node synthétique exerçant directement la logique extraite de
+  `graphData` (adjacence + `resolveVisibleTargets` + construction des
+  liens), sur un cas générique propriétaire→cible directe+indirecte et sur
+  un cas à la frontière exacte du schéma `model/personnes.json`
+  (groupe/sous-groupe/membre partagé, classe `groupe` masquée : analyse et
+  script ont montré que ce schéma précis, strictement limité à ses 3
+  classes, n'offre aucun point d'entrée visible vers le sous-graphe
+  `groupe` une fois cette classe entièrement masquée — aucun lien n'est
+  alors produit, ni doublon ni reconstruction ; le motif doublon se
+  manifeste dès qu'un objet visible porte à la fois un lien direct et un
+  lien vers un nœud masqué résolvant vers la même cible, démontré avec un
+  rôle visible portant ces deux arêtes) ; non-régression des garde-fous
+  anti-cycle/profondeur/volume reconfirmée par le même script (scénarios 4
+  et 5 : plafond 20 toujours respecté, cycle réel toujours résolu sans
+  dépassement de pile). `tsc -b --force` dans le conteneur frontend : 3
+  erreurs préexistantes identiques avant/après (mêmes causes, lignes
+  décalées par l'ajout de code), aucune nouvelle. Les 2 points de dette et
+  la non-pertinence du style pointillé sur l'Organigramme sont documentés
+  ci-dessus, actés par l'arbitre, non corrigés ce cycle.
+  **Correctif complémentaire (2026-11-11, point 8 ci-dessus)** : la
+  dépendance à l'ordre d'itération des arêtes identifiée par le testeur de
+  confirmation finale est éliminée par passage à une construction en 2
+  passes (direct d'abord sur tous les objets visibles, reconstitué
+  ensuite). Vérifié par un script Node synthétique reproduisant exactement
+  le cas qui faisait échouer la réserve (arête masquée placée **avant**
+  l'arête directe vers la même cible dans le tableau source d'adjacence) :
+  un seul lien 1→3 produit (direct, trait plein), aucun doublon. Non-
+  régression reconfirmée sur anti-cycle (chaîne récursive A↔B, aucun lien
+  réflexif produit), plafond `MAX_RECONSTRUCTED_EDGES_PER_HIDDEN_NODE`
+  (25 entrées vers un même nœud masqué → exactement 20 arêtes reconstituées
+  conservées) et dédoublonnage entre deux arêtes reconstituées convergeant
+  vers la même paire source/cible (un seul lien produit). `tsc -b --force`
+  dans le conteneur frontend : toujours et uniquement les 3 mêmes erreurs
+  préexistantes, aucune nouvelle.
 
 ## Ordre d'exécution recommandé
 
@@ -540,15 +786,15 @@ Indépendante du reste, peut être traitée à tout moment ou laissée de côté
 
 | # | Vague | Action | Fait ? |
 |---|-------|--------|--------|
-| 8 | 1 | `$schema` non déclaré dans `model/schema.json` | ⬜ |
-| 5 | 1 | Validation de schéma/`constraint`, cohérence meta_class/class, **typage de stockage piloté par le modèle** | ⬜ |
+| 8 | 1 | `$schema` non déclaré dans `model/schema.json` | ✅ |
+| 5 | 1 | Validation de schéma/`constraint`, cohérence meta_class/class, **typage de stockage piloté par le modèle** | ✅ |
 | 6.0 | 2 | Historisation du modèle (`valid_from`/`valid_to`/`deleted_at` + réécriture `write_object`) | ⬜ |
 | 6.1 | 2 | Suppression logique d'un objet | ⬜ |
 | 6.2 | 2 | Purge physique différée (période de grâce **configurable par l'admin**, défaut 30 jours) | ⬜ |
 | 6.3 | 2 | Suppression d'une classe (physique) | ⬜ |
 | 6.4 | 2 | Suppression d'une meta-classe (physique) | ⬜ |
 | 9 | 3 | Partitionnement PostgreSQL par type d'objet (évaluation puis implémentation conditionnelle) | ⬜ |
-| 10 | 3 | Liens transitifs du graphe au filtrage de classe | ⬜ |
+| 10 | 3 | Liens transitifs du graphe au filtrage de classe | ✅ |
 | 7a | hors vague | Propagation du prop `readOnly` à `DiagramPage.tsx` (résiduel, faible priorité) | ⬜ |
 
 **Décision actée (2026-11-10, révisée le même jour)** : la période de

@@ -218,6 +218,34 @@ def test_write_metaclass_403_on_existing_global_class_and_no_silent_retag(client
     assert store["personne"]["data"] == before
 
 
+def test_write_metaclass_403_before_400_when_rbac_and_schema_both_invalid(client, monkeypatch):
+    """Correction plan-mark2.md action 5, point 3 : les gardes RBAC fines
+    s'exécutent désormais avant jsonschema.validate dans write_metaclass
+    (même ordre que write_class) - un tenant-admin hors périmètre doit
+    obtenir 403, pas 400, même si le schéma soumis est par ailleurs
+    invalide au regard de model/schema.json."""
+    store = _seed_personne_store([
+        {"class": "personne_physique", "attributes": [{"domain": "d", "name": "nom", "type": "string"}]},
+    ])
+    before = copy.deepcopy(store["personne"]["data"])
+
+    monkeypatch.setattr(miami_app, "get_db", lambda: FakeConn(store))
+    monkeypatch.setattr(
+        miami_app, "get_auth_context",
+        lambda: make_ctx(is_tenant_admin=True, tenants=["tenant1"]),
+    )
+
+    resp = client.post("/api/write/metaclass", json={
+        "meta_class": "personne",
+        "classes": [
+            {"class": "personne_physique", "attributes": [{"domain": "d", "name": "nom", "type": "type_invalide"}]},
+        ],
+    })
+
+    assert resp.status_code == 403
+    assert store["personne"]["data"] == before
+
+
 # ---------------------------------------------------------------------
 # 4. /api/init : pas de 403 global sur tout le chargement, skip ciblé +
 #    classe globale existante inchangée, autres classes traitées normalement

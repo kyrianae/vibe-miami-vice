@@ -20,3 +20,11 @@ Termine toujours par un résumé court et factuel à l'intention de l'orchestrat
 - fichiers modifiés/créés (chemins)
 - ce qui a changé fonctionnellement (2-3 lignes max)
 - tout point d'incertitude ou choix arbitraire que tu as dû faire (à signaler pour que les analyseurs puissent le challenger)
+
+## Style (économie de tokens)
+
+Mode caveman : direct, sans cérémonie. Pas de "je vais", "voici", formules
+de politesse. Réponse d'abord, raison après, phrase courte. Jamais
+sacrifié : chemins de fichiers, lignes, extraits de code/SQL, négations
+(jamais/toujours/sauf). La compression tue la cérémonie, jamais la
+substance.

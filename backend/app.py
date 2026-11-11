@@ -1,7 +1,9 @@
 import os
 import json
+import re
 import psycopg2
 import psycopg2.extras
+import jsonschema
 import jwt
 from jwt import PyJWKClient
 from flask import Flask, jsonify, request, abort, g
@@ -460,11 +462,12 @@ def list_objects():
     tenants = _tenant_read_filter()
     with get_db().cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         if tenants is None:
-            cur.execute("SELECT id, meta_class, class, tenants FROM object ORDER BY id")
+            cur.execute("SELECT id, meta_class, class, tenants FROM object WHERE deleted_at IS NULL ORDER BY id")
         else:
             cur.execute(
                 """SELECT id, meta_class, class, tenants FROM object
-                   WHERE tenants IS NULL OR tenants = '' OR string_to_array(tenants, ',') && %s::text[]
+                   WHERE deleted_at IS NULL
+                     AND (tenants IS NULL OR tenants = '' OR string_to_array(tenants, ',') && %s::text[])
                    ORDER BY id""",
                 (tenants,)
             )
@@ -472,6 +475,65 @@ def list_objects():
     for row in rows:
         row["tenants"] = _tenants_db_to_list(row["tenants"])
     return jsonify(rows)
+
+
+# Historisation (plan-mark2.md action 6.0) : ne retourne que les valeurs
+# actives (valid_to IS NULL) d'un objet, groupées par ligne attribute.
+# Partagée entre la lecture (_build_object_payload) et le diff d'écriture
+# (write_object, voir _load_active_attributes_by_name) pour n'avoir qu'une
+# seule définition de "valeur active" dans tout le module.
+_ACTIVE_ATTRIBUTE_VALUES_SQL = """
+    SELECT a.id AS attribute_id, a.domain, a.name,
+           av.id AS value_id, av.value_integer, av.value_float, av.value_string, av.joint_id
+    FROM attribute a
+    LEFT JOIN attribute_value av ON av.attribute_id = a.id AND av.valid_to IS NULL
+    WHERE a.object_id = %s
+    ORDER BY a.id, av.id
+"""
+
+
+def _decode_attribute_value_column(row):
+    """Retourne (colonne_de_stockage, valeur_décodée) d'une ligne renvoyée
+    par _ACTIVE_ATTRIBUTE_VALUES_SQL, ou (None, None) si la ligne ne porte
+    aucune valeur (attribut sans aucune valeur active, LEFT JOIN vide)."""
+    if row["value_integer"] is not None:
+        return "value_integer", row["value_integer"]
+    if row["value_float"] is not None:
+        return "value_float", row["value_float"]
+    if row["value_string"] is not None:
+        return "value_string", row["value_string"]
+    if row["joint_id"] is not None:
+        return "joint_id", row["joint_id"]
+    return None, None
+
+
+def _load_active_attributes_by_name(conn, object_id):
+    """Charge, pour write_object, l'état actif actuel des attributs d'un
+    objet déjà existant, regroupé par nom d'attribut (domain/name) :
+
+    {attr_name: {"attribute_id": int, "domain": str,
+                 "values": [{"id": int, "column": str, "value": ...}, ...]}}
+
+    Un attribut multi-valué (joint-1-n) a plusieurs entrées dans "values".
+    Base du diff de 6.0 : comparer ces valeurs actives à celles reçues dans
+    le corps de la requête, sans jamais fermer/recréer une valeur
+    inchangée au sein d'un même groupe.
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(_ACTIVE_ATTRIBUTE_VALUES_SQL, (object_id,))
+        rows = cur.fetchall()
+
+    by_name = {}
+    for row in rows:
+        entry = by_name.setdefault(row["name"], {
+            "attribute_id": row["attribute_id"],
+            "domain": row["domain"],
+            "values": [],
+        })
+        column, value = _decode_attribute_value_column(row)
+        if column is not None:
+            entry["values"].append({"id": row["value_id"], "column": column, "value": value})
+    return by_name
 
 
 def _build_object_payload(object_id, conn, tenant_filter=None):
@@ -486,11 +548,12 @@ def _build_object_payload(object_id, conn, tenant_filter=None):
     """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         if tenant_filter is None:
-            cur.execute("SELECT id, meta_class, class, tenants FROM object WHERE id = %s", (object_id,))
+            cur.execute("SELECT id, meta_class, class, tenants FROM object WHERE id = %s AND deleted_at IS NULL", (object_id,))
         else:
             cur.execute(
                 """SELECT id, meta_class, class, tenants FROM object
-                   WHERE id = %s AND (tenants IS NULL OR tenants = '' OR string_to_array(tenants, ',') && %s::text[])""",
+                   WHERE id = %s AND deleted_at IS NULL
+                     AND (tenants IS NULL OR tenants = '' OR string_to_array(tenants, ',') && %s::text[])""",
                 (object_id, tenant_filter)
             )
         obj = cur.fetchone()
@@ -501,14 +564,7 @@ def _build_object_payload(object_id, conn, tenant_filter=None):
     obj["tenants"] = _tenants_db_to_list(obj["tenants"])
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("""
-            SELECT a.id AS attribute_id, a.domain, a.name,
-                   av.id AS value_id, av.value_integer, av.value_float, av.value_string, av.joint_id
-            FROM attribute a
-            LEFT JOIN attribute_value av ON av.attribute_id = a.id
-            WHERE a.object_id = %s
-            ORDER BY a.id, av.id
-        """, (object_id,))
+        cur.execute(_ACTIVE_ATTRIBUTE_VALUES_SQL, (object_id,))
         attr_rows = cur.fetchall()
 
     attributes = {}
@@ -521,15 +577,8 @@ def _build_object_payload(object_id, conn, tenant_filter=None):
                 "values": []
             }
         if row["value_id"] is not None:
-            value = None
-            if row["value_integer"] is not None:
-                value = row["value_integer"]
-            elif row["value_float"] is not None:
-                value = row["value_float"]
-            elif row["value_string"] is not None:
-                value = row["value_string"]
-            elif row["joint_id"] is not None:
-                value = {"joint_id": row["joint_id"]}
+            column, decoded = _decode_attribute_value_column(row)
+            value = {"joint_id": decoded} if column == "joint_id" else decoded
             attributes[attr_key]["values"].append(value)
 
     obj["attributes"] = list(attributes.values())
@@ -657,6 +706,9 @@ def write_object():
                         class_def = cls
                         break
 
+        if defn is None or class_def is None:
+            abort(400, description=f"meta_class {body['meta_class']!r} / class {body['class']!r} non définie")
+
         # RBAC multi-tenant : un tenant-admin ne peut écrire que dans les
         # classes non taguées (globales) ou taguées pour l'un de ses tenants.
         if ctx.is_tenant_admin:
@@ -665,6 +717,7 @@ def write_object():
                 abort(403, description=f"Classe '{body['class']}' non autorisée pour votre tenant")
 
         object_id = body.get("id")
+        existing_by_name = {}
 
         with conn.cursor() as cur:
             if object_id:
@@ -686,13 +739,14 @@ def write_object():
                     (body["meta_class"], body["class"], _tenants_list_to_db(object_tenants), object_id)
                 )
 
-                # Supprimer les anciennes valeurs et attributs
-                cur.execute("""
-                    DELETE FROM attribute_value WHERE attribute_id IN (
-                        SELECT id FROM attribute WHERE object_id = %s
-                    )
-                """, (object_id,))
-                cur.execute("DELETE FROM attribute WHERE object_id = %s", (object_id,))
+                # Historisation (plan-mark2.md action 6.0) : plus de
+                # delete-then-recreate. L'état actif actuel est chargé pour
+                # être diffé, ligne par ligne, contre le corps de la requête
+                # ci-dessous (voir boucle sur `attrs`) - une valeur active
+                # retrouvée telle quelle dans la requête n'est jamais
+                # touchée (ni fermée ni réinsérée), seules les valeurs
+                # effectivement différentes sont historisées.
+                existing_by_name = _load_active_attributes_by_name(conn, object_id)
             else:
                 # CREATE
                 object_tenants = _determine_object_tenants(ctx, body, None)
@@ -703,27 +757,75 @@ def write_object():
                 object_id = cur.fetchone()[0]
 
             attrs = body.get("attributes", {})
+            seen_attr_names = set()
             for attr_name, attr_value in attrs.items():
-                # Trouver le domain depuis la définition
-                domain = "default"
-                if class_def:
-                    for attr_def in class_def.get("attributes", []):
-                        if attr_def["name"] == attr_name:
-                            domain = attr_def["domain"]
-                            break
+                seen_attr_names.add(attr_name)
 
-                cur.execute(
-                    "INSERT INTO attribute (object_id, domain, name) VALUES (%s, %s, %s) RETURNING id",
-                    (object_id, domain, attr_name)
-                )
-                attribute_id = cur.fetchone()[0]
+                # Trouver la définition de l'attribut dans le modèle de la classe
+                attr_def = None
+                for a in class_def.get("attributes", []):
+                    if a["name"] == attr_name:
+                        attr_def = a
+                        break
 
-                # Déterminer le type de valeur
-                if isinstance(attr_value, list):
-                    for v in attr_value:
-                        _insert_value(cur, attribute_id, v)
+                if attr_def is None:
+                    abort(400, description=f"Attribut {attr_name!r} non déclaré dans le modèle de la classe {body['class']!r}")
+
+                existing_attr = existing_by_name.get(attr_name)
+                if existing_attr is not None:
+                    # Attribut déjà présent sur l'objet (même ligne
+                    # `attribute` réutilisée, pas de doublon) : seule
+                    # l'historique des valeurs (attribute_value) change.
+                    attribute_id = existing_attr["attribute_id"]
+                    remaining_existing = list(existing_attr["values"])
                 else:
-                    _insert_value(cur, attribute_id, attr_value)
+                    cur.execute(
+                        "INSERT INTO attribute (object_id, domain, name) VALUES (%s, %s, %s) RETURNING id",
+                        (object_id, attr_def["domain"], attr_name)
+                    )
+                    attribute_id = cur.fetchone()[0]
+                    remaining_existing = []
+
+                received_values = attr_value if isinstance(attr_value, list) else [attr_value]
+                received_coerced = [_coerce_typed_value(attr_def, v) for v in received_values]
+
+                to_insert = []
+                for column, value in received_coerced:
+                    match_index = next(
+                        (i for i, ev in enumerate(remaining_existing)
+                         if ev["column"] == column and ev["value"] == value),
+                        None
+                    )
+                    if match_index is not None:
+                        # Valeur reçue identique (même colonne de stockage
+                        # ET même contenu) à une valeur active existante :
+                        # continuité historique, ni UPDATE ni INSERT.
+                        remaining_existing.pop(match_index)
+                    else:
+                        to_insert.append((column, value))
+
+                # Valeurs actives existantes non retrouvées parmi les
+                # valeurs reçues : fermées (historisées), pas de ré-insertion.
+                for ev in remaining_existing:
+                    cur.execute("UPDATE attribute_value SET valid_to = now() WHERE id = %s", (ev["id"],))
+
+                # Valeurs reçues sans correspondance active existante :
+                # nouvelle version (valid_from = now(), valid_to NULL).
+                for column, value in to_insert:
+                    cur.execute(
+                        f"INSERT INTO attribute_value (attribute_id, {column}) VALUES (%s, %s)",
+                        (attribute_id, value)
+                    )
+
+            # Attribut actif entier non repassé dans le corps de la requête
+            # (sémantique « remplacement complet », specifications.md §4.3) :
+            # fermeture de toutes ses valeurs actives, sans nouvelle
+            # insertion - l'attribut devient fermé, plus de version active.
+            for attr_name, existing_attr in existing_by_name.items():
+                if attr_name in seen_attr_names:
+                    continue
+                for ev in existing_attr["values"]:
+                    cur.execute("UPDATE attribute_value SET valid_to = now() WHERE id = %s", (ev["id"],))
 
         conn.commit()
         action = "updated" if body.get("id") else "created"
@@ -733,28 +835,77 @@ def write_object():
         raise e
 
 
-def _insert_value(cur, attribute_id, value):
-    """Insère une valeur dans attribute_value selon son type."""
-    if isinstance(value, dict) and "joint_id" in value:
-        cur.execute(
-            "INSERT INTO attribute_value (attribute_id, joint_id) VALUES (%s, %s)",
-            (attribute_id, value["joint_id"])
-        )
-    elif isinstance(value, int):
-        cur.execute(
-            "INSERT INTO attribute_value (attribute_id, value_integer) VALUES (%s, %s)",
-            (attribute_id, value)
-        )
-    elif isinstance(value, float):
-        cur.execute(
-            "INSERT INTO attribute_value (attribute_id, value_float) VALUES (%s, %s)",
-            (attribute_id, value)
-        )
-    else:
-        cur.execute(
-            "INSERT INTO attribute_value (attribute_id, value_string) VALUES (%s, %s)",
-            (attribute_id, str(value))
-        )
+def _coerce_typed_value(attr_def, raw_value):
+    """Valide et convertit une valeur brute selon le type déclaré de
+    l'attribut dans le modèle (attr_def["type"]), jamais par une devinette
+    sur la valeur reçue. Retourne (colonne_de_stockage, valeur_convertie),
+    sans toucher à la base - factorisée pour servir à la fois à l'insertion
+    (_store_typed_value) et au diff d'historisation de write_object (action
+    6.0), qui doit comparer une valeur reçue à une valeur active existante
+    sur exactement les mêmes critères de typage que ceux appliqués à
+    l'écriture.
+    """
+    attr_type = attr_def.get("type")
+    attr_name = attr_def.get("name")
+
+    if attr_type in ("joint-1-1", "joint-1-n"):
+        if not (isinstance(raw_value, dict) and "joint_id" in raw_value):
+            abort(400, description=f"Attribut {attr_name!r} (type {attr_type}) : valeur attendue de la forme {{'joint_id': <id>}}")
+        return "joint_id", raw_value["joint_id"]
+
+    if attr_type == "integer":
+        try:
+            return "value_integer", int(raw_value)
+        except (TypeError, ValueError):
+            abort(400, description=f"Valeur invalide pour l'attribut {attr_name!r} (entier attendu) : {raw_value!r}")
+
+    if attr_type in ("float", "number"):
+        try:
+            return "value_float", float(raw_value)
+        except (TypeError, ValueError):
+            abort(400, description=f"Valeur invalide pour l'attribut {attr_name!r} (nombre attendu) : {raw_value!r}")
+
+    # "string" (et tout type non reconnu, par sécurité) : toujours
+    # value_string, jamais de tentative int()/float() même si la valeur a
+    # l'air numérique (ex. code postal "007" doit rester "007").
+    #
+    # Validation de la "constraint" (regex) factorisée ici plutôt que dans
+    # write_object uniquement, pour qu'elle s'applique aussi à
+    # write_attribute_value (édition inline) : _coerce_typed_value ne
+    # traite jamais qu'une valeur scalaire à la fois (write_object itère
+    # déjà par élément pour un attribut multi-valué), donc un simple
+    # re.fullmatch par appel suffit à couvrir les deux cas d'usage.
+    if attr_type == "string" and attr_def.get("constraint"):
+        try:
+            matches = re.fullmatch(attr_def["constraint"], str(raw_value))
+        except re.error as e:
+            abort(400, description=f"Regex 'constraint' invalide dans le modèle pour l'attribut {attr_name!r} : {e}")
+        if not matches:
+            abort(400, description=f"Valeur invalide pour l'attribut {attr_name!r}: {raw_value!r}")
+    return "value_string", str(raw_value)
+
+
+def _store_typed_value(cur, attribute_id, attr_def, raw_value):
+    """Insère une valeur dans attribute_value (nouvelle version active :
+    valid_from = now() par défaut, valid_to NULL), typage/validation
+    délégués à _coerce_typed_value.
+
+    Factorisée pour être appelée identiquement depuis write_object (via
+    _insert_value) et write_attribute_value, qui divergaient auparavant
+    (JSON typé d'un côté, cascade int/float/string sans consultation du
+    modèle de l'autre).
+    """
+    column, value = _coerce_typed_value(attr_def, raw_value)
+    cur.execute(
+        f"INSERT INTO attribute_value (attribute_id, {column}) VALUES (%s, %s)",
+        (attribute_id, value)
+    )
+
+
+def _insert_value(cur, attribute_id, attr_def, value):
+    """Point d'entrée utilisé par write_object, délègue à _store_typed_value
+    pour appliquer la même règle de typage que write_attribute_value."""
+    _store_typed_value(cur, attribute_id, attr_def, value)
 
 
 @app.route("/api/write/attribute/<string:cls>/<int:object_id>/<string:attribute>/<string:value>", methods=["PUT"])
@@ -779,21 +930,35 @@ def write_attribute_value(cls, object_id, attribute, value):
             if obj["class"] != cls:
                 abort(400, description=f"L'objet {object_id} n'est pas de classe '{cls}'")
 
+            # Résolution du modèle (classe -> attr_def), nécessaire dans tous
+            # les cas (RBAC tenant-admin ET typage/Option B ci-dessous), donc
+            # faite une seule fois ici plutôt que dupliquée comme auparavant.
+            cur.execute("SELECT data FROM definition WHERE meta_class = %s", (obj["meta_class"],))
+            defn = cur.fetchone()
+            class_def = None
+            if defn:
+                for c in defn["data"].get("classes", []):
+                    if c["class"] == cls:
+                        class_def = c
+                        break
+
             if ctx.is_tenant_admin:
                 obj_tenants = _tenants_db_to_list(obj["tenants"])
                 if obj_tenants and not (set(obj_tenants) & set(ctx.tenants)):
                     abort(403, description="Objet hors de votre périmètre tenant")
-                cur.execute("SELECT data FROM definition WHERE meta_class = %s", (obj["meta_class"],))
-                defn_for_perm = cur.fetchone()
-                class_def_for_perm = None
-                if defn_for_perm:
-                    for c in defn_for_perm["data"].get("classes", []):
-                        if c["class"] == cls:
-                            class_def_for_perm = c
-                            break
-                class_tenants = (class_def_for_perm or {}).get("tenants") or []
+                class_tenants = (class_def or {}).get("tenants") or []
                 if class_tenants and not (set(class_tenants) & set(ctx.tenants)):
                     abort(403, description=f"Classe '{cls}' non autorisée pour votre tenant")
+
+            attr_def = None
+            if class_def:
+                for a in class_def.get("attributes", []):
+                    if a["name"] == attribute:
+                        attr_def = a
+                        break
+
+            if attr_def is None:
+                abort(400, description=f"Attribut '{attribute}' non déclaré dans le modèle de la classe '{cls}'")
 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # Chercher l'attribut existant
@@ -808,46 +973,16 @@ def write_attribute_value(cls, object_id, attribute, value):
                 # Supprimer les anciennes valeurs
                 cur.execute("DELETE FROM attribute_value WHERE attribute_id = %s", (attribute_id,))
             else:
-                # Créer l'attribut (chercher le domain dans la définition)
-                domain = "default"
-                cur.execute("SELECT meta_class FROM object WHERE id = %s", (object_id,))
-                obj_meta = cur.fetchone()
-                if obj_meta:
-                    cur.execute("SELECT data FROM definition WHERE meta_class = %s", (obj_meta["meta_class"],))
-                    defn = cur.fetchone()
-                    if defn:
-                        for c in defn["data"].get("classes", []):
-                            if c["class"] == cls:
-                                for a in c.get("attributes", []):
-                                    if a["name"] == attribute:
-                                        domain = a["domain"]
-                                        break
-
                 cur.execute(
                     "INSERT INTO attribute (object_id, domain, name) VALUES (%s, %s, %s) RETURNING id",
-                    (object_id, domain, attribute)
+                    (object_id, attr_def["domain"], attribute)
                 )
                 attribute_id = cur.fetchone()["id"]
 
-            # Insérer la nouvelle valeur (tenter int, puis float, sinon string)
-            try:
-                int_val = int(value)
-                cur.execute(
-                    "INSERT INTO attribute_value (attribute_id, value_integer) VALUES (%s, %s)",
-                    (attribute_id, int_val)
-                )
-            except ValueError:
-                try:
-                    float_val = float(value)
-                    cur.execute(
-                        "INSERT INTO attribute_value (attribute_id, value_float) VALUES (%s, %s)",
-                        (attribute_id, float_val)
-                    )
-                except ValueError:
-                    cur.execute(
-                        "INSERT INTO attribute_value (attribute_id, value_string) VALUES (%s, %s)",
-                        (attribute_id, value)
-                    )
+            # Insérer la nouvelle valeur, typage piloté par le modèle
+            # (attr_def["type"]), jamais par une cascade int/float/string sur
+            # la chaîne brute reçue dans l'URL - voir _store_typed_value.
+            _store_typed_value(cur, attribute_id, attr_def, value)
 
         conn.commit()
         return jsonify({"status": "ok", "object_id": object_id, "attribute": attribute, "value": value})
@@ -913,6 +1048,11 @@ def write_class():
 
         data["classes"] = classes
 
+        try:
+            jsonschema.validate(instance=data, schema=load_schema())
+        except jsonschema.ValidationError as e:
+            abort(400, description=str(e))
+
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE definition SET data = %s WHERE id = %s",
@@ -961,11 +1101,20 @@ def write_metaclass():
         # (sinon un remplacement complet pourrait effacer les classes d'un
         # autre tenant ou globales) ; chaque classe du nouveau contenu est
         # vérifiée/tagué par défaut selon la même règle que write_class.
+        # Gardes RBAC fines exécutées avant la validation de schéma JSON
+        # ci-dessous, même ordre que write_class (403 avant 400 pour un
+        # appelant hors de son périmètre tenant, même si le schéma soumis
+        # est par ailleurs invalide).
         if existing:
             for existing_cls in existing["data"].get("classes", []):
                 _check_existing_class_tenant_scope(ctx, existing_cls)
         for cls in data["classes"]:
             _check_class_tenant_write_permission(ctx, cls)
+
+        try:
+            jsonschema.validate(instance=data, schema=load_schema())
+        except jsonschema.ValidationError as e:
+            abort(400, description=str(e))
 
         with conn.cursor() as cur:
             if existing:
@@ -1030,6 +1179,16 @@ def init_from_model_files():
                         continue
 
                     meta_class_name = data["meta_class"]
+
+                    try:
+                        jsonschema.validate(instance=data, schema=load_schema())
+                    except jsonschema.ValidationError as e:
+                        skipped.append({
+                            "meta_class": meta_class_name,
+                            "file": filename,
+                            "reason": f"fichier invalide au regard du schéma JSON : {e}",
+                        })
+                        continue
 
                     if ctx.is_tenant_admin:
                         cur.execute("SELECT data FROM definition WHERE meta_class = %s", (meta_class_name,))
