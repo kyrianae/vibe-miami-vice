@@ -1,0 +1,90 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "planning",
+    "depends_on": [
+        "personne"
+    ],
+    "classes": [
+        {
+            "class": "projet",
+            "displayname": "{{nom}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "description",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "responsable",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "personne_physique"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "tache",
+            "displayname": "{{titre}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "titre",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "description",
+                    "type": "string"
+                },
+                {
+                    "domain": "temporel",
+                    "name": "date_debut",
+                    "type": "string",
+                    "constraint": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                    "domain": "temporel",
+                    "name": "date_fin",
+                    "type": "string",
+                    "constraint": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                    "domain": "logique",
+                    "name": "statut",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "projet",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "projet"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "assigne_a",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "personne_physique"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "depend_de",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "tache"
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -11,6 +11,13 @@
             "type": "string",
             "description": "Nom de la meta-classe regroupant les classes"
         },
+        "depends_on": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Noms des meta-classes externes dont une ou plusieurs classes de ce document dependent (ex: une classe ici a un attribut joint-1-1/joint-1-n dont la liste 'classes' cite une classe definie dans une autre meta-classe). Purement documentaire/informatif, non verifie au runtime : sert a tracer les dependances entre fichiers de modele (model/*.json, classes/*.json) quand une jointure traverse une meta-classe."
+        },
         "classes": {
             "type": "array",
             "items": {

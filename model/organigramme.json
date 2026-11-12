@@ -1,0 +1,71 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "organigramme",
+    "depends_on": [
+        "personne"
+    ],
+    "classes": [
+        {
+            "class": "service_organisation",
+            "displayname": "{{nom}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "responsable",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "personne_physique"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "service_parent",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "service_organisation"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "poste",
+            "displayname": "{{intitule}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "intitule",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "titulaire",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "personne_physique"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "poste_parent",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "poste"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "service",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "service_organisation"
+                    ]
+                }
+            ]
+        }
+    ]
+}

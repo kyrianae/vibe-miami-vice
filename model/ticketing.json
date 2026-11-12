@@ -1,0 +1,62 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "ticketing",
+    "depends_on": [
+        "personne",
+        "cmdb"
+    ],
+    "classes": [
+        {
+            "class": "ticket",
+            "displayname": "{{titre}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "titre",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "description",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "statut",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "priorite",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "demandeur",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "personne_physique"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "assigne_a",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "personne_physique"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "ci_concerne",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "serveur",
+                        "application",
+                        "service_metier"
+                    ]
+                }
+            ]
+        }
+    ]
+}

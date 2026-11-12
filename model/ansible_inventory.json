@@ -1,0 +1,84 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "ansible_inventory",
+    "depends_on": [
+        "cmdb"
+    ],
+    "classes": [
+        {
+            "class": "version_logicielle",
+            "displayname": "{{version}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "version",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "environnement",
+                    "type": "string"
+                },
+                {
+                    "domain": "temporel",
+                    "name": "date_deploiement",
+                    "type": "string",
+                    "constraint": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                    "domain": "lien",
+                    "name": "application",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "application"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "groupe_inventaire",
+            "displayname": "{{nom}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "description",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "variables_ansible",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "membres",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "serveur"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "groupe_parent",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "groupe_inventaire"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "version_deployee",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "version_logicielle"
+                    ]
+                }
+            ]
+        }
+    ]
+}
