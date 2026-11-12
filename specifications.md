@@ -678,8 +678,14 @@ authentification, ni lecture d'annuaire : ce sont des services prêts à
 > Section ajoutée le 2026-11-09, suite à une discussion des notes brutes
 > de `tocheck.md` avec l'équipe de revue (optimiste/pessimiste/candide).
 > Distincte de §9 : il ne s'agit pas d'anomalies du code actuel, mais
-> d'évolutions futures, certaines actées et planifiées (voir `plan.md`),
-> d'autres encore ouvertes.
+> d'évolutions futures, certaines actées et planifiées, d'autres encore
+> ouvertes. **Mise à jour du 2026-11-12** : le plan de suivi a depuis été
+> scindé en `plan-mark1.md` (clos le 2026-11-10) puis `plan-mark2.md` (clos
+> ce jour, voir sa section « Clôture de Mark 2 ») — les renvois `plan.md`
+> ci-dessous sont historiques ; chaque sous-section précise désormais le
+> fichier et le statut réels. §0-§9 ci-dessus restent un instantané figé de
+> l'audit du 2026-11-07 (bugs depuis corrigés en Mark 1/Mark 2, non
+> remis à jour ici pour préserver la trace de l'état initial).
 
 ### 10.1 Décisions tranchées (pour mémoire)
 
@@ -694,7 +700,7 @@ authentification, ni lecture d'annuaire : ce sont des services prêts à
   bloquer tout le backend pour tous les utilisateurs, un vecteur de déni
   de service trivial à exploiter. `MAX_DEPTH` reste figé à 5.
 
-### 10.2 Multi-tenant (acté — voir `plan.md` action 11)
+### 10.2 Multi-tenant (fait — `plan-mark1.md` action 11)
 
 Idée : ajouter une notion de tenant dans la configuration — des classes
 accessibles seulement dans certains tenants, des objets rattachés à un ou
@@ -714,7 +720,7 @@ la notion de tenant plutôt que de la dupliquer dans une table
 applicative — reste à concevoir, pas encore une action du plan.
 concevoir en détail qu'une fois l'authentification tranchée.
 
-### 10.3 Authentification (tranché — Keycloak)
+### 10.3 Authentification (fait — Keycloak, `plan-mark1.md` action 7b)
 
 Décision utilisateur (2026-11-09) : **Keycloak**, pour couvrir à la fois
 des comptes de service (flux `client_credentials`, Bearer JWT sans
@@ -742,39 +748,53 @@ d'implémentation : voir `plan.md` action 7b.
   directement porter la notion de tenant plutôt que de la dupliquer dans
   une table applicative séparée — à trancher conjointement.
 
-### 10.4 Historisation des objets et attributs (acté — voir `plan.md` action 6 révisée)
+### 10.4 Historisation des objets et attributs (fait — `plan-mark2.md` actions 6.0-6.4)
 
 Décision utilisateur (2026-11-09) : implémenter une historisation
 temporelle des attributs (`valid_from`/`valid_to` sur `attribute_value`)
 et une suppression **logique** des objets (`deleted_at` sur `object`,
 fermeture de tous les attributs actifs), suivie d'une **purge physique
-différée** après une période de grâce (valeur encore à confirmer — 30
-jours proposé à titre provisoire). Conception détaillée et prérequis
-technique (réécriture de `POST /api/write/object`, aujourd'hui un
-delete-then-recreate incompatible avec un diff versionné) : voir `plan.md`
-action 6 (révisée). L'affichage d'un historique de versions dans l'UI est
-explicitement reporté — seul le stockage historisé est prévu pour
-l'instant ; un TODO d'implémentation future de cette UI est noté ici pour
-mémoire.
+différée** après une période de grâce. **Implémenté et clos le
+2026-11-12** (voir `plan-mark2.md`, « Clôture de Mark 2 ») :
+`write_object`/`write_attribute_value` réécrits en diff versionné via
+`_apply_attribute_diff` (action 6.0) ; `DELETE /api/delete/object/<id>`
+pour la suppression logique, cascade sur les jointures entrantes scopée
+au tenant de l'acteur (action 6.1) ; période de grâce **configurable** à
+chaud (table `app_config`, défaut 30 jours) et `POST /api/purge` réservé
+`global-admin` (action 6.2) ; `DELETE /api/delete/class/...` et
+`DELETE /api/delete/metaclass/...` pour la suppression physique du schéma,
+sans effet sur les objets déjà créés (action 6.3/6.4). L'affichage d'un
+historique de versions dans l'UI reste hors périmètre, reporté à une
+action future (TODO conservé).
 
-### 10.5 Partitionnement PostgreSQL par type d'objet (acté comme piste à évaluer — voir `plan.md` action 9)
+### 10.5 Partitionnement PostgreSQL par type d'objet (évalué, non implémenté — `plan-mark2.md` action 9)
 
 Idée : partitionner la table `object` (et éventuellement
 `attribute`/`attribute_value`) par `class`/`meta_class` pour la
-performance. Réserve de l'équipe, documentée dans `plan.md` action 9 :
-le modèle est entièrement dynamique (classes définies en JSON dans
-`definition.data`, créées/renommées à chaud sans aucun DDL), alors que le
-partitionnement déclaratif PostgreSQL exige de connaître les valeurs de
-partition à l'avance et un DDL (`ATTACH PARTITION`) par nouvelle classe —
-tension de fond avec le principe même du projet (§1). Aucune volumétrie
-réelle ne justifie aujourd'hui ce chantier ; à n'engager qu'après mesure
-d'un besoin de performance concret.
+performance. Réserve de l'équipe : le modèle est entièrement dynamique
+(classes définies en JSON dans `definition.data`, créées/renommées à chaud
+sans aucun DDL), alors que le partitionnement déclaratif PostgreSQL exige
+de connaître les valeurs de partition à l'avance et un DDL (`ATTACH
+PARTITION`) par nouvelle classe — tension de fond avec le principe même
+du projet (§1). **Évaluation faite le 2026-11-12** (`plan-mark2.md` action
+9) : aucune donnée de volumétrie réelle de production disponible ;
+hypothèse de confort documentée (volumétrie modeste, quelques classes,
+pas de signal de croissance massive) ; conclusion **non justifié à ce
+stade**, coût (DDL dynamique jamais fait ailleurs dans ce projet, risque
+sur les contraintes FK existantes) supérieur au bénéfice mesurable.
+Conditions de réouverture : données réelles de prod montrant la table
+`object` tendre vers plusieurs millions de lignes, ou symptôme de
+performance mesuré sur des requêtes filtrées `class`/`meta_class`.
 
-### 10.6 Liens transitifs du graphe au filtrage (acté — voir `plan.md` action 10)
+### 10.6 Liens transitifs du graphe au filtrage (fait — `plan-mark2.md` action 10)
 
 Idée : dans la page Diagramme (`DiagramPage.tsx`), quand un filtre de
 classe masque un nœud intermédiaire d'une chaîne de jointures (A→B→C, B
 masqué), préserver la connexion logique en reliant A→C directement plutôt
-que de perdre les deux arêtes. Conception détaillée (fermeture
-transitive, gestion des cycles, distinction visuelle des arêtes
-reconstituées) : voir `plan.md` action 10.
+que de perdre les deux arêtes. **Implémenté** : fermeture transitive
+locale avec anti-cycle (`resolveVisibleTargets`), arêtes reconstituées
+visuellement distinctes (trait pointillé, sans label), garde-fous de
+profondeur et de volume (`MAX_HIDDEN_CHAIN_DEPTH`,
+`MAX_RECONSTRUCTED_EDGES_PER_HIDDEN_NODE`), construction en 2 passes pour
+un dédoublonnage indépendant de l'ordre d'itération SQL. Détail complet :
+voir `plan-mark2.md` action 10.

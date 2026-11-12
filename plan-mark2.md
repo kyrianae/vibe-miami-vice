@@ -1037,3 +1037,51 @@ Indépendante du reste, peut être traitée à tout moment ou laissée de côté
 grâce de purge (action 6.2) est **configurable par l'administrateur**
 (`global-admin`, table `app_config`, pas une constante Python), avec
 **30 jours** comme valeur par défaut au seed initial.
+
+## Clôture de Mark 2 (2026-11-12)
+
+**Fait dans ce cycle** : toutes les actions reprises de Mark 1 sont
+closes — 8, 5, 6.0 à 6.4 (historisation, suppression logique, purge
+physique différée, suppression physique classe/meta-classe), 7a
+(résiduel), 9 (évaluée, non implémentée faute de volumétrie réelle), 10
+(liens transitifs du graphe). `testeur-global` ✅ PASS à chaque clôture
+d'action et une dernière fois en fin de cycle (96 tests, stack complète
+redémarrée, cycle e2e réel avec vrai token Keycloak sur chaque
+fonctionnalité livrée).
+
+**Commits** (code, par action, working tree laissé propre à chaque
+clôture) :
+- `b6e0535` — 6.0 (historisation `attribute_value`) + 6.1 (suppression
+  logique d'objet)
+- `b6d1533` — 6.2 (purge physique différée)
+- `1198ba6` — 6.3 + 6.4 (suppression physique classe/meta-classe)
+- `b0d8703` — 7a (`readOnly` sur `DiagramPage`) + clôture documentaire de
+  l'action 9
+
+**Dette actée cumulée, non bloquante, délibérément non corrigée ce
+cycle** (détail dans chaque action ci-dessus) :
+- doublon de nom de classe au sein d'une même meta-classe non empêché par
+  `model/schema.json` (pas de `uniqueItems`) — une suppression de classe
+  (6.3) ne retire alors que la première occurrence ; hérité de
+  `write_class`/`write_metaclass`, pas une régression de Mark 2.
+- `int()` de la valeur de config (`app_config.purge_grace_period_days`)
+  non protégé contre une corruption manuelle directe en base (nécessite
+  un accès DB direct, hors API).
+- pas d'index sur `object.deleted_at` (coût négligeable tant que le
+  volume reste modeste, cf. action 9).
+- 3 erreurs TypeScript préexistantes dans `DiagramPage.tsx` (types
+  ECharts `GraphNodeItemOption`/`GraphEdgeItemOption`/
+  `TreeSeriesNodeItemOption`), confirmées identiques avant/après tout le
+  cycle, jamais liées à Mark 2.
+- affichage d'un historique de versions dans l'UI (consultation des
+  anciennes valeurs d'un attribut, ou des objets supprimés) : stockage en
+  place (6.0), UI explicitement hors périmètre — TODO conservé dans
+  `specifications.md` §10.4.
+
+**Reporté à `plan-mark3.md`** : rien — aucune action de Mark 2 ne reste
+ouverte. `plan-mark3.md` démarre donc sans backlog hérité, prêt à
+recevoir les prochaines demandes.
+
+**Non commité à la clôture de Mark 2** : `.claude/agents/*.md`
+(restructuration de l'équipe d'agents, décidée en cours de session mais
+hors scope fonctionnel de Mark 2 — à committer séparément si voulu).
