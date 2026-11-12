@@ -1,7 +1,12 @@
 """Tests ciblés sur plan-mark2.md action 5 : validation de schéma JSON +
-typage de stockage piloté par le modèle (_store_typed_value), et rejet
+typage de stockage piloté par le modèle (_coerce_typed_value), et rejet
 Option B d'un attribut non déclaré dans le modèle, pour write_object et
-write_attribute_value.
+write_attribute_value ; action 6.0 : historisation d'attribute_value
+(_apply_attribute_diff, partagée par les deux routes d'écriture) ; et
+action 6.1 : suppression logique d'un objet (delete_object), RBAC et
+cascade sur les jointures entrantes, garde-fou anti-zombie, et mitigation
+du deadlock PostgreSQL rare entre delete_object et write_object/
+write_attribute_value (DeadlockDetected -> 409).
 
 Même convention que backend/test_rbac_class_tenant_scope.py : pas de vraie
 base Postgres ni de vrai Keycloak, get_db()/get_auth_context() sont
@@ -17,6 +22,7 @@ import json
 import os
 import sys
 
+import psycopg2.errors
 import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -27,12 +33,27 @@ def make_ctx(is_global_admin=False, is_tenant_admin=False, is_tenant_readonly=Fa
     return miami_app.AuthContext(is_global_admin, is_tenant_admin, is_tenant_readonly, tenants or [])
 
 
+class _FakeNow:
+    """Sentinel timestamp (action 6.1) : se comporte comme le datetime réel
+    renvoyé par `RETURNING deleted_at` (seul point du module où le code
+    appelle `.isoformat()` sur une valeur issue du FakeCursor)."""
+    def isoformat(self):
+        return "now"
+
+    def __eq__(self, other):
+        return isinstance(other, _FakeNow) or other == "now"
+
+
 class FakeDB:
     def __init__(self):
         self.definitions = {}  # meta_class -> {"id":.., "data": {...}}
         self.objects = {}  # id -> {"meta_class":.., "class":.., "tenants":..}
         self.attributes = {}  # id -> {"object_id":.., "domain":.., "name":..}
-        self.attribute_values = {}  # id -> {"attribute_id":.., "value_integer":.., "value_float":.., "value_string":.., "joint_id":..}
+        # id -> {"attribute_id":.., "value_integer":.., "value_float":..,
+        #        "value_string":.., "joint_id":.., "valid_to": None|"now"}
+        # valid_to est réellement tracé : une fermeture marque la ligne,
+        # elle reste dans le store (l'historique doit être observable).
+        self.attribute_values = {}
         self._next_def_id = 1
         self._next_obj_id = 1
         self._next_attr_id = 1
@@ -56,12 +77,20 @@ class FakeCursor:
         return False
 
     def execute(self, sql, params=None):
+        # Réinitialisé à chaque execute : un fetchone()/fetchall() après une
+        # requête qui ne produit rien (UPDATE, INSERT sans RETURNING) ne doit
+        # jamais renvoyer le résultat périmé de la requête précédente.
+        self._result = None
+        self._results = None
         sql_norm = " ".join(sql.split())
         params = params or ()
 
         if sql_norm.startswith("SELECT data FROM definition WHERE meta_class"):
             row = self.db.definitions.get(params[0])
-            self._result = {"data": row["data"]} if row else None
+            if row is None:
+                self._result = None
+            else:
+                self._result = {"data": row["data"]} if self._is_dict_cursor() else (row["data"],)
 
         elif sql_norm.startswith("SELECT id, data FROM definition WHERE meta_class"):
             row = self.db.definitions.get(params[0])
@@ -79,70 +108,97 @@ class FakeCursor:
             self.db.definitions[meta_class] = {"id": self.db._next_def_id, "data": json.loads(data_json)}
             self.db._next_def_id += 1
 
-        elif sql_norm.startswith("SELECT id, tenants FROM object WHERE id"):
+        elif sql_norm.startswith("SELECT id, tenants, deleted_at FROM object WHERE id"):
             obj = self.db.objects.get(params[0])
-            self._result = (obj["id"], obj["tenants"]) if obj else None
+            self._result = (obj["id"], obj["tenants"], obj["deleted_at"]) if obj else None
 
-        elif sql_norm.startswith("SELECT id, class, meta_class, tenants FROM object WHERE id"):
+        elif sql_norm.startswith("SELECT id, class, meta_class, tenants, deleted_at FROM object WHERE id"):
             obj = self.db.objects.get(params[0])
-            self._result = dict(obj) if obj else None
+            if obj is None:
+                self._result = None
+            elif self._is_dict_cursor():
+                self._result = dict(obj)
+            else:
+                self._result = (obj["id"], obj["class"], obj["meta_class"], obj["tenants"], obj["deleted_at"])
 
         elif sql_norm.startswith("SELECT id, meta_class, class, tenants FROM object WHERE id"):
             obj = self.db.objects.get(params[0])
             self._result = dict(obj) if obj else None
 
+        elif sql_norm.startswith("SELECT deleted_at FROM object WHERE id"):
+            obj = self.db.objects.get(params[0])
+            self._result = (obj["deleted_at"],) if obj else None
+
+        elif sql_norm.startswith("SELECT id, deleted_at, tenants FROM object WHERE id"):
+            obj = self.db.objects.get(params[0])
+            self._result = (obj["id"], obj["deleted_at"], obj["tenants"]) if obj else None
+
         elif sql_norm.startswith("INSERT INTO object"):
             meta_class, cls, tenants = params
             obj_id = self.db._next_obj_id
             self.db._next_obj_id += 1
-            self.db.objects[obj_id] = {"id": obj_id, "meta_class": meta_class, "class": cls, "tenants": tenants}
+            self.db.objects[obj_id] = {"id": obj_id, "meta_class": meta_class, "class": cls, "tenants": tenants, "deleted_at": None}
             self._result = (obj_id,)
 
         elif sql_norm.startswith("UPDATE object SET meta_class"):
             meta_class, cls, tenants, obj_id = params
             self.db.objects[obj_id].update({"meta_class": meta_class, "class": cls, "tenants": tenants})
 
-        elif sql_norm.startswith("DELETE FROM attribute_value WHERE attribute_id IN"):
-            object_id = params[0]
-            attr_ids = {aid for aid, a in self.db.attributes.items() if a["object_id"] == object_id}
-            for vid in [vid for vid, v in self.db.attribute_values.items() if v["attribute_id"] in attr_ids]:
-                del self.db.attribute_values[vid]
+        elif sql_norm.startswith("UPDATE object SET deleted_at = now() WHERE id = %s RETURNING deleted_at"):
+            (obj_id,) = params
+            self.db.objects[obj_id]["deleted_at"] = _FakeNow()
+            self._result = (self.db.objects[obj_id]["deleted_at"],)
 
-        elif sql_norm.startswith("DELETE FROM attribute WHERE object_id"):
-            object_id = params[0]
-            for aid in [aid for aid, a in self.db.attributes.items() if a["object_id"] == object_id]:
-                del self.db.attributes[aid]
+        elif sql_norm.startswith("UPDATE attribute_value SET valid_to = now() WHERE valid_to IS NULL AND attribute_id IN"):
+            (object_id,) = params
+            attr_ids = {a["id"] for a in self.db.attributes.values() if a["object_id"] == object_id}
+            for v in self.db.attribute_values.values():
+                if v["attribute_id"] in attr_ids and v["valid_to"] is None:
+                    v["valid_to"] = "now"
 
-        elif sql_norm.startswith("DELETE FROM attribute_value WHERE attribute_id ="):
-            attribute_id = params[0]
-            for vid in [vid for vid, v in self.db.attribute_values.items() if v["attribute_id"] == attribute_id]:
-                del self.db.attribute_values[vid]
+        elif sql_norm.startswith("UPDATE attribute_value SET valid_to = now() WHERE joint_id = %s AND valid_to IS NULL"):
+            (joint_id,) = params
+            for v in self.db.attribute_values.values():
+                if v["joint_id"] == joint_id and v["valid_to"] is None:
+                    v["valid_to"] = "now"
+
+        elif sql_norm.startswith("UPDATE attribute_value av SET valid_to = now() FROM attribute a, object o"):
+            joint_id, actor_tenants = params
+            actor_tenants = set(actor_tenants or [])
+            for v in self.db.attribute_values.values():
+                if v["joint_id"] != joint_id or v["valid_to"] is not None:
+                    continue
+                attr = self.db.attributes.get(v["attribute_id"])
+                if attr is None:
+                    continue
+                src_obj = self.db.objects.get(attr["object_id"])
+                if src_obj is None:
+                    continue
+                src_tenants = src_obj.get("tenants")
+                if not src_tenants or set(src_tenants.split(",")) & actor_tenants:
+                    v["valid_to"] = "now"
+
+        # Aucune branche DELETE FROM attribute / attribute_value, volontairement :
+        # l'historisation (plan-mark2.md action 6.0) interdit toute suppression
+        # physique par les routes d'écriture. Une régression vers un DELETE
+        # tombe dans le `else` final et lève AssertionError.
 
         elif sql_norm.startswith("UPDATE attribute_value SET valid_to = now() WHERE id ="):
-            # Historisation (plan-mark2.md action 6.0) : FakeDB ne modélise
-            # pas valid_from/valid_to - une fermeture de valeur est simulée
-            # par une suppression de la ligne du store en mémoire, ce qui
-            # produit le même résultat observable pour ces tests (plus
-            # aucune lecture ultérieure, via la requête active ci-dessous,
-            # ne doit la retourner).
             (value_id,) = params
-            self.db.attribute_values.pop(value_id, None)
+            self.db.attribute_values[value_id]["valid_to"] = "now"
+
+        elif sql_norm.startswith("UPDATE attribute SET domain = %s WHERE id ="):
+            domain, attr_id = params
+            self.db.attributes[attr_id]["domain"] = domain
 
         elif sql_norm.startswith("INSERT INTO attribute (object_id, domain, name)"):
             object_id, domain, name = params
+            if any(a["object_id"] == object_id and a["name"] == name for a in self.db.attributes.values()):
+                raise AssertionError(f"UNIQUE (object_id, name) violée : {object_id}/{name}")
             attr_id = self.db._next_attr_id
             self.db._next_attr_id += 1
             self.db.attributes[attr_id] = {"id": attr_id, "object_id": object_id, "domain": domain, "name": name}
-            self._result = (attr_id,) if not isinstance(self, FakeRealDictCursor) else {"id": attr_id}
-
-        elif sql_norm.startswith("SELECT id FROM attribute WHERE object_id"):
-            object_id, name = params
-            found = None
-            for a in self.db.attributes.values():
-                if a["object_id"] == object_id and a["name"] == name:
-                    found = a
-                    break
-            self._result = {"id": found["id"]} if found else None
+            self._result = {"id": attr_id} if self._is_dict_cursor() else (attr_id,)
 
         elif sql_norm.startswith("INSERT INTO attribute_value (attribute_id, joint_id)"):
             attribute_id, joint_id = params
@@ -166,7 +222,10 @@ class FakeCursor:
             for a in sorted(self.db.attributes.values(), key=lambda a: a["id"]):
                 if a["object_id"] != object_id:
                     continue
-                vals = [v for v in self.db.attribute_values.values() if v["attribute_id"] == a["id"]]
+                vals = [
+                    v for v in self.db.attribute_values.values()
+                    if v["attribute_id"] == a["id"] and v["valid_to"] is None
+                ]
                 if not vals:
                     rows.append({
                         "attribute_id": a["id"], "domain": a["domain"], "name": a["name"],
@@ -185,6 +244,9 @@ class FakeCursor:
         else:
             raise AssertionError(f"SQL non géré par FakeCursor : {sql_norm!r}")
 
+    def _is_dict_cursor(self):
+        return isinstance(self, FakeRealDictCursor)
+
     def _store_value(self, attribute_id, value_integer=None, value_float=None, value_string=None, joint_id=None):
         vid = self.db._next_val_id
         self.db._next_val_id += 1
@@ -192,6 +254,7 @@ class FakeCursor:
             "id": vid, "attribute_id": attribute_id,
             "value_integer": value_integer, "value_float": value_float,
             "value_string": value_string, "joint_id": joint_id,
+            "valid_to": None,
         }
 
     def fetchone(self):
@@ -245,6 +308,7 @@ REGISTRE = [
             {"domain": "details", "name": "taux", "type": "float"},
             {"domain": "details", "name": "lien", "type": "joint-1-1", "classes": ["immatriculation"]},
             {"domain": "details", "name": "code_regex_cassee", "type": "string", "constraint": "([0-9]{3}"},
+            {"domain": "details", "name": "membres", "type": "joint-1-n", "classes": ["immatriculation"]},
         ],
     },
 ]
@@ -252,6 +316,17 @@ REGISTRE = [
 
 def _seed(db):
     db.seed_definition("registre", REGISTRE)
+
+
+def _value_rows(db, object_id, attr_name):
+    """Toutes les lignes attribute_value (actives ET fermées) de l'attribut
+    `attr_name` de l'objet, triées par id - la vue « historique » que les
+    routes de lecture ne doivent jamais exposer mais que les tests comptent."""
+    attr_ids = {a["id"] for a in db.attributes.values() if a["object_id"] == object_id and a["name"] == attr_name}
+    return sorted(
+        (v for v in db.attribute_values.values() if v["attribute_id"] in attr_ids),
+        key=lambda v: v["id"],
+    )
 
 
 # ---------------------------------------------------------------------
@@ -408,7 +483,7 @@ def test_write_attribute_value_constraint_ok(client, db_and_ctx):
 # 3ter. Une regex "constraint" syntaxiquement malformée dans le modèle ne
 #    doit jamais produire un 500 non catché, mais un 400 explicite -
 #    correction plan-mark2.md action 5, point 2. Vérifiée sur les deux
-#    endpoints qui passent par _store_typed_value.
+#    endpoints qui passent par _coerce_typed_value.
 # ---------------------------------------------------------------------
 
 def test_write_object_malformed_constraint_regex_returns_400_not_500(client, db_and_ctx):
@@ -543,3 +618,563 @@ def test_init_loads_real_model_files_with_schema_key(client, monkeypatch, db_and
     assert "personne" in body["loaded"]
     assert "element_avec_ip" in body["loaded"]
     assert body["skipped"] == []
+
+
+# ---------------------------------------------------------------------
+# 9. Historisation (plan-mark2.md action 6.0) : les routes d'écriture ne
+#    suppriment jamais une ligne attribute_value, elles ferment (valid_to)
+#    et insèrent. Les tests comptent les lignes physiques du store, pas
+#    seulement ce que la lecture expose - le harnais précédent, qui simulait
+#    une fermeture par suppression et acceptait un DELETE, était aveugle à
+#    la destruction d'historique par write_attribute_value.
+# ---------------------------------------------------------------------
+
+def _create(client, attributes):
+    resp = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation", "attributes": attributes,
+    })
+    assert resp.status_code == 201, resp.get_json()
+    return resp.get_json()["id"]
+
+
+def _update(client, object_id, attributes):
+    resp = client.post("/api/write/object", json={
+        "id": object_id, "meta_class": "registre", "class": "immatriculation", "attributes": attributes,
+    })
+    assert resp.status_code == 200, resp.get_json()
+
+
+def _read_values(client, object_id, attr_name):
+    read = client.get(f"/api/read/object/{object_id}").get_json()
+    return next(a["values"] for a in read["attributes"] if a["name"] == attr_name)
+
+
+def test_history_three_write_object_on_scalar_keeps_all_rows(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+    _update(client, object_id, {"matricule": "002"})
+    _update(client, object_id, {"matricule": "003"})
+
+    rows = _value_rows(db, object_id, "matricule")
+    assert len(rows) == 3
+    assert [r["value_string"] for r in rows] == ["001", "002", "003"]
+    assert [r["valid_to"] for r in rows] == ["now", "now", None]
+    assert len({r["attribute_id"] for r in rows}) == 1
+    assert len([a for a in db.attributes.values() if a["object_id"] == object_id]) == 1
+    assert _read_values(client, object_id, "matricule") == ["003"]
+
+
+def test_history_write_attribute_value_preserves_closed_rows(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+    _update(client, object_id, {"matricule": "002"})
+
+    put = client.put(f"/api/write/attribute/immatriculation/{object_id}/matricule/003")
+    assert put.status_code == 200, put.get_json()
+
+    rows = _value_rows(db, object_id, "matricule")
+    assert len(rows) == 3, "write_attribute_value a détruit l'historique"
+    assert [r["value_string"] for r in rows] == ["001", "002", "003"]
+    assert [r["valid_to"] for r in rows] == ["now", "now", None]
+    assert len({r["attribute_id"] for r in rows}) == 1
+    assert _read_values(client, object_id, "matricule") == ["003"]
+
+
+def test_history_identical_value_creates_no_row(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001", "age": 7})
+    _update(client, object_id, {"matricule": "001", "age": 7})
+    put = client.put(f"/api/write/attribute/immatriculation/{object_id}/matricule/001")
+    assert put.status_code == 200, put.get_json()
+    put = client.put(f"/api/write/attribute/immatriculation/{object_id}/age/7")
+    assert put.status_code == 200, put.get_json()
+
+    for attr_name in ("matricule", "age"):
+        rows = _value_rows(db, object_id, attr_name)
+        assert len(rows) == 1
+        assert rows[0]["valid_to"] is None
+
+
+def test_history_multivalued_remove_and_add_touches_only_two_rows(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    targets = [_create(client, {"matricule": f"{i:03d}"}) for i in range(1, 5)]
+    object_id = _create(client, {
+        "matricule": "100",
+        "membres": [{"joint_id": targets[0]}, {"joint_id": targets[1]}, {"joint_id": targets[2]}],
+    })
+    before = {r["id"]: dict(r) for r in _value_rows(db, object_id, "membres")}
+    assert len(before) == 3
+
+    _update(client, object_id, {
+        "matricule": "100",
+        "membres": [{"joint_id": targets[0]}, {"joint_id": targets[2]}, {"joint_id": targets[3]}],
+    })
+
+    rows = _value_rows(db, object_id, "membres")
+    assert len(rows) == 4
+    closed = [r for r in rows if r["valid_to"] is not None]
+    active = [r for r in rows if r["valid_to"] is None]
+    assert [r["joint_id"] for r in closed] == [targets[1]]
+    assert sorted(r["joint_id"] for r in active) == sorted([targets[0], targets[2], targets[3]])
+    untouched = [r for r in rows if r["id"] in before and r["joint_id"] != targets[1]]
+    assert all(r == before[r["id"]] for r in untouched)
+    assert sorted(_read_values(client, object_id, "membres"), key=lambda v: v["joint_id"]) == sorted(
+        [{"joint_id": targets[0]}, {"joint_id": targets[2]}, {"joint_id": targets[3]}],
+        key=lambda v: v["joint_id"],
+    )
+
+
+def test_history_joint_id_string_is_coerced_to_int(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    target = _create(client, {"matricule": "001"})
+    object_id = _create(client, {"matricule": "100", "lien": {"joint_id": str(target)}})
+    rows = _value_rows(db, object_id, "lien")
+    assert rows[0]["joint_id"] == target
+    assert isinstance(rows[0]["joint_id"], int)
+
+    _update(client, object_id, {"matricule": "100", "lien": {"joint_id": target}})
+    assert len(_value_rows(db, object_id, "lien")) == 1
+
+    bad = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "100", "lien": {"joint_id": "abc"}},
+    })
+    assert bad.status_code == 400
+
+
+def test_history_joint_id_bool_is_rejected(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    bad = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "100", "lien": {"joint_id": True}},
+    })
+    assert bad.status_code == 400
+
+
+def test_history_joint_id_non_integer_float_is_rejected(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    bad = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "100", "lien": {"joint_id": 5.7}},
+    })
+    assert bad.status_code == 400
+
+
+def test_history_joint_id_integer_float_is_coerced_to_int(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    target = _create(client, {"matricule": "001"})
+    object_id = _create(client, {"matricule": "100", "lien": {"joint_id": float(target)}})
+    rows = _value_rows(db, object_id, "lien")
+    assert rows[0]["joint_id"] == target
+    assert isinstance(rows[0]["joint_id"], int)
+
+
+def test_history_attribute_domain_realigned_on_model_change(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+    attr = next(a for a in db.attributes.values() if a["object_id"] == object_id and a["name"] == "matricule")
+    assert attr["domain"] == "details"
+
+    moved = json.loads(json.dumps(REGISTRE))
+    next(a for a in moved[0]["attributes"] if a["name"] == "matricule")["domain"] = "identite"
+    db.seed_definition("registre", moved)
+
+    _update(client, object_id, {"matricule": "001"})
+    assert attr["domain"] == "identite"
+    assert len([a for a in db.attributes.values() if a["object_id"] == object_id]) == 1
+    assert len(_value_rows(db, object_id, "matricule")) == 1
+
+
+def test_fake_cursor_rejects_any_delete_on_attribute_tables():
+    cur = FakeCursor(FakeDB())
+    for sql in (
+        "DELETE FROM attribute_value WHERE attribute_id = %s",
+        "DELETE FROM attribute_value WHERE attribute_id IN (SELECT id FROM attribute WHERE object_id = %s)",
+        "DELETE FROM attribute WHERE object_id = %s",
+    ):
+        with pytest.raises(AssertionError):
+            cur.execute(sql, (1,))
+
+
+# ---------------------------------------------------------------------
+# 10. Historisation (plan-mark2.md action 6.0), cas restés sans test :
+#     attribut omis du corps (fermeture complète), réécriture d'une valeur
+#     déjà historisée (jamais de réouverture), liste vide sur un
+#     multi-valué, création de la ligne `attribute` par write_attribute_value.
+# ---------------------------------------------------------------------
+
+def test_history_omitted_attribute_closes_all_active_values_without_insert(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    targets = [_create(client, {"matricule": f"{i:03d}"}) for i in range(1, 3)]
+    object_id = _create(client, {
+        "matricule": "100", "age": 7,
+        "membres": [{"joint_id": targets[0]}, {"joint_id": targets[1]}],
+    })
+    before_ids = sorted(v["id"] for v in db.attribute_values.values())
+    assert len(_value_rows(db, object_id, "age")) == 1
+    assert len(_value_rows(db, object_id, "membres")) == 2
+
+    _update(client, object_id, {"matricule": "100"})
+
+    assert sorted(v["id"] for v in db.attribute_values.values()) == before_ids, "insertion ou DELETE inattendu"
+    assert [r["valid_to"] for r in _value_rows(db, object_id, "age")] == ["now"]
+    assert [r["valid_to"] for r in _value_rows(db, object_id, "membres")] == ["now", "now"]
+    assert [r["valid_to"] for r in _value_rows(db, object_id, "matricule")] == [None]
+    assert len([a for a in db.attributes.values() if a["object_id"] == object_id]) == 3
+    assert _read_values(client, object_id, "age") == []
+    assert _read_values(client, object_id, "membres") == []
+    assert _read_values(client, object_id, "matricule") == ["100"]
+
+
+def test_history_write_attribute_value_back_to_old_value_never_reopens_closed_row(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"age": 1})
+    for value in ("001", "002", "001"):
+        put = client.put(f"/api/write/attribute/immatriculation/{object_id}/matricule/{value}")
+        assert put.status_code == 200, put.get_json()
+
+    rows = _value_rows(db, object_id, "matricule")
+    assert len(rows) == 3
+    assert [r["value_string"] for r in rows] == ["001", "002", "001"]
+    assert [r["valid_to"] for r in rows] == ["now", "now", None]
+    assert rows[0]["valid_to"] == "now", "la première ligne '001' a été réouverte"
+    assert len({r["attribute_id"] for r in rows}) == 1
+    assert _read_values(client, object_id, "matricule") == ["001"]
+
+
+def test_history_multivalued_empty_list_closes_all_without_insert(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    targets = [_create(client, {"matricule": f"{i:03d}"}) for i in range(1, 4)]
+    object_id = _create(client, {
+        "matricule": "100",
+        "membres": [{"joint_id": t} for t in targets],
+    })
+    before_ids = [r["id"] for r in _value_rows(db, object_id, "membres")]
+    assert len(before_ids) == 3
+
+    _update(client, object_id, {"matricule": "100", "membres": []})
+
+    rows = _value_rows(db, object_id, "membres")
+    assert [r["id"] for r in rows] == before_ids
+    assert [r["valid_to"] for r in rows] == ["now", "now", "now"]
+    assert len([a for a in db.attributes.values() if a["object_id"] == object_id and a["name"] == "membres"]) == 1
+    assert _read_values(client, object_id, "membres") == []
+
+
+def test_history_write_attribute_value_creates_attribute_row_when_missing(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "100"})
+    assert [a["name"] for a in db.attributes.values() if a["object_id"] == object_id] == ["matricule"]
+    values_before = len(db.attribute_values)
+
+    put = client.put(f"/api/write/attribute/immatriculation/{object_id}/age/5")
+    assert put.status_code == 200, put.get_json()
+
+    attrs = [a for a in db.attributes.values() if a["object_id"] == object_id]
+    assert sorted(a["name"] for a in attrs) == ["age", "matricule"]
+    age_attr = next(a for a in attrs if a["name"] == "age")
+    assert age_attr["domain"] == "details"
+    rows = _value_rows(db, object_id, "age")
+    assert len(rows) == 1
+    assert rows[0] == {
+        "id": rows[0]["id"], "attribute_id": age_attr["id"],
+        "value_integer": 5, "value_float": None, "value_string": None, "joint_id": None,
+        "valid_to": None,
+    }
+    assert len(db.attribute_values) == values_before + 1
+    assert _read_values(client, object_id, "age") == [5]
+
+
+# ---------------------------------------------------------------------
+# 11. Suppression logique (plan-mark2.md action 6.1) : delete_object.
+#     Rapatrié depuis le fichier scratchpad du testeur (infra vraie DB),
+#     adapté au harnais FakeDB/FakeCursor ci-dessus.
+# ---------------------------------------------------------------------
+
+def test_delete_object_closes_active_values_and_sets_deleted_at(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001", "age": 7})
+
+    resp = client.delete(f"/api/delete/object/{object_id}")
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["deleted_at"] == "now"
+    assert db.objects[object_id]["deleted_at"] is not None
+
+    for attr_name in ("matricule", "age"):
+        rows = _value_rows(db, object_id, attr_name)
+        assert rows and all(r["valid_to"] is not None for r in rows)
+
+
+def test_delete_object_twice_returns_404(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+
+    first = client.delete(f"/api/delete/object/{object_id}")
+    assert first.status_code == 200
+
+    second = client.delete(f"/api/delete/object/{object_id}")
+    assert second.status_code == 404
+
+
+def test_delete_object_rejected_for_tenant_readonly(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_tenant_readonly=True, tenants=["tenant1"]))
+    resp = client.delete(f"/api/delete/object/{object_id}")
+    assert resp.status_code == 403
+    assert db.objects[object_id]["deleted_at"] is None
+
+
+def test_delete_object_rejected_for_tenant_admin_out_of_scope(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+    resp = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "001"}, "tenants": ["tenant1"],
+    })
+    assert resp.status_code == 201, resp.get_json()
+    object_id = resp.get_json()["id"]
+
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_tenant_admin=True, tenants=["tenant2"]))
+    resp = client.delete(f"/api/delete/object/{object_id}")
+    assert resp.status_code == 403
+    assert db.objects[object_id]["deleted_at"] is None
+
+
+def test_delete_object_allowed_for_tenant_admin_in_scope(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+    resp = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "001"}, "tenants": ["tenant1"],
+    })
+    object_id = resp.get_json()["id"]
+
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_tenant_admin=True, tenants=["tenant1"]))
+    resp = client.delete(f"/api/delete/object/{object_id}")
+    assert resp.status_code == 200
+    assert db.objects[object_id]["deleted_at"] is not None
+
+
+def test_delete_object_allowed_for_global_admin_regardless_of_tenant(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+    resp = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "001"}, "tenants": ["tenant1"],
+    })
+    object_id = resp.get_json()["id"]
+
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_global_admin=True))
+    resp = client.delete(f"/api/delete/object/{object_id}")
+    assert resp.status_code == 200
+    assert db.objects[object_id]["deleted_at"] is not None
+
+
+def test_delete_object_cascade_closes_all_incoming_joins_for_global_admin(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    target = _create(client, {"matricule": "100"})
+    source1 = _create(client, {"matricule": "001", "lien": {"joint_id": target}})
+    source2 = _create(client, {"matricule": "002", "lien": {"joint_id": target}})
+
+    resp = client.delete(f"/api/delete/object/{target}")
+    assert resp.status_code == 200
+
+    for source in (source1, source2):
+        rows = _value_rows(db, source, "lien")
+        assert rows and all(r["valid_to"] is not None for r in rows)
+        assert _read_values(client, source, "lien") == []
+
+
+def test_delete_object_cascade_scoped_to_tenant_for_tenant_admin(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+    target = _create(client, {"matricule": "100"})
+    # Le target doit être dans le périmètre tenant1 pour que le tenant-admin
+    # puisse le supprimer (RBAC vérifié par ailleurs ci-dessus).
+    db.objects[target]["tenants"] = "tenant1"
+
+    resp = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "001", "lien": {"joint_id": target}}, "tenants": ["tenant1"],
+    })
+    source_in_scope = resp.get_json()["id"]
+
+    resp = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "002", "lien": {"joint_id": target}}, "tenants": ["tenant2"],
+    })
+    source_out_of_scope = resp.get_json()["id"]
+
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_tenant_admin=True, tenants=["tenant1"]))
+    resp = client.delete(f"/api/delete/object/{target}")
+    assert resp.status_code == 200
+
+    rows_in_scope = _value_rows(db, source_in_scope, "lien")
+    assert rows_in_scope and all(r["valid_to"] is not None for r in rows_in_scope)
+
+    rows_out_of_scope = _value_rows(db, source_out_of_scope, "lien")
+    assert rows_out_of_scope and all(r["valid_to"] is None for r in rows_out_of_scope)
+
+
+def test_delete_object_then_create_new_joint_toward_it_rejected(client, db_and_ctx):
+    """Garde-fou anti-zombie (_apply_attribute_diff) : un objet supprimé ne
+    doit jamais pouvoir recevoir une nouvelle jointure entrante - ici via
+    write_object en création."""
+    db = db_and_ctx
+    _seed(db)
+    target = _create(client, {"matricule": "100"})
+    client.delete(f"/api/delete/object/{target}")
+
+    resp = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "001", "lien": {"joint_id": target}},
+    })
+    assert resp.status_code == 400
+
+
+def test_delete_object_then_update_adding_new_joint_toward_it_rejected(client, db_and_ctx):
+    """Même garde-fou, via write_object en mise à jour (remplacement d'un
+    lien actif par un nouveau pointant vers un objet entre-temps supprimé)."""
+    db = db_and_ctx
+    _seed(db)
+    alive = _create(client, {"matricule": "100"})
+    target = _create(client, {"matricule": "200"})
+    object_id = _create(client, {"matricule": "001", "lien": {"joint_id": alive}})
+
+    client.delete(f"/api/delete/object/{target}")
+
+    resp = client.post("/api/write/object", json={
+        "id": object_id, "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "001", "lien": {"joint_id": target}},
+    })
+    assert resp.status_code == 400
+
+
+def test_write_object_update_on_deleted_object_returns_404(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+    client.delete(f"/api/delete/object/{object_id}")
+
+    resp = client.post("/api/write/object", json={
+        "id": object_id, "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "002"},
+    })
+    assert resp.status_code == 404
+
+
+def test_write_attribute_value_on_deleted_object_returns_404(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+    client.delete(f"/api/delete/object/{object_id}")
+
+    resp = client.put(f"/api/write/attribute/immatriculation/{object_id}/matricule/002")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------
+# 12. Deadlock PostgreSQL (plan-mark2.md action 6.1, correction arbitrage
+#     point 1) : cycle réel mais rare entre delete_object et write_object/
+#     write_attribute_value (delete_object tient B puis attend R, un write
+#     concurrent ferme R puis attend FOR SHARE sur B). PostgreSQL le
+#     détecte et annule l'une des deux transactions : les 3 routes
+#     attrapent désormais psycopg2.errors.DeadlockDetected avant le except
+#     Exception générique et renvoient 409 plutôt que de laisser
+#     l'exception remonter (500 non catché côté client).
+# ---------------------------------------------------------------------
+
+class _DeadlockCursor(FakeCursor):
+    """FakeCursor qui lève DeadlockDetected dès qu'un execute() correspond
+    au préfixe SQL donné, pour simuler le point précis de la transaction où
+    PostgreSQL aurait détecté le cycle - le reste du comportement (SELECT/
+    INSERT/UPDATE précédents) est inchangé, délégué à FakeCursor."""
+
+    def __init__(self, db, trigger_prefix):
+        super().__init__(db)
+        self.trigger_prefix = trigger_prefix
+
+    def execute(self, sql, params=None):
+        if " ".join(sql.split()).startswith(self.trigger_prefix):
+            raise psycopg2.errors.DeadlockDetected("deadlock detected")
+        super().execute(sql, params)
+
+
+class DeadlockConn(FakeConn):
+    def __init__(self, db, trigger_prefix):
+        super().__init__(db)
+        self.trigger_prefix = trigger_prefix
+        self.rolled_back = False
+
+    def cursor(self, cursor_factory=None):
+        if cursor_factory is not None:
+            return FakeRealDictCursor(self.db)
+        return _DeadlockCursor(self.db, self.trigger_prefix)
+
+    def rollback(self):
+        self.rolled_back = True
+        super().rollback()
+
+
+def test_delete_object_deadlock_returns_409(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+
+    conn = DeadlockConn(db, "UPDATE object SET deleted_at = now()")
+    monkeypatch.setattr(miami_app, "get_db", lambda: conn)
+
+    resp = client.delete(f"/api/delete/object/{object_id}")
+    assert resp.status_code == 409
+    assert "Conflit" in resp.get_data(as_text=True)
+    assert conn.rolled_back
+    assert db.objects[object_id]["deleted_at"] is None
+
+
+def test_write_object_deadlock_returns_409(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+
+    conn = DeadlockConn(db, "INSERT INTO attribute_value (attribute_id, value_string)")
+    monkeypatch.setattr(miami_app, "get_db", lambda: conn)
+
+    resp = client.post("/api/write/object", json={
+        "meta_class": "registre", "class": "immatriculation",
+        "attributes": {"matricule": "001"},
+    })
+    assert resp.status_code == 409
+    assert "Conflit" in resp.get_data(as_text=True)
+    assert conn.rolled_back
+
+
+def test_write_attribute_value_deadlock_returns_409(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+
+    conn = DeadlockConn(db, "INSERT INTO attribute_value (attribute_id, value_string)")
+    monkeypatch.setattr(miami_app, "get_db", lambda: conn)
+
+    resp = client.put(f"/api/write/attribute/immatriculation/{object_id}/matricule/002")
+    assert resp.status_code == 409
+    assert "Conflit" in resp.get_data(as_text=True)
+    assert conn.rolled_back

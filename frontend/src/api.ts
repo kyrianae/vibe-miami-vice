@@ -109,6 +109,13 @@ export const apiWriteAttribute = (cls: string, id: number, attribute: string, va
     { method: 'PUT' }
   );
 
+// DELETE - Objects (suppression logique, plan-mark2.md action 6.1)
+export const apiDeleteObject = (id: number) =>
+  fetchJsonAuth<{ status: string; id: number; deleted_at: string }>(
+    `${BASE}/delete/object/${id}`,
+    { method: 'DELETE' }
+  );
+
 // Init
 export const apiInit = () =>
   fetchJsonAuth<{ status: string; loaded: string[] }>(`${BASE}/init`, { method: 'POST' });

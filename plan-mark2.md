@@ -255,7 +255,8 @@
 - **Fichiers** : `sql/init.sql`, `backend/app.py` (`write_object`,
   `_build_object_payload`, `list_objects`, et toute autre requête de
   lecture des attributs).
-- **Statut** : 🔄 en cours (2026-11-10) — implémentation worker terminée :
+- **Statut** : ✅ fait (2026-11-12).
+  Historique 2026-11-10 — implémentation worker initiale :
   schéma migré (`valid_from`/`valid_to` sur `attribute_value`,
   `deleted_at` sur `object`, index `idx_attribute_value_joint_id`),
   migration manuelle appliquée sur le volume `pgdata` existant via
@@ -273,7 +274,40 @@
   Suites pytest (28 tests, `test_rbac_class_tenant_scope.py` +
   `test_model_driven_typing.py`) toutes vertes après ajout d'un seul
   pattern SQL au `FakeCursor` (`UPDATE attribute_value SET valid_to`).
-  En attente de validation testeur/arbitre.
+  Cycle d'arbitrage final (2026-11-12, non commité dans le même cycle que
+  l'implémentation initiale) : `write_attribute_value` historisée à son
+  tour via `_apply_attribute_diff` factorisée (partagée avec
+  `write_object`), verrou `FOR NO KEY UPDATE` posé sur la ligne `object`
+  (préféré à `FOR UPDATE` pour rester compatible avec le `KEY SHARE` pris
+  par toute FK `joint_id`, évite un deadlock), contrainte
+  `UNIQUE(object_id, name)` ajoutée sur `attribute` dans `sql/init.sql`,
+  `domain` (`attribute.domain`) réaligné sur le modèle à l'écriture s'il a
+  évolué, `joint_id` casté en `int()`, harnais FakeDB/FakeCursor corrigé en
+  conséquence. Revue croisée (testeur + pessimiste + candide) sur cette
+  correction : 2 points bloquants remontés par pessimiste et corrigés en
+  2e itération — (1) contrainte `UNIQUE(object_id,name)` : vérifiée sans
+  effet sur le volume Postgres existant (`miami-vice_pgdata`, créé avant
+  cette correction, `init.sql` ne s'applique qu'à un volume neuf) ;
+  vérification directe sur le volume réel : 0 doublon existant, contrainte
+  appliquée dessus (confirmé `\d attribute`) ; (2) `_coerce_typed_value`
+  (cast `joint_id`) durci : rejette désormais explicitement un bool et un
+  float non entier (évitait une jointure silencieusement corrompue, ex.
+  `5.7` tronqué en `5`), accepte toujours int/string entière/float entier.
+  Dette actée non bloquante (décision orchestrateur, pas de correction
+  dans ce cycle) : réalignement du `domain` effectué seulement au
+  prochain write de l'attribut (un objet jamais réécrit garde un `domain`
+  périmé si le modèle change — limite inhérente à une historisation
+  diff-based, acceptée) ; absence de tests d'intégration contre un vrai
+  Postgres pour le verrou `FOR NO KEY UPDATE`/la contrainte UNIQUE (suite
+  pytest 100% FakeDB, vérifications réelles faites manuellement par
+  testeur/testeur-global via `psql` mais pas automatisées). Validation
+  finale : suite pytest complète verte (37 passed, 5 échecs pré-existants
+  hors scope liés à `/model/schema.json`, confirmés identiques à master,
+  non liés à ce diff), testeur-global OK (stack docker compose complète
+  démarrée, `/api/init` + routes read + écriture d'attribut existant +
+  création d'objet neuf testés sur la vraie DB, historisation confirmée
+  bout en bout, DB nettoyée après test). 2 itérations de correction au
+  total sur ce cycle d'arbitrage.
 
 ### 6.1 Suppression logique d'un objet
 
@@ -358,7 +392,57 @@
   `frontend/src/pages/NavigationPage.tsx`.
 - **Dépendance** : nécessite 6.0 (colonnes `deleted_at`/`valid_to`, index
   `idx_attribute_value_joint_id`).
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-12).
+  Implémentation : `DELETE /api/delete/object/<int:object_id>` posant le
+  verrou `FOR UPDATE` sur l'objet cible, `404` si absent ou déjà
+  supprimé, RBAC conforme (`tenant-readonly` 403, `tenant-admin` scopé à
+  son périmètre, `global-admin` libre), fermeture des valeurs actives de
+  l'objet lui-même puis cascade sur les jointures entrantes scopée au
+  tenant de l'acteur via un filtre direct sur `av.joint_id` (pas de
+  sous-select sur `attribute_id`, pour ne pas fermer à tort les valeurs
+  sœurs d'un attribut multi-valué). Garde-fous zombie posés : `_apply_attribute_diff`
+  refuse désormais la création d'une nouvelle jointure vers un objet
+  supprimé (`FOR SHARE` + `400`), `write_object`/`write_attribute_value`
+  renvoient `404` sur un objet cible déjà soft-deleted. Câblage frontend
+  minimal : `apiDeleteObject` (`api.ts`), bouton « suppr. » dans
+  `NavigationPage.tsx`. Revue croisée (testeur + pessimiste + candide), 2
+  points bloquants remontés par pessimiste et corrigés en 2e itération :
+  (1) le commentaire initial annonçant « une seule ressource verrouillée,
+  pas de deadlock possible » était faux — un deadlock réel (pas
+  théorique) existe entre `delete_object` (`FOR UPDATE` sur l'objet
+  cible) et `write_object`/`write_attribute_value` (ferme une valeur
+  jointe puis `FOR SHARE` sur un objet cible), cycle à 2 ressources
+  possible sous interleaving concurrent précis ; mitigé par un catch
+  ciblé `psycopg2.errors.DeadlockDetected` → `409` (rollback propre) dans
+  les 3 routes concernées, sans refonte du schéma de verrouillage (jugée
+  disproportionnée pour ce scope) ; (2) les tests de validation,
+  initialement écrits hors dépôt (scratchpad, vraie DB), ont été
+  rapatriés dans `backend/test_model_driven_typing.py` sur le harnais
+  `FakeDB` existant — 15 tests réels (12 sur `delete_object`/RBAC/cascade/
+  garde-fou zombie + 3 sur le catch deadlock), le chiffre initialement
+  annoncé par worker (23) étant erroné, corrigé après vérification par
+  testeur. Dette actée non bloquante : gap du harnais de test
+  (`FakeCursor` ne simule pas le filtre `deleted_at IS NULL` sur
+  `GET /api/read/object`, le vrai code le fait bien — gap de mock, pas de
+  code) ; les tests deadlock déclenchent `DeadlockDetected` sur un point
+  générique plutôt que le chemin exact narré (capture quand même le
+  comportement) ; `FakeConn.rollback()` ne simule pas un vrai rollback
+  atomique (limite du harnais, Postgres réel le fait correctement).
+  Validation finale : suite pytest complète verte (52 passed, 5 échecs
+  pré-existants hors scope liés à `/model/schema.json`, confirmés
+  identiques à master), testeur-global OK (stack docker compose
+  complète, cycle réel sur vraie DB : création objet+jointure, DELETE
+  soft, objet masqué en lecture, jointure fermée, garde-fous zombie x2
+  vérifiés en conditions réelles, RBAC vérifié, DB nettoyée après test ;
+  `npm run build` échoue sur 3 erreurs TypeScript préexistantes dans
+  `DiagramPage.tsx` non liées à 6.1, déjà documentées dans
+  plan-mark1.md/plan-mark2.md ; `vite build` seul et les fichiers touchés
+  par 6.1 compilent proprement). Point remonté par testeur-global pour
+  6.2 (pas un défaut de 6.1) : confirme que la purge physique de 6.2 doit
+  bien fermer/retirer toutes les `attribute_value.joint_id` référençant
+  l'objet avant le `DELETE FROM object`, exactement comme déjà prévu dans
+  la conception actée de 6.2 — rien à changer à cette conception. 2
+  itérations de correction au total sur ce cycle d'arbitrage.
 
 ### 6.2 Purge physique différée
 
@@ -788,8 +872,8 @@ Indépendante du reste, peut être traitée à tout moment ou laissée de côté
 |---|-------|--------|--------|
 | 8 | 1 | `$schema` non déclaré dans `model/schema.json` | ✅ |
 | 5 | 1 | Validation de schéma/`constraint`, cohérence meta_class/class, **typage de stockage piloté par le modèle** | ✅ |
-| 6.0 | 2 | Historisation du modèle (`valid_from`/`valid_to`/`deleted_at` + réécriture `write_object`) | ⬜ |
-| 6.1 | 2 | Suppression logique d'un objet | ⬜ |
+| 6.0 | 2 | Historisation du modèle (`valid_from`/`valid_to`/`deleted_at` + réécriture `write_object`/`write_attribute_value` via `_apply_attribute_diff`, verrou `FOR NO KEY UPDATE`, `UNIQUE(object_id,name)`) | ✅ |
+| 6.1 | 2 | Suppression logique d'un objet (`DELETE /api/delete/object`, cascade jointures scopée tenant, garde-fous zombie, catch deadlock) | ✅ |
 | 6.2 | 2 | Purge physique différée (période de grâce **configurable par l'admin**, défaut 30 jours) | ⬜ |
 | 6.3 | 2 | Suppression d'une classe (physique) | ⬜ |
 | 6.4 | 2 | Suppression d'une meta-classe (physique) | ⬜ |

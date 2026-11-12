@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { apiReadObjects, apiReadObject, apiWriteObject, apiWriteAttribute, apiReadClasses } from '../api';
+import { apiReadObjects, apiReadObject, apiWriteObject, apiWriteAttribute, apiDeleteObject, apiReadClasses } from '../api';
 import type { ObjectSummary, ObjectDetail, ClassInfo, AttributeDefinition } from '../types';
 import type { AuthInfo } from '../auth';
 
@@ -332,6 +332,23 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
     setJointValues(joints);
     loadCandidatesForDef(def);
     setShowCreate(true);
+  };
+
+  // --- Delete (suppression logique, action 6.1) ---
+  const handleDeleteObject = async (obj: ObjectSummary) => {
+    if (!window.confirm(`Supprimer l'objet #${obj.id} (${obj.class}) ?`)) return;
+    try {
+      await apiDeleteObject(obj.id);
+      addToast('success', `Objet #${obj.id} supprimé`);
+      loadObjects();
+      setDetailCache((prev) => {
+        const next = { ...prev };
+        delete next[obj.id];
+        return next;
+      });
+    } catch (e: unknown) {
+      addToast('error', e instanceof Error ? e.message : 'Erreur');
+    }
   };
 
   // --- Save (create or update) ---
@@ -951,6 +968,13 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                             {obj.id}
                             {obj.tenants && obj.tenants.length > 0 && (
                               <span className="badge" style={{ marginLeft: 6, fontSize: 10 }} title="Tenants">{obj.tenants.join(', ')}</span>
+                            )}
+                            {!readOnly && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteObject(obj); }}
+                                title="Supprimer cet objet"
+                                style={{ marginLeft: 6, background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: 11, padding: 0, textDecoration: 'underline' }}
+                              >suppr.</button>
                             )}
                           </td>
                           {attrNames.map((name) => {

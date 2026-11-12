@@ -2,6 +2,7 @@ import os
 import json
 import re
 import psycopg2
+import psycopg2.errors
 import psycopg2.extras
 import jsonschema
 import jwt
@@ -508,8 +509,9 @@ def _decode_attribute_value_column(row):
 
 
 def _load_active_attributes_by_name(conn, object_id):
-    """Charge, pour write_object, l'état actif actuel des attributs d'un
-    objet déjà existant, regroupé par nom d'attribut (domain/name) :
+    """Charge, pour write_object et write_attribute_value, l'état actif
+    actuel des attributs d'un objet déjà existant, regroupé par nom
+    d'attribut (domain/name) :
 
     {attr_name: {"attribute_id": int, "domain": str,
                  "values": [{"id": int, "column": str, "value": ...}, ...]}}
@@ -721,10 +723,17 @@ def write_object():
 
         with conn.cursor() as cur:
             if object_id:
-                # UPDATE : vérifier que l'objet existe
-                cur.execute("SELECT id, tenants FROM object WHERE id = %s", (object_id,))
+                # UPDATE : vérifier que l'objet existe, sous verrou de ligne.
+                # FOR NO KEY UPDATE et non FOR UPDATE : la vérification FK de
+                # tout INSERT attribute_value(joint_id) prend un KEY SHARE sur
+                # la ligne object cible ; FOR UPDATE le bloque (deadlock si deux
+                # objets se référencent en croisé), NO KEY UPDATE le laisse passer
+                # tout en sérialisant deux écritures sur le même objet.
+                cur.execute("SELECT id, tenants, deleted_at FROM object WHERE id = %s FOR NO KEY UPDATE", (object_id,))
                 existing = cur.fetchone()
                 if not existing:
+                    abort(404, description=f"Objet {object_id} non trouvé")
+                if existing[2] is not None:
                     abort(404, description=f"Objet {object_id} non trouvé")
                 existing_tenants = _tenants_db_to_list(existing[1])
 
@@ -741,8 +750,8 @@ def write_object():
 
                 # Historisation (plan-mark2.md action 6.0) : plus de
                 # delete-then-recreate. L'état actif actuel est chargé pour
-                # être diffé, ligne par ligne, contre le corps de la requête
-                # ci-dessous (voir boucle sur `attrs`) - une valeur active
+                # être diffé, attribut par attribut, contre le corps de la
+                # requête (voir _apply_attribute_diff) - une valeur active
                 # retrouvée telle quelle dans la requête n'est jamais
                 # touchée (ni fermée ni réinsérée), seules les valeurs
                 # effectivement différentes sont historisées.
@@ -771,51 +780,11 @@ def write_object():
                 if attr_def is None:
                     abort(400, description=f"Attribut {attr_name!r} non déclaré dans le modèle de la classe {body['class']!r}")
 
-                existing_attr = existing_by_name.get(attr_name)
-                if existing_attr is not None:
-                    # Attribut déjà présent sur l'objet (même ligne
-                    # `attribute` réutilisée, pas de doublon) : seule
-                    # l'historique des valeurs (attribute_value) change.
-                    attribute_id = existing_attr["attribute_id"]
-                    remaining_existing = list(existing_attr["values"])
-                else:
-                    cur.execute(
-                        "INSERT INTO attribute (object_id, domain, name) VALUES (%s, %s, %s) RETURNING id",
-                        (object_id, attr_def["domain"], attr_name)
-                    )
-                    attribute_id = cur.fetchone()[0]
-                    remaining_existing = []
-
                 received_values = attr_value if isinstance(attr_value, list) else [attr_value]
-                received_coerced = [_coerce_typed_value(attr_def, v) for v in received_values]
-
-                to_insert = []
-                for column, value in received_coerced:
-                    match_index = next(
-                        (i for i, ev in enumerate(remaining_existing)
-                         if ev["column"] == column and ev["value"] == value),
-                        None
-                    )
-                    if match_index is not None:
-                        # Valeur reçue identique (même colonne de stockage
-                        # ET même contenu) à une valeur active existante :
-                        # continuité historique, ni UPDATE ni INSERT.
-                        remaining_existing.pop(match_index)
-                    else:
-                        to_insert.append((column, value))
-
-                # Valeurs actives existantes non retrouvées parmi les
-                # valeurs reçues : fermées (historisées), pas de ré-insertion.
-                for ev in remaining_existing:
-                    cur.execute("UPDATE attribute_value SET valid_to = now() WHERE id = %s", (ev["id"],))
-
-                # Valeurs reçues sans correspondance active existante :
-                # nouvelle version (valid_from = now(), valid_to NULL).
-                for column, value in to_insert:
-                    cur.execute(
-                        f"INSERT INTO attribute_value (attribute_id, {column}) VALUES (%s, %s)",
-                        (attribute_id, value)
-                    )
+                _apply_attribute_diff(
+                    cur, object_id, attr_name, attr_def,
+                    existing_by_name.get(attr_name), received_values
+                )
 
             # Attribut actif entier non repassé dans le corps de la requête
             # (sémantique « remplacement complet », specifications.md §4.3) :
@@ -830,6 +799,9 @@ def write_object():
         conn.commit()
         action = "updated" if body.get("id") else "created"
         return jsonify({"status": "ok", "id": object_id, "action": action, "tenants": object_tenants}), 200 if action == "updated" else 201
+    except psycopg2.errors.DeadlockDetected:
+        conn.rollback()
+        abort(409, description="Conflit d'écriture concurrente, réessayez")
     except Exception as e:
         conn.rollback()
         raise e
@@ -839,11 +811,10 @@ def _coerce_typed_value(attr_def, raw_value):
     """Valide et convertit une valeur brute selon le type déclaré de
     l'attribut dans le modèle (attr_def["type"]), jamais par une devinette
     sur la valeur reçue. Retourne (colonne_de_stockage, valeur_convertie),
-    sans toucher à la base - factorisée pour servir à la fois à l'insertion
-    (_store_typed_value) et au diff d'historisation de write_object (action
-    6.0), qui doit comparer une valeur reçue à une valeur active existante
-    sur exactement les mêmes critères de typage que ceux appliqués à
-    l'écriture.
+    sans toucher à la base - seul point de typage du diff d'historisation
+    (_apply_attribute_diff, action 6.0), qui compare une valeur reçue à une
+    valeur active existante sur exactement les mêmes critères que ceux
+    appliqués à l'écriture.
     """
     attr_type = attr_def.get("type")
     attr_name = attr_def.get("name")
@@ -851,7 +822,18 @@ def _coerce_typed_value(attr_def, raw_value):
     if attr_type in ("joint-1-1", "joint-1-n"):
         if not (isinstance(raw_value, dict) and "joint_id" in raw_value):
             abort(400, description=f"Attribut {attr_name!r} (type {attr_type}) : valeur attendue de la forme {{'joint_id': <id>}}")
-        return "joint_id", raw_value["joint_id"]
+        # int() obligatoire : la valeur active relue depuis joint_id (INTEGER)
+        # est un int, un "5" reçu en JSON ne matcherait jamais 5 dans le diff
+        # (fermeture + réinsertion à tort) et la FK recevrait une chaîne.
+        joint_id = raw_value["joint_id"]
+        if isinstance(joint_id, bool):
+            abort(400, description=f"Attribut {attr_name!r} (type {attr_type}) : joint_id entier attendu : {joint_id!r}")
+        if isinstance(joint_id, float) and not joint_id.is_integer():
+            abort(400, description=f"Attribut {attr_name!r} (type {attr_type}) : joint_id entier attendu : {joint_id!r}")
+        try:
+            return "joint_id", int(joint_id)
+        except (TypeError, ValueError):
+            abort(400, description=f"Attribut {attr_name!r} (type {attr_type}) : joint_id entier attendu : {joint_id!r}")
 
     if attr_type == "integer":
         try:
@@ -885,27 +867,86 @@ def _coerce_typed_value(attr_def, raw_value):
     return "value_string", str(raw_value)
 
 
-def _store_typed_value(cur, attribute_id, attr_def, raw_value):
-    """Insère une valeur dans attribute_value (nouvelle version active :
-    valid_from = now() par défaut, valid_to NULL), typage/validation
-    délégués à _coerce_typed_value.
+def _apply_attribute_diff(cur, object_id, attr_name, attr_def, existing_attr, received_values):
+    """Historisation (plan-mark2.md action 6.0) : applique le diff entre
+    l'état actif d'UN attribut (existing_attr, entrée de
+    _load_active_attributes_by_name ou None si l'attribut n'existe pas
+    encore sur l'objet) et la liste des valeurs brutes reçues pour cet
+    attribut. Seul chemin d'écriture d'attribute_value du module, partagé
+    par write_object et write_attribute_value :
 
-    Factorisée pour être appelée identiquement depuis write_object (via
-    _insert_value) et write_attribute_value, qui divergaient auparavant
-    (JSON typé d'un côté, cascade int/float/string sans consultation du
-    modèle de l'autre).
+    - la ligne `attribute` existante est réutilisée (jamais de doublon,
+      garanti aussi par UNIQUE (object_id, name)), son domaine réaligné
+      sur le modèle si celui-ci a évolué ; sinon elle est créée ;
+    - valeur reçue identique (même colonne de stockage ET même contenu)
+      à une valeur active : continuité historique, ni UPDATE ni INSERT ;
+    - valeur active non retrouvée parmi les valeurs reçues : fermée
+      (valid_to = now()), jamais supprimée ;
+    - valeur reçue sans correspondance active : nouvelle version
+      (valid_from = now(), valid_to NULL).
+
+    Attend un curseur tuple (conn.cursor() sans factory) ; l'appelant doit
+    détenir le verrou FOR NO KEY UPDATE sur la ligne `object`. Retourne
+    attribute_id.
     """
-    column, value = _coerce_typed_value(attr_def, raw_value)
-    cur.execute(
-        f"INSERT INTO attribute_value (attribute_id, {column}) VALUES (%s, %s)",
-        (attribute_id, value)
-    )
+    if existing_attr is not None:
+        attribute_id = existing_attr["attribute_id"]
+        remaining_existing = list(existing_attr["values"])
+        if existing_attr["domain"] != attr_def["domain"]:
+            cur.execute("UPDATE attribute SET domain = %s WHERE id = %s", (attr_def["domain"], attribute_id))
+    else:
+        cur.execute(
+            "INSERT INTO attribute (object_id, domain, name) VALUES (%s, %s, %s) RETURNING id",
+            (object_id, attr_def["domain"], attr_name)
+        )
+        attribute_id = cur.fetchone()[0]
+        remaining_existing = []
 
+    received_coerced = [_coerce_typed_value(attr_def, v) for v in received_values]
 
-def _insert_value(cur, attribute_id, attr_def, value):
-    """Point d'entrée utilisé par write_object, délègue à _store_typed_value
-    pour appliquer la même règle de typage que write_attribute_value."""
-    _store_typed_value(cur, attribute_id, attr_def, value)
+    to_insert = []
+    for column, value in received_coerced:
+        match_index = next(
+            (i for i, ev in enumerate(remaining_existing)
+             if ev["column"] == column and ev["value"] == value),
+            None
+        )
+        if match_index is not None:
+            remaining_existing.pop(match_index)
+        else:
+            to_insert.append((column, value))
+
+    for ev in remaining_existing:
+        cur.execute("UPDATE attribute_value SET valid_to = now() WHERE id = %s", (ev["id"],))
+
+    for column, value in to_insert:
+        if column == "joint_id":
+            # Garde-fou (plan-mark2.md action 6.1) : interdit de créer une
+            # nouvelle jointure vers un objet déjà soft-deleted (état
+            # "zombie" sinon possible). FOR SHARE sur la même ligne object
+            # que celle verrouillée en FOR UPDATE par la suppression logique
+            # (DELETE /api/delete/object) : les deux s'excluent mutuellement
+            # le temps de la transaction. Un deadlock PostgreSQL reste
+            # possible ici (rare) : si cet appel ferme par ailleurs un lien
+            # existant (UPDATE attribute_value sur une ligne R) pendant
+            # qu'une suppression logique concurrente de l'objet cible tient
+            # déjà B (FOR UPDATE) et tente à son tour de fermer cette même
+            # ligne R en cascade, les deux transactions s'attendent
+            # mutuellement (R puis B d'un côté, B puis R de l'autre).
+            # PostgreSQL détecte ce cycle et annule automatiquement l'une
+            # des deux transactions (DeadlockDetected) : pas de corruption
+            # ni de hang, voir le except dédié de write_object/
+            # write_attribute_value/delete_object qui renvoie 409.
+            cur.execute("SELECT deleted_at FROM object WHERE id = %s FOR SHARE", (value,))
+            target = cur.fetchone()
+            if target is None or target[0] is not None:
+                abort(400, description=f"Objet cible {value} inexistant ou déjà supprimé")
+        cur.execute(
+            f"INSERT INTO attribute_value (attribute_id, {column}) VALUES (%s, %s)",
+            (attribute_id, value)
+        )
+
+    return attribute_id
 
 
 @app.route("/api/write/attribute/<string:cls>/<int:object_id>/<string:attribute>/<string:value>", methods=["PUT"])
@@ -913,6 +954,16 @@ def write_attribute_value(cls, object_id, attribute, value):
     """Écrit ou met à jour la valeur d'un attribut d'un objet.
 
     URL: /api/write/attribute/<class>/<id>/<attribute>/<value>
+
+    Historisée exactement comme write_object (même _apply_attribute_diff),
+    sur un seul attribut à la fois : jamais de DELETE sur attribute_value,
+    les versions déjà fermées sont conservées. La valeur de l'URL est passée
+    comme liste à un seul élément : sur un attribut multi-valué ayant
+    plusieurs valeurs actives, toutes les valeurs sœurs différentes sont
+    fermées (valid_to = now()) et il ne reste qu'une seule valeur active
+    (comportement hérité de l'ancien DELETE ; l'édition inline du frontend
+    n'envoie que values[0]). Une valeur identique à une valeur active est
+    conservée sans nouvelle ligne.
     """
     ctx = get_auth_context()
     if ctx.is_tenant_readonly:
@@ -920,30 +971,39 @@ def write_attribute_value(cls, object_id, attribute, value):
 
     conn = get_db()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # Vérifier que l'objet existe et correspond à la classe
-            cur.execute("SELECT id, class, meta_class, tenants FROM object WHERE id = %s", (object_id,))
+        with conn.cursor() as cur:
+            # Verrou de ligne pris avant tout chargement d'état actif : deux
+            # PUT concurrents sur le même attribut se sérialisent ici, sinon
+            # chacun fermerait/insérerait à partir du même état et laisserait
+            # deux valeurs actives. FOR NO KEY UPDATE (pas FOR UPDATE) : reste
+            # compatible avec le KEY SHARE que la FK joint_id prend sur cet
+            # objet quand une autre transaction y insère une jointure (sinon
+            # attente, et deadlock si les écritures se croisent A->B / B->A).
+            cur.execute("SELECT id, class, meta_class, tenants, deleted_at FROM object WHERE id = %s FOR NO KEY UPDATE", (object_id,))
             obj = cur.fetchone()
 
             if not obj:
                 abort(404, description="Objet non trouvé")
-            if obj["class"] != cls:
+            _, obj_class, obj_meta_class, obj_tenants_raw, obj_deleted_at = obj
+            if obj_deleted_at is not None:
+                abort(404, description="Objet non trouvé")
+            if obj_class != cls:
                 abort(400, description=f"L'objet {object_id} n'est pas de classe '{cls}'")
 
             # Résolution du modèle (classe -> attr_def), nécessaire dans tous
             # les cas (RBAC tenant-admin ET typage/Option B ci-dessous), donc
             # faite une seule fois ici plutôt que dupliquée comme auparavant.
-            cur.execute("SELECT data FROM definition WHERE meta_class = %s", (obj["meta_class"],))
+            cur.execute("SELECT data FROM definition WHERE meta_class = %s", (obj_meta_class,))
             defn = cur.fetchone()
             class_def = None
             if defn:
-                for c in defn["data"].get("classes", []):
+                for c in defn[0].get("classes", []):
                     if c["class"] == cls:
                         class_def = c
                         break
 
             if ctx.is_tenant_admin:
-                obj_tenants = _tenants_db_to_list(obj["tenants"])
+                obj_tenants = _tenants_db_to_list(obj_tenants_raw)
                 if obj_tenants and not (set(obj_tenants) & set(ctx.tenants)):
                     abort(403, description="Objet hors de votre périmètre tenant")
                 class_tenants = (class_def or {}).get("tenants") or []
@@ -960,35 +1020,101 @@ def write_attribute_value(cls, object_id, attribute, value):
             if attr_def is None:
                 abort(400, description=f"Attribut '{attribute}' non déclaré dans le modèle de la classe '{cls}'")
 
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # Chercher l'attribut existant
-            cur.execute(
-                "SELECT id FROM attribute WHERE object_id = %s AND name = %s",
-                (object_id, attribute)
-            )
-            attr_row = cur.fetchone()
-
-            if attr_row:
-                attribute_id = attr_row["id"]
-                # Supprimer les anciennes valeurs
-                cur.execute("DELETE FROM attribute_value WHERE attribute_id = %s", (attribute_id,))
-            else:
-                cur.execute(
-                    "INSERT INTO attribute (object_id, domain, name) VALUES (%s, %s, %s) RETURNING id",
-                    (object_id, attr_def["domain"], attribute)
-                )
-                attribute_id = cur.fetchone()["id"]
-
-            # Insérer la nouvelle valeur, typage piloté par le modèle
-            # (attr_def["type"]), jamais par une cascade int/float/string sur
-            # la chaîne brute reçue dans l'URL - voir _store_typed_value.
-            _store_typed_value(cur, attribute_id, attr_def, value)
+            existing_attr = _load_active_attributes_by_name(conn, object_id).get(attribute)
+            _apply_attribute_diff(cur, object_id, attribute, attr_def, existing_attr, [value])
 
         conn.commit()
         return jsonify({"status": "ok", "object_id": object_id, "attribute": attribute, "value": value})
+    except psycopg2.errors.DeadlockDetected:
+        conn.rollback()
+        abort(409, description="Conflit d'écriture concurrente, réessayez")
     except Exception as e:
         conn.rollback()
         raise e
+
+
+@app.route("/api/delete/object/<int:object_id>", methods=["DELETE"])
+def delete_object(object_id):
+    """Suppression logique d'un objet (plan-mark2.md action 6.1).
+
+    RBAC (hérité de Mark 1 §11.2, même logique que write_object) :
+    tenant-readonly -> 403 systématique ; tenant-admin -> 403 si l'objet est
+    hors de son périmètre tenant ; global-admin -> toujours autorisé.
+
+    FOR UPDATE (et non FOR NO KEY UPDATE comme ailleurs dans ce module) :
+    verrou exclusif volontaire sur la ligne `object`, pour bloquer toute
+    insertion concurrente d'une jointure vers cet objet (qui prend un FOR
+    SHARE, voir le garde-fou de _apply_attribute_diff) pendant la
+    suppression. Un deadlock PostgreSQL reste possible (rare, cf. le
+    commentaire du garde-fou dans _apply_attribute_diff) : ce même appel
+    ferme en cascade des attribute_value (joint_id = cet objet) pendant
+    qu'un write_object/write_attribute_value concurrent peut tenir l'une de
+    ces lignes (fermeture d'un autre lien) en attendant FOR SHARE sur cette
+    même ligne `object`. PostgreSQL détecte le cycle et annule
+    automatiquement l'une des deux transactions - pas de corruption, pas de
+    hang - rattrapé ci-dessous par un except dédié (409).
+
+    Cascade sur les jointures entrantes, scopée au périmètre tenant de
+    l'acteur (voir plan-mark2.md action 6.1 pour la brèche RBAC évitée par
+    ce scoping) : fermeture (valid_to = now()) des attribute_value dont le
+    joint_id pointe vers cet objet, restreinte aux objets sources du
+    périmètre tenant de l'acteur pour un tenant-admin, sans restriction pour
+    un global-admin.
+    """
+    ctx = get_auth_context()
+    if ctx.is_tenant_readonly:
+        abort(403, description="Rôle tenant-readonly : suppression d'objet interdite")
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, deleted_at, tenants FROM object WHERE id = %s FOR UPDATE", (object_id,))
+            existing = cur.fetchone()
+            if not existing:
+                abort(404, description=f"Objet {object_id} non trouvé")
+            _, deleted_at, tenants_raw = existing
+            if deleted_at is not None:
+                abort(404, description=f"Objet {object_id} non trouvé")
+
+            existing_tenants = _tenants_db_to_list(tenants_raw)
+            if ctx.is_tenant_admin and existing_tenants and not (set(existing_tenants) & set(ctx.tenants)):
+                abort(403, description="Objet hors de votre périmètre tenant")
+
+            cur.execute("UPDATE object SET deleted_at = now() WHERE id = %s RETURNING deleted_at", (object_id,))
+            (deleted_at,) = cur.fetchone()
+
+            cur.execute(
+                """UPDATE attribute_value SET valid_to = now()
+                   WHERE valid_to IS NULL AND attribute_id IN
+                       (SELECT id FROM attribute WHERE object_id = %s)""",
+                (object_id,)
+            )
+
+            if ctx.is_global_admin:
+                cur.execute(
+                    "UPDATE attribute_value SET valid_to = now() WHERE joint_id = %s AND valid_to IS NULL",
+                    (object_id,)
+                )
+            else:
+                cur.execute(
+                    """UPDATE attribute_value av
+                       SET valid_to = now()
+                       FROM attribute a, object o
+                       WHERE av.attribute_id = a.id AND a.object_id = o.id
+                         AND av.joint_id = %s AND av.valid_to IS NULL
+                         AND (o.tenants IS NULL OR o.tenants = '' OR string_to_array(o.tenants, ',') && %s::text[])""",
+                    (object_id, ctx.tenants)
+                )
+
+        conn.commit()
+        return jsonify({"status": "ok", "id": object_id, "deleted_at": deleted_at.isoformat()}), 200
+    except psycopg2.errors.DeadlockDetected:
+        conn.rollback()
+        abort(409, description="Conflit d'écriture concurrente, réessayez")
+    except Exception as e:
+        conn.rollback()
+        raise e
+
 
 @app.route("/api/write/class", methods=["POST"])
 def write_class():

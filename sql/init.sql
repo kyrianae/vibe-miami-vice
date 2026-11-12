@@ -22,7 +22,13 @@ CREATE TABLE attribute (
     object_id INTEGER NOT NULL,
     domain TEXT NOT NULL,
     name TEXT NOT NULL,
-    FOREIGN KEY (object_id) REFERENCES object(id) ON DELETE CASCADE
+    FOREIGN KEY (object_id) REFERENCES object(id) ON DELETE CASCADE,
+    -- Historisation (plan-mark2.md action 6.0) : une seule ligne attribute
+    -- par (objet, nom), réutilisée à chaque écriture ; l'historique vit
+    -- dans attribute_value (valid_from/valid_to), jamais dans des lignes
+    -- attribute en doublon. Garde-fou contre deux écritures concurrentes
+    -- qui créeraient chacune l'attribut.
+    CONSTRAINT attribute_object_name_unique UNIQUE (object_id, name)
 );
 
 CREATE TABLE attribute_value (
