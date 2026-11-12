@@ -679,9 +679,16 @@
      `<DiagramPage>`, comme c'est déjà fait pour `<NavigationPage>`.
 - **Effort** : trivial.
 - **Fichiers** : `frontend/src/pages/DiagramPage.tsx`, `frontend/src/App.tsx`.
-- **Statut** : ⬜ à faire — faible priorité (aucune action d'écriture
-  réelle sur cette page aujourd'hui), à traiter si le temps le permet ou
-  à laisser en l'état si jugé non prioritaire.
+- **Statut** : ✅ fait (2026-11-12). Prop `readOnly: boolean` ajouté à
+  `DiagramPageProps` (`frontend/src/pages/DiagramPage.tsx`), passé
+  depuis `App.tsx` (`<DiagramPage readOnly={readOnly} ...>`, même
+  pattern que `<NavigationPage>`) ; pas d'usage dans le corps du
+  composant pour l'instant (aucune action d'écriture sur cette page
+  aujourd'hui, juste cohérence d'interface pour anticiper une future
+  action d'écriture, conforme au plan). Revue (testeur + candide
+  combiné, taille triviale) : convergence totale, 0 nouvelle erreur
+  TypeScript, call site unique vérifié, build inchangé. 0 itération de
+  correction nécessaire.
 
 ## 8. [Cohérence modèle] `$schema` non déclaré dans `model/schema.json`
 
@@ -767,7 +774,54 @@
   avec des tables partitionnées).
 - **Fichiers** : `sql/init.sql`, `backend/app.py` (`write_class`,
   `write_metaclass`).
-- **Statut** : ⬜ à faire (commencer par l'évaluation préalable).
+- **Évaluation préalable réalisée (2026-11-12)** : aucune donnée de
+  volumétrie réelle de production n'est disponible pour ce projet — pas
+  de pipeline de déploiement en production observé, pas d'historique de
+  charge. Signaux observables utilisés à la place (hypothèse, pas une
+  mesure) :
+  - `model/personnes.json` définit 3 classes
+    (`personne_physique`, `role`, `groupe`), `model/reseau.json` en
+    définit 2 (`addresse_ip`, `vlan`) — 5 classes au total dans les deux
+    seuls fichiers de modèle présents dans le dépôt.
+  - Aucun mécanisme de génération de données de masse ou de seed
+    volumineux n'existe dans le projet : les seules occurrences de
+    `seed`/`fixture` sont des fixtures `pytest` (`backend/test_model_driven_typing.py`,
+    `backend/test_rbac_class_tenant_scope.py`, `backend/test_purge_action_6_2.py`),
+    limitées à quelques enregistrements pour les besoins des tests
+    unitaires — rien d'assimilable à un jeu de données représentatif
+    d'une volumétrie de production.
+  - `specifications.md` §10.5 confirme cette absence de donnée
+    volumétrique de manière indépendante : « Aucune volumétrie réelle ne
+    justifie aujourd'hui ce chantier ; à n'engager qu'après mesure d'un
+    besoin de performance concret. »
+  - **Hypothèse de volumétrie retenue (non mesurée, à documenter comme
+    telle et à ne pas traiter comme une donnée réelle)** : au vu du
+    nombre de classes modèle actuellement défini (5) et de l'absence de
+    tout indice d'une charge de production en cours ou planifiée, la
+    volumétrie de la table `object` est supposée rester modeste (ordre
+    de grandeur de quelques milliers à dizaines de milliers de lignes,
+    pas de millions) — hypothèse de confort, pas un chiffrage mesuré.
+  - **Conclusion** : à cette hypothèse, le partitionnement PostgreSQL de
+    `object` par `class` n'est **pas justifié**. Le coût (DDL dynamique
+    déclenché depuis l'application à chaque création de classe, jamais
+    fait ailleurs dans ce projet, risque de régression sur les
+    contraintes FK existantes) dépasse tout bénéfice attendu à cette
+    échelle, et contredit sans contrepartie mesurée la tension de
+    conception documentée plus haut (modèle dynamique vs DDL de
+    partition). L'action n'est donc **pas implémentée**.
+  - **Conditions de réouverture** : ré-ouvrir cette action si l'une des
+    conditions suivantes apparaît : (1) données réelles de volumétrie de
+    production disponibles montrant une table `object` atteignant un
+    ordre de grandeur de plusieurs millions de lignes ou une croissance
+    soutenue vers ce seuil ; (2) symptôme de performance concret et
+    mesuré sur les requêtes filtrées par `class`/`meta_class`
+    (`write_object`, `write_attribute_value`, `list_objects`) imputable à
+    la taille de la table `object` ; (3) signal de croissance massive du
+    nombre de classes ou d'objets par classe observé en usage réel. Sans
+    l'une de ces conditions, ne pas relancer ce chantier.
+- **Statut** : ✅ évaluée, non implémentée (hypothèse de volumétrie
+  documentée ci-dessus — pas de DDL, pas de modification de
+  `sql/init.sql`/`backend/app.py`).
 
 ## 10. Liens transitifs du graphe au filtrage de classe
 
@@ -975,9 +1029,9 @@ Indépendante du reste, peut être traitée à tout moment ou laissée de côté
 | 6.2 | 2 | Purge physique différée (`app_config`, `POST /api/purge` réservé `global-admin`, période de grâce **configurable**, défaut 30 jours ; migration manuelle appliquée sur le volume réel) | ✅ |
 | 6.3 | 2 | Suppression d'une classe (physique, `DELETE /api/delete/class/<meta_class>/<cls>`, RBAC héritée `write_class`) | ✅ |
 | 6.4 | 2 | Suppression d'une meta-classe (physique, `DELETE /api/delete/metaclass/<meta_class>`, RBAC alignée `write_metaclass`) | ✅ |
-| 9 | 3 | Partitionnement PostgreSQL par type d'objet (évaluation puis implémentation conditionnelle) | ⬜ |
+| 9 | 3 | Partitionnement PostgreSQL par type d'objet (évaluation puis implémentation conditionnelle) | ✅ évaluée, non implémentée |
 | 10 | 3 | Liens transitifs du graphe au filtrage de classe | ✅ |
-| 7a | hors vague | Propagation du prop `readOnly` à `DiagramPage.tsx` (résiduel, faible priorité) | ⬜ |
+| 7a | hors vague | Propagation du prop `readOnly` à `DiagramPage.tsx` (résiduel, faible priorité) | ✅ |
 
 **Décision actée (2026-11-10, révisée le même jour)** : la période de
 grâce de purge (action 6.2) est **configurable par l'administrateur**

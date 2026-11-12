@@ -60,6 +60,7 @@ export default function App() {
             <DiagramPage
               selectedMetaClass={selectedMetaClass}
               selectedClass={selectedClass}
+              readOnly={readOnly}
             />
           ) : (
             <NavigationPage

@@ -34,9 +34,10 @@ const MAX_RECONSTRUCTED_EDGES_PER_HIDDEN_NODE = 20;
 interface DiagramPageProps {
   selectedMetaClass: string | null;
   selectedClass: string | null;
+  readOnly: boolean;
 }
 
-export default function DiagramPage({ selectedMetaClass, selectedClass }: DiagramPageProps) {
+export default function DiagramPage({ selectedMetaClass, selectedClass, readOnly }: DiagramPageProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
 
