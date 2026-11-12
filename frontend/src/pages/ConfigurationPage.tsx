@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { apiReadMetaClass, apiWriteMetaClass, apiInit, apiReadClasses } from '../api';
+import {
+  apiReadMetaClass, apiWriteMetaClass, apiInit, apiReadClasses,
+  apiGetPurgeGracePeriod, apiSetPurgeGracePeriod,
+} from '../api';
 import type { MetaClassDefinition, ClassDefinition, AttributeDefinition, ClassInfo } from '../types';
 import type { AuthInfo } from '../auth';
 
@@ -37,6 +40,8 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
   const [loading, setLoading] = useState(false);
   const [allClasses, setAllClasses] = useState<ClassInfo[]>([]);
   const [expandedClasses, setExpandedClasses] = useState<Set<number>>(new Set());
+  const [purgeGraceDays, setPurgeGraceDays] = useState<string>('');
+  const [purgeGraceSaving, setPurgeGraceSaving] = useState(false);
 
   const addToast = useCallback((type: 'success' | 'error', text: string) => {
     const id = ++toastIdRef.current;
@@ -55,6 +60,33 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authInfo]);
+
+  // Purge physique différée (plan-mark2.md action 6.2) : champ réservé
+  // global-admin, cf. frontend/src/auth.ts (isGlobalAdmin).
+  useEffect(() => {
+    if (!authInfo.isGlobalAdmin) return;
+    apiGetPurgeGracePeriod()
+      .then((res) => setPurgeGraceDays(String(res.value)))
+      .catch(() => {});
+  }, [authInfo.isGlobalAdmin]);
+
+  const handleSavePurgeGraceDays = async () => {
+    const parsed = Number(purgeGraceDays);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      addToast('error', 'La période de grâce doit être un entier strictement positif');
+      return;
+    }
+    setPurgeGraceSaving(true);
+    try {
+      const res = await apiSetPurgeGracePeriod(parsed);
+      setPurgeGraceDays(String(res.value));
+      addToast('success', `Période de grâce de purge mise à jour : ${res.value} jour(s)`);
+    } catch (e: unknown) {
+      addToast('error', e instanceof Error ? e.message : 'Erreur');
+    } finally {
+      setPurgeGraceSaving(false);
+    }
+  };
 
   const allClassNames = [...new Set([
     ...allClasses.map((c) => c.class),
@@ -266,6 +298,30 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
           </button>
         </div>
       </div>
+
+      {/* Purge physique différée (plan-mark2.md action 6.2) - global-admin uniquement */}
+      {authInfo.isGlobalAdmin && (
+        <div className="card">
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>Période de grâce avant purge physique (jours)</label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={purgeGraceDays}
+                onChange={(e) => setPurgeGraceDays(e.target.value)}
+                style={{ maxWidth: 120 }}
+              />
+              <button className="btn btn-secondary" style={{ fontSize: 12 }}
+                onClick={handleSavePurgeGraceDays} disabled={purgeGraceSaving}
+              >
+                Enregistrer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="card"><p>Chargement...</p></div>

@@ -192,6 +192,18 @@ docker-compose up -d --build
   docker-compose up -d
   ```
 
+**Volume `pgdata` déjà initialisé : la table `app_config` n'est pas créée automatiquement** - de la même façon, le script `sql/init.sql` ajoute la table `app_config` (clé/valeur, utilisée pour le paramètre `purge_grace_period_days` de la purge physique différée, action 6.2) et son seed. Sur un volume `pgdata` déjà initialisé avant ce changement, cette table ne sera **jamais** créée automatiquement, et les routes `GET`/`PUT /api/config/purge_grace_period_days` ainsi que `POST /api/purge` échoueront avec une erreur 500. Deux remédiations possibles :
+
+- Créer la table manuellement, sans perte de données :
+  ```bash
+  docker-compose exec db psql -U miami -d miami_vice -c "CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO app_config (key, value) VALUES ('purge_grace_period_days', '30') ON CONFLICT (key) DO NOTHING;"
+  ```
+- Ou repartir d'un volume vierge (perte de **toutes** les données existantes, à n'utiliser que si acceptable) :
+  ```bash
+  docker-compose down -v
+  docker-compose up -d
+  ```
+
 ## 🎨 Frontend
 
 ### Développement local (hors Docker)

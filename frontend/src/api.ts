@@ -120,6 +120,20 @@ export const apiDeleteObject = (id: number) =>
 export const apiInit = () =>
   fetchJsonAuth<{ status: string; loaded: string[] }>(`${BASE}/init`, { method: 'POST' });
 
+// Config - purge physique différée (plan-mark2.md action 6.2, global-admin uniquement)
+export const apiGetPurgeGracePeriod = () =>
+  fetchJsonAuth<{ value: number }>(`${BASE}/config/purge_grace_period_days`);
+
+export const apiSetPurgeGracePeriod = (value: number) =>
+  fetchJsonAuth<{ status: string; value: number }>(
+    `${BASE}/config/purge_grace_period_days`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    }
+  );
+
 // Auth - login direct Keycloak (Resource Owner Password Credentials)
 // Appel direct au navigateur vers Keycloak (port 8080 publié sur l'hôte),
 // pas via le proxy Vite /api : ce n'est pas une route de ce backend, et

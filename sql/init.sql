@@ -64,3 +64,17 @@ CREATE TABLE definition (
     meta_class TEXT NOT NULL UNIQUE,
     data JSONB NOT NULL
 );
+
+-- Configuration applicative générique clé/valeur (plan-mark2.md action 6.2) :
+-- une colonne dédiée par paramètre futur serait moins cohérent avec la
+-- philosophie dynamique du reste du projet.
+CREATE TABLE app_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Période de grâce (en jours) avant la purge physique différée (action
+-- 6.2) des objets soft-deleted (object.deleted_at) ; configurable à chaud
+-- via GET/PUT /api/config/purge_grace_period_days, sans redémarrage du
+-- backend.
+INSERT INTO app_config (key, value) VALUES ('purge_grace_period_days', '30');

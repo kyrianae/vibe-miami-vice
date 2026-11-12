@@ -57,8 +57,13 @@ def get_jwk_client():
 # Routes mutantes à protéger, listées explicitement (pas un simple
 # startswith('/api/write') qui oublierait /api/init et la future
 # /api/purge de l'action 6.2, cf. plan.md action 7).
+#
+# /api/config/purge_grace_period_days (action 6.2) : ajoutée ici bien que
+# GET/PUT (pas write/delete), car réservée global-admin strict (jamais
+# appelable anonymement) - cohérent avec le choix 401 (pas seulement 403)
+# déjà appliqué aux autres routes listées ici quand le token est absent.
 _PROTECTED_PREFIXES = ("/api/write/", "/api/delete/")
-_PROTECTED_EXACT_PATHS = ("/api/init", "/api/purge")
+_PROTECTED_EXACT_PATHS = ("/api/init", "/api/purge", "/api/config/purge_grace_period_days")
 
 
 def _requires_auth(path):
@@ -1361,6 +1366,142 @@ def init_from_model_files():
 
         conn.commit()
         return jsonify({"status": "ok", "loaded": loaded, "skipped": skipped})
+    except Exception as e:
+        conn.rollback()
+        raise e
+
+
+# ---------------------
+# Purge physique différée (plan-mark2.md action 6.2)
+# ---------------------
+
+@app.route("/api/config/purge_grace_period_days", methods=["GET"])
+def get_purge_grace_period_days():
+    """Lit la période de grâce (en jours) avant purge physique. Réservé
+    strictement à global-admin (même pas tenant-admin) : paramètre qui
+    affecte tous les tenants, cf. plan-mark2.md action 6.2."""
+    ctx = get_auth_context()
+    if not ctx.is_global_admin:
+        abort(403, description="Réservé à global-admin")
+
+    with get_db().cursor() as cur:
+        cur.execute("SELECT value FROM app_config WHERE key = 'purge_grace_period_days'")
+        row = cur.fetchone()
+    if row is None:
+        abort(500, description="Paramètre 'purge_grace_period_days' absent de app_config")
+    return jsonify({"value": int(row[0])})
+
+
+@app.route("/api/config/purge_grace_period_days", methods=["PUT"])
+def set_purge_grace_period_days():
+    """Modifie la période de grâce avant purge physique. Réservé strictement
+    à global-admin. Body {"value": N}, N entier strictement positif (400
+    sinon - en particulier 0 et les négatifs, qui purgeraient immédiatement
+    ou jamais). bool explicitement rejeté avant le cast int() (même piège
+    que joint_id, cf. _coerce_typed_value) : un bool Python est une
+    sous-classe de int, int(True) == 1 serait accepté silencieusement."""
+    ctx = get_auth_context()
+    if not ctx.is_global_admin:
+        abort(403, description="Réservé à global-admin")
+
+    body = request.get_json()
+    if not body or "value" not in body:
+        abort(400, description="Champ 'value' requis")
+
+    raw_value = body["value"]
+    if isinstance(raw_value, bool):
+        abort(400, description=f"'value' doit être un entier strictement positif : {raw_value!r}")
+    if isinstance(raw_value, float) and not raw_value.is_integer():
+        abort(400, description=f"'value' doit être un entier strictement positif : {raw_value!r}")
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        abort(400, description=f"'value' doit être un entier strictement positif : {raw_value!r}")
+    if value <= 0:
+        abort(400, description=f"'value' doit être un entier strictement positif : {raw_value!r}")
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE app_config SET value = %s WHERE key = 'purge_grace_period_days'",
+                (str(value),)
+            )
+        conn.commit()
+        return jsonify({"status": "ok", "value": value})
+    except Exception as e:
+        conn.rollback()
+        raise e
+
+
+@app.route("/api/purge", methods=["POST"])
+def purge_objects():
+    """Purge physique différée (plan-mark2.md action 6.2).
+
+    Supprime définitivement les objets soft-deleted (object.deleted_at non
+    NULL) depuis plus longtemps que la période de grâce configurable
+    (app_config.purge_grace_period_days), relue en base à CHAQUE appel -
+    jamais une constante Python chargée une fois au démarrage, pour qu'un
+    changement administrateur soit pris en compte sans redémarrage.
+
+    Réservé strictement à global-admin (opération qui traverse tous les
+    tenants, pas de scoping tenant-admin possible ici).
+
+    Ordre impératif, même transaction (plan-mark2.md action 6.2, conception
+    actée) : purge inconditionnelle de TOUTES les attribute_value.joint_id
+    référençant un objet candidat (actives ou déjà fermées) AVANT le DELETE
+    FROM object. Exécuté en deux requêtes séparées (pas un seul WITH
+    multi-CTE) : PostgreSQL ne garantit pas d'ordre d'exécution entre
+    plusieurs sous-requêtes de modification d'un même WITH sans dépendance
+    de données explicite entre elles - seule une séquence de deux
+    instructions dans la même transaction garantit cet ordre strict. Sans
+    cette garde, une ligne attribute_value déjà historiquement fermée mais
+    oubliée verrait son joint_id mis à NULL par le FK ON DELETE SET NULL au
+    moment du DELETE FROM object, violant la contrainte CHECK (piège déjà
+    rencontré et corrigé en Mark 1 action 6)."""
+    ctx = get_auth_context()
+    if not ctx.is_global_admin:
+        abort(403, description="Réservé à global-admin")
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM app_config WHERE key = 'purge_grace_period_days'")
+            row = cur.fetchone()
+            if row is None:
+                abort(500, description="Paramètre 'purge_grace_period_days' absent de app_config")
+            grace_days = int(row[0])
+
+            cur.execute(
+                """
+                WITH candidates AS (
+                    SELECT id FROM object
+                    WHERE deleted_at IS NOT NULL
+                      AND deleted_at < now() - make_interval(days => %s::integer)
+                )
+                DELETE FROM attribute_value WHERE joint_id IN (SELECT id FROM candidates)
+                """,
+                (grace_days,)
+            )
+
+            cur.execute(
+                """
+                WITH candidates AS (
+                    SELECT id FROM object
+                    WHERE deleted_at IS NOT NULL
+                      AND deleted_at < now() - make_interval(days => %s::integer)
+                )
+                DELETE FROM object WHERE id IN (SELECT id FROM candidates)
+                """,
+                (grace_days,)
+            )
+            purged = cur.rowcount
+
+        conn.commit()
+        return jsonify({"status": "ok", "purged": purged}), 200
+    except psycopg2.errors.DeadlockDetected:
+        conn.rollback()
+        abort(409, description="Conflit d'écriture concurrente, réessayez")
     except Exception as e:
         conn.rollback()
         raise e

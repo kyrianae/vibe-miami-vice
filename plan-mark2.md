@@ -527,7 +527,58 @@
 - **Fichiers** : `backend/app.py`, `sql/init.sql`,
   `frontend/src/pages/ConfigurationPage.tsx`.
 - **Dépendance** : nécessite 6.1.
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-12).
+  Implémentation : table `app_config` (clé/valeur générique) + seed
+  `purge_grace_period_days=30` dans `sql/init.sql` ; `GET`/
+  `PUT /api/config/purge_grace_period_days` et `POST /api/purge`, tous
+  réservés strictement `global-admin` (premier cas du projet où une
+  route rejette aussi `tenant-admin`, pas seulement `tenant-readonly`) ;
+  validation stricte de `PUT` (bool/float non entier/zéro/négatif
+  rejetés `400`, même piège que le cast `joint_id` de 6.0) ;
+  `POST /api/purge` relit la période de grâce en base à chaque appel
+  (jamais une constante figée), purge d'abord TOUTES les
+  `attribute_value.joint_id` référençant les objets candidats (actives
+  et déjà fermées) PUIS les objets eux-mêmes, en 2 requêtes
+  séquentielles dans la même transaction (le bloc SQL unique du plan
+  n'était pas exécutable tel quel, un `WITH` ne peut précéder qu'une
+  seule instruction — chaque requête recalcule indépendamment la même
+  CTE `candidates`) ; catch `psycopg2.errors.DeadlockDetected` → `409`
+  comme 6.0/6.1 ; câblage frontend minimal (`apiGetPurgeGracePeriod`/
+  `apiSetPurgeGracePeriod`, champ dans `ConfigurationPage.tsx` visible
+  uniquement `global-admin`).
+  Revue croisée (testeur + pessimiste + candide), 1 point bloquant
+  corrigé en 2e itération : la table `app_config` ajoutée à
+  `sql/init.sql` ne s'applique qu'à un volume Postgres neuf (même piège
+  que la contrainte UNIQUE de 6.0 et que `sql/00-keycloak-db.sql`, déjà
+  documenté dans README.md) — sur le volume réel du projet
+  (`miami-vice_pgdata`, déjà initialisé), la table n'existe jamais
+  automatiquement. Corrigé : migration manuelle appliquée sur le volume
+  réel (`CREATE TABLE IF NOT EXISTS` + seed `ON CONFLICT DO NOTHING`),
+  documentée dans `README.md` (nouveau paragraphe après la note
+  existante sur keycloak, même format/structure).
+  Dette actée non bloquante (décision orchestrateur) : `int(row[0])`
+  non protégé si la valeur de `app_config` est corrompue manuellement en
+  base directe (nécessite un accès SQL hors API, cohérent avec
+  l'absence généralisée de handler DB-error déjà acceptée en 6.0/6.1) ;
+  le frontend avale silencieusement les erreurs de chargement initial
+  du champ purge (`catch(() => {})`) ; pas d'index sur
+  `object(deleted_at)` (perf, impact nul tant que la table reste
+  petite) ; le champ `purged` de la réponse ne compte que les objets
+  supprimés, pas les `attribute_value` nettoyées (moins d'info
+  diagnostique, pas un défaut fonctionnel).
+  Validation finale : suite pytest complète verte (76 passed, 5 échecs
+  pré-existants hors scope liés à `/model/schema.json`, confirmés
+  identiques à master), testeur-global OK (stack docker compose
+  complète, RBAC vérifié avec vrais tokens Keycloak sur les 3 routes,
+  scénario bout en bout sur vraie DB : purge avant échéance →
+  `purged:0`, purge après échéance (`deleted_at` antidaté) → objet
+  physiquement supprimé, `attribute_value` propres et jointure entrante
+  déjà fermée purgées sans violation CHECK, objet source de la
+  jointure resté intact ; `npm run build` échoue sur 3 erreurs
+  TypeScript préexistantes dans `DiagramPage.tsx` non liées à cette
+  action, déjà documentées ; fichiers touchés par 6.2 compilent
+  proprement).
+  1 itération de correction au total sur ce cycle d'arbitrage.
 
 ### 6.3 Suppression d'une classe (schéma — suppression physique)
 
@@ -874,7 +925,7 @@ Indépendante du reste, peut être traitée à tout moment ou laissée de côté
 | 5 | 1 | Validation de schéma/`constraint`, cohérence meta_class/class, **typage de stockage piloté par le modèle** | ✅ |
 | 6.0 | 2 | Historisation du modèle (`valid_from`/`valid_to`/`deleted_at` + réécriture `write_object`/`write_attribute_value` via `_apply_attribute_diff`, verrou `FOR NO KEY UPDATE`, `UNIQUE(object_id,name)`) | ✅ |
 | 6.1 | 2 | Suppression logique d'un objet (`DELETE /api/delete/object`, cascade jointures scopée tenant, garde-fous zombie, catch deadlock) | ✅ |
-| 6.2 | 2 | Purge physique différée (période de grâce **configurable par l'admin**, défaut 30 jours) | ⬜ |
+| 6.2 | 2 | Purge physique différée (`app_config`, `POST /api/purge` réservé `global-admin`, période de grâce **configurable**, défaut 30 jours ; migration manuelle appliquée sur le volume réel) | ✅ |
 | 6.3 | 2 | Suppression d'une classe (physique) | ⬜ |
 | 6.4 | 2 | Suppression d'une meta-classe (physique) | ⬜ |
 | 9 | 3 | Partitionnement PostgreSQL par type d'objet (évaluation puis implémentation conditionnelle) | ⬜ |
