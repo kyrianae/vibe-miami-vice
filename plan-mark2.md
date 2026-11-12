@@ -597,7 +597,24 @@
   propres classes (même garde que `write_class`, §11.2 de
   `plan-mark1.md`).
 - **Fichiers** : `backend/app.py`.
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-12).
+  Implémentation : `DELETE /api/delete/class/<meta_class>/<cls>` —
+  charge `definition`, retire la classe de `data["classes"]` (404 si
+  meta-classe ou classe absente), RBAC héritée de `write_class`
+  (`tenant-readonly` 403, `tenant-admin` restreint à son périmètre via
+  `_check_existing_class_tenant_scope` réutilisé tel quel), `UPDATE
+  definition SET data = ...` (`json.dumps`), ne touche jamais aux objets
+  déjà créés (aucune FK `object`/`definition`, §3.4).
+  Revue croisée (testeur + pessimiste + candide), 1 point mineur corrigé
+  (partagé avec 6.4, voir ci-dessous : `FOR UPDATE` ajouté par
+  cohérence).
+  Dette actée non bloquante : en cas de doublon de nom de classe dans
+  `data["classes"]` (anomalie de données déjà possible via
+  `write_class`/`write_metaclass`, non validée par `uniqueItems` dans
+  `model/schema.json`), seule la première occurrence est retirée —
+  comportement hérité identique à `write_class`, pas une régression
+  introduite par 6.3, non corrigé ce cycle (un fix de fond type
+  `uniqueItems` serait un changement de schéma plus large, hors scope).
 
 ### 6.4 Suppression d'une meta-classe (schéma — suppression physique)
 
@@ -607,12 +624,42 @@
   supprime pas les objets déjà créés sous cette meta-classe (cohérent
   avec le constat §3.4 : aucune FK entre `object` et `definition`).
 - **Fichiers** : `backend/app.py`.
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-12).
+  Implémentation : `DELETE /api/delete/metaclass/<meta_class>` — `DELETE
+  FROM definition WHERE meta_class = %s` (404 si absente), réponse 200.
+  Revue croisée, 1 point bloquant corrigé en 1re itération : le premier
+  jet n'avait que la garde `tenant-readonly` → 403, sans restriction
+  tenant-admin — incohérence RBAC face à `write_metaclass`/6.3
+  (suppression d'une meta-classe entière au moins aussi sensible qu'un
+  remplacement complet). Corrigé : boucle
+  `_check_existing_class_tenant_scope` sur chaque classe existante de la
+  meta-classe avant suppression (même pattern que `write_metaclass`),
+  403 si une seule classe est hors périmètre tenant-admin (aucune
+  suppression partielle).
+  1 point mineur corrigé en 2e itération (6.3 ET 6.4) : `SELECT ... FOR
+  UPDATE` ajouté sur la ligne `definition` dans les deux routes
+  (cohérence avec `delete_object`) — fermait une fenêtre de course
+  étroite où un `write_metaclass` concurrent aurait pu ajouter une
+  classe hors périmètre tenant entre la vérification RBAC et la
+  suppression, sans être vérifiée (risque confirmé faible : un
+  tenant-admin ne peut pas fabriquer seul la classe hors-périmètre
+  nécessaire, `_check_class_tenant_write_permission` force l'auto-tag
+  sur son propre tenant — nécessite un 2e acteur indépendant agissant
+  dans une fenêtre très étroite).
+  Validation finale (commune 6.3+6.4) : suite pytest complète verte (96
+  passed, 5 échecs pré-existants hors scope liés à `/model/schema.json`),
+  testeur-global OK (stack docker compose complète, RBAC vérifié avec
+  vrais tokens Keycloak, cycle e2e réel : suppression classe isolée avec
+  sœur et objet intacts, suppression meta-classe totale avec objet
+  restant lisible après coup faute de FK, routes voisines non
+  régressées).
+  2 itérations de correction au total sur ce cycle d'arbitrage (commun
+  6.3+6.4).
 
 - **Effort global de l'action 6** : conséquent (6.0 = réécriture d'un
   endpoint central + migration de schéma ; 6.1/6.2 = nouvelles routes ;
   6.3/6.4 = routes simples déjà conçues).
-- **Statut global** : ⬜ à faire (sous-actions détaillées ci-dessus).
+- **Statut global** : ✅ fait (6.0/6.1/6.2/6.3/6.4 toutes closes).
 
 ## 7a. [Résiduel, hérité de Mark 1] Propagation du prop `readOnly` à `DiagramPage`
 
@@ -926,8 +973,8 @@ Indépendante du reste, peut être traitée à tout moment ou laissée de côté
 | 6.0 | 2 | Historisation du modèle (`valid_from`/`valid_to`/`deleted_at` + réécriture `write_object`/`write_attribute_value` via `_apply_attribute_diff`, verrou `FOR NO KEY UPDATE`, `UNIQUE(object_id,name)`) | ✅ |
 | 6.1 | 2 | Suppression logique d'un objet (`DELETE /api/delete/object`, cascade jointures scopée tenant, garde-fous zombie, catch deadlock) | ✅ |
 | 6.2 | 2 | Purge physique différée (`app_config`, `POST /api/purge` réservé `global-admin`, période de grâce **configurable**, défaut 30 jours ; migration manuelle appliquée sur le volume réel) | ✅ |
-| 6.3 | 2 | Suppression d'une classe (physique) | ⬜ |
-| 6.4 | 2 | Suppression d'une meta-classe (physique) | ⬜ |
+| 6.3 | 2 | Suppression d'une classe (physique, `DELETE /api/delete/class/<meta_class>/<cls>`, RBAC héritée `write_class`) | ✅ |
+| 6.4 | 2 | Suppression d'une meta-classe (physique, `DELETE /api/delete/metaclass/<meta_class>`, RBAC alignée `write_metaclass`) | ✅ |
 | 9 | 3 | Partitionnement PostgreSQL par type d'objet (évaluation puis implémentation conditionnelle) | ⬜ |
 | 10 | 3 | Liens transitifs du graphe au filtrage de classe | ✅ |
 | 7a | hors vague | Propagation du prop `readOnly` à `DiagramPage.tsx` (résiduel, faible priorité) | ⬜ |

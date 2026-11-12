@@ -69,6 +69,7 @@ class FakeCursor:
         self.db = db
         self._result = None
         self._results = None
+        self.rowcount = 0
 
     def __enter__(self):
         return self
@@ -82,6 +83,7 @@ class FakeCursor:
         # jamais renvoyer le résultat périmé de la requête précédente.
         self._result = None
         self._results = None
+        self.rowcount = 0
         sql_norm = " ".join(sql.split())
         params = params or ()
 
@@ -107,6 +109,14 @@ class FakeCursor:
             meta_class, data_json = params
             self.db.definitions[meta_class] = {"id": self.db._next_def_id, "data": json.loads(data_json)}
             self.db._next_def_id += 1
+
+        elif sql_norm.startswith("DELETE FROM definition WHERE meta_class"):
+            (meta_class,) = params
+            if meta_class in self.db.definitions:
+                del self.db.definitions[meta_class]
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
 
         elif sql_norm.startswith("SELECT id, tenants, deleted_at FROM object WHERE id"):
             obj = self.db.objects.get(params[0])
@@ -1178,3 +1188,164 @@ def test_write_attribute_value_deadlock_returns_409(client, db_and_ctx, monkeypa
     assert resp.status_code == 409
     assert "Conflit" in resp.get_data(as_text=True)
     assert conn.rolled_back
+
+
+# ---------------------------------------------------------------------
+# 13. Suppression physique du schéma (plan-mark2.md actions 6.3/6.4) :
+#     delete_class et delete_metaclass. Aucune FK entre `object` et
+#     `definition` (§3.4) : ces routes ne touchent jamais db.objects.
+# ---------------------------------------------------------------------
+
+def test_delete_class_removes_only_target_class(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    db.definitions["registre"]["data"]["classes"] = list(REGISTRE) + [
+        {"class": "autre_classe", "attributes": [{"domain": "d", "name": "x", "type": "string"}]}
+    ]
+
+    resp = client.delete("/api/delete/class/registre/immatriculation")
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json() == {"status": "ok", "class": "immatriculation"}
+
+    classes = db.definitions["registre"]["data"]["classes"]
+    assert [c["class"] for c in classes] == ["autre_classe"]
+
+
+def test_delete_class_404_on_missing_metaclass(client, db_and_ctx):
+    resp = client.delete("/api/delete/class/inconnue/x")
+    assert resp.status_code == 404
+
+
+def test_delete_class_404_on_missing_class(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    resp = client.delete("/api/delete/class/registre/classe_inexistante")
+    assert resp.status_code == 404
+    assert len(db.definitions["registre"]["data"]["classes"]) == 1
+
+
+def test_delete_class_rejected_for_tenant_readonly(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_tenant_readonly=True, tenants=["tenant1"]))
+
+    resp = client.delete("/api/delete/class/registre/immatriculation")
+    assert resp.status_code == 403
+    assert len(db.definitions["registre"]["data"]["classes"]) == 1
+
+
+def test_delete_class_rejected_for_tenant_admin_out_of_scope(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    db.seed_definition("registre", [
+        {"class": "immatriculation", "attributes": [{"domain": "d", "name": "matricule", "type": "string"}], "tenants": ["tenant2"]},
+    ])
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_tenant_admin=True, tenants=["tenant1"]))
+
+    resp = client.delete("/api/delete/class/registre/immatriculation")
+    assert resp.status_code == 403
+    assert len(db.definitions["registre"]["data"]["classes"]) == 1
+
+
+def test_delete_class_allowed_for_tenant_admin_in_scope(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    db.seed_definition("registre", [
+        {"class": "immatriculation", "attributes": [{"domain": "d", "name": "matricule", "type": "string"}], "tenants": ["tenant1"]},
+    ])
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_tenant_admin=True, tenants=["tenant1"]))
+
+    resp = client.delete("/api/delete/class/registre/immatriculation")
+    assert resp.status_code == 200
+    assert db.definitions["registre"]["data"]["classes"] == []
+
+
+def test_delete_class_allowed_for_global_admin_regardless_of_tenant(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    db.seed_definition("registre", [
+        {"class": "immatriculation", "attributes": [{"domain": "d", "name": "matricule", "type": "string"}], "tenants": ["tenant2"]},
+    ])
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_global_admin=True))
+
+    resp = client.delete("/api/delete/class/registre/immatriculation")
+    assert resp.status_code == 200
+    assert db.definitions["registre"]["data"]["classes"] == []
+
+
+def test_delete_class_does_not_touch_existing_objects(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+
+    resp = client.delete("/api/delete/class/registre/immatriculation")
+    assert resp.status_code == 200
+    assert object_id in db.objects
+    assert db.objects[object_id]["deleted_at"] is None
+
+
+def test_delete_metaclass_removes_definition_row(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+
+    resp = client.delete("/api/delete/metaclass/registre")
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json() == {"status": "ok", "meta_class": "registre"}
+    assert "registre" not in db.definitions
+
+
+def test_delete_metaclass_404_on_missing_metaclass(client, db_and_ctx):
+    resp = client.delete("/api/delete/metaclass/inconnue")
+    assert resp.status_code == 404
+
+
+def test_delete_metaclass_rejected_for_tenant_readonly(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_tenant_readonly=True, tenants=["tenant1"]))
+
+    resp = client.delete("/api/delete/metaclass/registre")
+    assert resp.status_code == 403
+    assert "registre" in db.definitions
+
+
+def test_delete_metaclass_allowed_for_global_admin(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    _seed(db)
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_global_admin=True))
+
+    resp = client.delete("/api/delete/metaclass/registre")
+    assert resp.status_code == 200
+    assert "registre" not in db.definitions
+
+
+def test_delete_metaclass_rejected_for_tenant_admin_out_of_scope(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    db.seed_definition("registre", [
+        {"class": "immatriculation", "attributes": [{"domain": "d", "name": "matricule", "type": "string"}], "tenants": ["tenant2"]},
+    ])
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_tenant_admin=True, tenants=["tenant1"]))
+
+    resp = client.delete("/api/delete/metaclass/registre")
+    assert resp.status_code == 403
+    assert "registre" in db.definitions
+
+
+def test_delete_metaclass_allowed_for_tenant_admin_in_scope(client, db_and_ctx, monkeypatch):
+    db = db_and_ctx
+    db.seed_definition("registre", [
+        {"class": "immatriculation", "attributes": [{"domain": "d", "name": "matricule", "type": "string"}], "tenants": ["tenant1"]},
+    ])
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_tenant_admin=True, tenants=["tenant1"]))
+
+    resp = client.delete("/api/delete/metaclass/registre")
+    assert resp.status_code == 200
+    assert "registre" not in db.definitions
+
+
+def test_delete_metaclass_does_not_touch_existing_objects(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+    object_id = _create(client, {"matricule": "001"})
+
+    resp = client.delete("/api/delete/metaclass/registre")
+    assert resp.status_code == 200
+    assert object_id in db.objects
+    assert db.objects[object_id]["deleted_at"] is None

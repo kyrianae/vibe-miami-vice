@@ -1507,5 +1507,122 @@ def purge_objects():
         raise e
 
 
+@app.route("/api/delete/class/<string:meta_class>/<string:cls>", methods=["DELETE"])
+def delete_class(meta_class, cls):
+    """Suppression physique d'une classe dans le schéma (plan-mark2.md
+    action 6.3).
+
+    Ne supprime ni ne modifie les objets déjà créés sous cette classe :
+    aucune FK entre `object` et `definition` (§3.4 du plan), c'est une
+    pure purge du schéma, pas une opération dangereuse pour les données
+    `object` existantes.
+
+    RBAC (hérité de Mark 1 action 11, même garde que write_class) :
+    tenant-readonly -> 403 systématique ; réservé sinon à global-admin/
+    tenant-admin, avec un tenant-admin restreint à ses propres classes
+    (_check_existing_class_tenant_scope, même pattern que le remplacement
+    d'une classe existante dans write_class).
+    """
+    ctx = get_auth_context()
+    if ctx.is_tenant_readonly:
+        abort(403, description="Rôle tenant-readonly : suppression de schéma interdite")
+
+    conn = get_db()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # FOR UPDATE (même pattern que delete_object) : verrouille la ligne
+            # `definition` dès la lecture, avant la vérification RBAC et jusqu'au
+            # commit, pour empêcher un write_metaclass concurrent d'ajouter une
+            # classe hors périmètre tenant qui échapperait à la garde ci-dessous.
+            cur.execute(
+                "SELECT id, data FROM definition WHERE meta_class = %s FOR UPDATE",
+                (meta_class,)
+            )
+            row = cur.fetchone()
+
+        if not row:
+            abort(404, description=f"Meta-classe '{meta_class}' non trouvée")
+
+        data = row["data"]
+        classes = data.get("classes", [])
+        target = None
+        remaining = []
+        for existing_cls in classes:
+            if existing_cls["class"] == cls and target is None:
+                target = existing_cls
+            else:
+                remaining.append(existing_cls)
+
+        if target is None:
+            abort(404, description=f"Classe '{cls}' non trouvée dans la meta-classe '{meta_class}'")
+
+        _check_existing_class_tenant_scope(ctx, target)
+
+        data["classes"] = remaining
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE definition SET data = %s WHERE id = %s",
+                (json.dumps(data), row["id"])
+            )
+        conn.commit()
+
+        return jsonify({"status": "ok", "class": cls}), 200
+    except Exception as e:
+        conn.rollback()
+        raise e
+
+
+@app.route("/api/delete/metaclass/<string:meta_class>", methods=["DELETE"])
+def delete_metaclass(meta_class):
+    """Suppression physique d'une meta-classe entière du schéma
+    (plan-mark2.md action 6.4).
+
+    Ne supprime pas les objets déjà créés sous cette meta-classe : aucune
+    FK entre `object` et `definition` (§3.4 du plan), c'est une pure purge
+    du schéma.
+
+    RBAC : suppression physique d'une meta-classe entière est au moins
+    aussi sensible qu'un remplacement complet (write_metaclass, 6.3) - un
+    tenant-admin ne doit pas pouvoir supprimer une meta-classe contenant
+    une classe hors de son périmètre tenant (autre tenant ou globale),
+    alors qu'il ne pourrait même pas la remplacer. Même garde que
+    write_metaclass/delete_class (_check_existing_class_tenant_scope),
+    appliquée à chaque classe existante de la meta-classe ciblée. Ne fait
+    rien pour global-admin (aucune restriction, comme partout ailleurs).
+    """
+    ctx = get_auth_context()
+    if ctx.is_tenant_readonly:
+        abort(403, description="Rôle tenant-readonly : suppression de schéma interdite")
+
+    conn = get_db()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # FOR UPDATE (même pattern que delete_object) : verrouille la ligne
+            # `definition` dès la lecture, avant la vérification RBAC et jusqu'au
+            # commit, pour empêcher un write_metaclass concurrent d'ajouter une
+            # classe hors périmètre tenant qui échapperait à la garde ci-dessous.
+            cur.execute(
+                "SELECT id, data FROM definition WHERE meta_class = %s FOR UPDATE",
+                (meta_class,)
+            )
+            row = cur.fetchone()
+
+        if not row:
+            abort(404, description=f"Meta-classe '{meta_class}' non trouvée")
+
+        for existing_cls in row["data"].get("classes", []):
+            _check_existing_class_tenant_scope(ctx, existing_cls)
+
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM definition WHERE meta_class = %s", (meta_class,))
+        conn.commit()
+
+        return jsonify({"status": "ok", "meta_class": meta_class}), 200
+    except Exception as e:
+        conn.rollback()
+        raise e
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000, debug=True)
