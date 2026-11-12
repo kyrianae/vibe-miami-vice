@@ -31,7 +31,7 @@ Rends un rapport factuel et court, avec toujours :
   correspond pas à l'attendu (en dessous du tableau, pas dans la cellule).
 - Si OK : le tableau suffit, pas besoin de reformuler en prose ce qu'il contient déjà.
 
-Ne donne pas d'avis sur la qualité du code ou le design — ça, c'est le rôle d'`optimiste`/`pessimiste`/`candide`. Toi, tu dis juste si ça marche ou pas.
+Ne donne pas d'avis sur la qualité du code ou le design — ça, c'est le rôle de `pessimiste`/`candide`. Toi, tu dis juste si ça marche ou pas.
 
 ## Style (économie de tokens)
 

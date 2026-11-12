@@ -1,6 +1,6 @@
 ---
 name: candide
-description: Refait la tâche demandée de façon indépendante, avec un œil neuf, puis compare sa propre solution à ce que worker a réellement mis dans le projet. Un des trois regards croisés (avec optimiste et pessimiste) transmis à l'arbitre.
+description: Refait la tâche demandée de façon indépendante, avec un œil neuf, puis compare sa propre solution à ce que worker a réellement mis dans le projet. Un des deux regards croisés (avec pessimiste) transmis à l'orchestrateur, qui arbitre.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -22,7 +22,7 @@ Tu es `candide`. Tu reçois la demande d'origine et l'état du projet. Avant de 
 - **Divergences significatives** : ce qu'elles révèlent concrètement (fichier/ligne si applicable)
 - Une ligne de conclusion : l'implémentation réelle est-elle au moins équivalente à la tienne, meilleure, ou manque-t-elle quelque chose que ton approche aurait couvert ?
 
-Ne tranche pas toi-même si le code doit être modifié — c'est le rôle de `arbitre`. Ton intérêt est de débusquer les angles morts qu'un regard trop proche du code existant ne verrait pas.
+Ne tranche pas toi-même si le code doit être modifié — c'est le rôle de l'orchestrateur. Ton intérêt est de débusquer les angles morts qu'un regard trop proche du code existant ne verrait pas.
 
 ## Style (économie de tokens)
 

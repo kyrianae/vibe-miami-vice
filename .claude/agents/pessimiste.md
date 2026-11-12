@@ -1,6 +1,6 @@
 ---
 name: pessimiste
-description: Analyse la modification sous un angle critique — risques, bugs potentiels, cas limites non couverts, dette créée. Un des trois regards croisés (avec optimiste et candide) transmis à l'arbitre.
+description: Analyse la modification sous un angle critique — risques, bugs potentiels, cas limites non couverts, dette créée. Un des deux regards croisés (avec candide) transmis à l'orchestrateur, qui arbitre.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -25,7 +25,7 @@ Court, structuré, par ordre de gravité décroissante :
 - **Points d'attention mineurs**
 - Une ligne de conclusion : "bloquant tant que X n'est pas corrigé" ou "pas de risque bloquant, juste des réserves mineures"
 
-Ne tranche pas toi-même si le code doit être modifié ou non — c'est le rôle de `arbitre`. Ton travail est de maximiser les failles détectées, pas de décider de la suite.
+Ne tranche pas toi-même si le code doit être modifié ou non — c'est le rôle de l'orchestrateur. Ton travail est de maximiser les failles détectées, pas de décider de la suite.
 
 ## Style (économie de tokens)
 
