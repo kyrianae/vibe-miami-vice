@@ -70,12 +70,14 @@ services:
       DATABASE_URL: postgresql://miami:vice@db:5432/miami_vice
       KEYCLOAK_ISSUER: http://localhost:8080/realms/miami-vice
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/miami-vice/protocol/openid-connect/certs
+      FILE_STORAGE_ROOT: /data/files
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./backend:/app
       - ./model:/model
+      - ./files:/data/files
 
   frontend:
     build:

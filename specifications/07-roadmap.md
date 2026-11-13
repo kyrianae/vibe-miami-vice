@@ -133,5 +133,40 @@ profondeur et de volume (`MAX_HIDDEN_CHAIN_DEPTH`,
 un dédoublonnage indépendant de l'ordre d'itération SQL. Détail complet :
 voir `plan-mark2.md` action 10.
 
+## 10.7 Stockage de fichiers (tranché — `plan-mark3.md` action 2)
+
+Idée (`tocheck.md` point 13) : prérequis pour les attributs de type
+« fichier » (#14), « image » (#15) et le logo surchargeable par objet
+(#16) — définir comment stocker des fichiers liés à un objet, avec une
+arborescence `/class/id/attribut/version`.
+
+Décision utilisateur (2026-11-13) : implémentation **fichiers à plat**
+pour commencer, mais posée **derrière une interface de stockage
+abstraite** — remplaçable par S3/MinIO plus tard sans modifier le code
+appelant (endpoints de #14 et au-delà), et sans refonte le jour où le
+découpage microservices (`tocheck.md` #22, backend storage dédié) se
+fait.
+
+Design retenu :
+- Interface `FileStorage` (classe abstraite), méthodes minimales :
+  `save`, `read`, `delete`, `list_versions`.
+- Implémentation `LocalFileStorage` : racine configurable (env var
+  `FILE_STORAGE_ROOT`, même pattern que `SCHEMA_PATH`/`MODEL_DIR`),
+  arborescence `<root>/<class>/<object_id>/<attribute_name>/<version>/
+  <filename>`.
+- Versionnement : entier incrémental par `(class, object_id,
+  attribute_name)`, déterminé par listing du dossier existant — jamais
+  d'écrasement, cohérent avec l'historisation déjà en place (§10.4,
+  `plan-mark2.md` action 6.0 : aucune version n'est perdue).
+- Nom de fichier reçu = entrée utilisateur : assaini avant toute
+  écriture disque (refus de `..`, séparateur de chemin, chemin absolu)
+  pour empêcher un path traversal hors de l'arborescence prévue.
+- Portée volontairement limitée à la brique de stockage elle-même :
+  **pas de route HTTP, pas de câblage à un type d'attribut** dans cette
+  action — ça reste le périmètre de #14 (action future, distincte).
+
+Détail complet et suivi : `plan-mark3.md` action 2.
+
 > Statut courant (2026-11-13) : `plan-mark3.md` fait suite à `plan-mark2.md`
-> sans report de backlog — aucune action tenant/roadmap ouverte à ce jour.
+> sans report de backlog. Actions ouvertes à ce jour : 1 (découpage
+> `app.py`, fait), 2 (interface de stockage de fichiers, à faire).
