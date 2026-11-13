@@ -75,7 +75,8 @@ miami-vice/
 │   └── init.ldif                # Données d'amorçage LDAP (service désactivé)
 │
 ├── docker-compose.yml          # Services : db (Postgres), backend, frontend, (ldap/lam commentés)
-└── specifications.md           # (vide pour le moment)
+├── specifications.md           # Pointeur vers specifications/ (contenu déplacé le 2026-11-13)
+└── specifications/             # Spécifications splittées par thème (fonctionnel, architecture, technique, anomalies, roadmap)
 ```
 
 ### Pattern URL de l'API
@@ -305,7 +306,7 @@ pytest test_rbac_class_tenant_scope.py -v
 
 ## 🚀 Prochaines étapes
 
-- [ ] Remplir `specifications.md`
+- [x] Remplir `specifications.md` (désormais scindé dans `specifications/`)
 - [ ] Activer et documenter l'intégration LDAP (si besoin)
 - [ ] Ajouter des tests (aucun actuellement)
 - [ ] Authentification / autorisation sur l'API
