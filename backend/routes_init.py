@@ -39,6 +39,7 @@ def init_from_model_files():
     model_dir = os.environ.get("MODEL_DIR", "/model")
     loaded = []
     skipped = []
+    versions = {}
 
     conn = app.get_db()
     try:
@@ -53,6 +54,7 @@ def init_from_model_files():
                         continue
 
                     meta_class_name = data["meta_class"]
+                    version = data.get("version", 1)
 
                     try:
                         jsonschema.validate(instance=data, schema=load_schema())
@@ -61,6 +63,14 @@ def init_from_model_files():
                             "meta_class": meta_class_name,
                             "file": filename,
                             "reason": f"fichier invalide au regard du schéma JSON : {e}",
+                        })
+                        continue
+
+                    if isinstance(version, float):
+                        skipped.append({
+                            "meta_class": meta_class_name,
+                            "file": filename,
+                            "reason": f"champ 'version' invalide : doit être un entier, reçu un nombre à virgule ({version!r})",
                         })
                         continue
 
@@ -75,11 +85,13 @@ def init_from_model_files():
 
                         merged_classes = []
                         seen_names = set()
+                        any_class_skipped = False
                         for cls in data["classes"]:
                             cls_name = cls.get("class")
                             seen_names.add(cls_name)
                             existing_cls = existing_by_name.get(cls_name)
                             if existing_cls is not None and _existing_class_out_of_tenant_scope(ctx, existing_cls):
+                                any_class_skipped = True
                                 skipped.append({
                                     "meta_class": meta_class_name,
                                     "class": cls_name,
@@ -96,9 +108,12 @@ def init_from_model_files():
                             if name not in seen_names:
                                 merged_classes.append(existing_cls)
 
-                        store_data = {"meta_class": meta_class_name, "classes": merged_classes}
+                        if any_class_skipped:
+                            version = existing_defn["data"].get("version", 1)
+
+                        store_data = {"meta_class": meta_class_name, "classes": merged_classes, "version": version}
                     else:
-                        store_data = {"meta_class": meta_class_name, "classes": data["classes"]}
+                        store_data = {"meta_class": meta_class_name, "classes": data["classes"], "version": version}
 
                     cur.execute(
                             """INSERT INTO definition (meta_class, data) VALUES (%s, %s)
@@ -106,9 +121,10 @@ def init_from_model_files():
                             (meta_class_name, json.dumps(store_data))
                         )
                     loaded.append(meta_class_name)
+                    versions[meta_class_name] = version
 
         conn.commit()
-        return jsonify({"status": "ok", "loaded": loaded, "skipped": skipped})
+        return jsonify({"status": "ok", "loaded": loaded, "skipped": skipped, "versions": versions})
     except Exception as e:
         conn.rollback()
         raise e

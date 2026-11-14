@@ -539,6 +539,122 @@
   **Testeur-global : OK (182/182, démarrage Flask propre, aucune
   régression RBAC/purge/file storage/typage modèle).**
 
+## 5. [Dette technique / préparation] Versionnage des fichiers modèle
+
+> Demande utilisateur (2026-11-14) : documenter que `/api/init` charge
+> bien tous les fichiers `model/*.json` montés via docker-compose (déjà
+> vrai en code, spec à mettre à jour car en retard sur le comportement
+> réel), et ajouter un champ `"version"` au niveau d'un document modèle
+> pour préparer une future gestion de migrations — **sans construire le
+> mécanisme de migration lui-même maintenant** (« on verra par la
+> suite ») : juste le champ, persisté, visible dans la réponse de
+> chargement.
+
+- **Problème (volet doc)** : `specifications/04-api-backend.md` §4.5 est
+  en retard sur `backend/routes_init.py` réel : dit encore « Aucune
+  validation JSON Schema n'est appliquée » et ne mentionne ni le champ
+  `skipped` ni la logique RBAC tenant-admin (fusion classe par classe,
+  jamais de suppression silencieuse d'une classe absente du fichier
+  rechargé) qui existent déjà dans le code depuis l'action 11 (RBAC
+  multi-tenant, antérieure à Mark 3).
+- **Problème (volet version)** : un document modèle (`model/*.json`,
+  champs `meta_class`/`classes`) n'a aujourd'hui aucun identifiant de
+  version. Impossible de distinguer "ce fichier a changé de forme depuis
+  la dernière fois qu'il a été chargé" d'un simple remplacement intégral
+  — toute future logique de migration (transformer les objets existants
+  quand la définition d'une classe change de façon incompatible) a
+  besoin d'un point de comparaison explicite avant/après.
+- **Correctif** :
+  1. **Doc** : réécrire `specifications/04-api-backend.md` §4.5 pour
+     refléter le comportement réel actuel de `/api/init` — parcourt
+     `MODEL_DIR` (défaut `/model`, monté via `docker-compose.yml` ligne
+     `./model:/model` sur le service `backend`) ; charge **tous** les
+     fichiers `*.json` du dossier sauf `schema.json`, silencieusement
+     ignorés si `meta_class`/`classes` absents ; validation JSON Schema
+     désormais appliquée (fichier invalide → listé dans `skipped`, pas
+     une erreur HTTP) ; RBAC tenant-admin fait une fusion classe par
+     classe (classe hors périmètre → `skipped`, inchangée en base,
+     jamais re-taguée ; classe absente du fichier rechargé → jamais
+     supprimée silencieusement) ; global-admin remplace intégralement les
+     classes du fichier. Réponse `{"status":"ok","loaded":[...],
+     "skipped":[...]}`.
+  2. **Champ `version`** : ajouter une propriété top-level optionnelle
+     `"version"` (entier, `minimum: 1`) dans `model/schema.json`, à côté
+     de `meta_class`/`depends_on`/`classes`. Absence = version 1 par
+     défaut (pas de migration à l'historique zéro).
+  3. `backend/routes_init.py` : lire `data.get("version", 1)`, l'inclure
+     dans `store_data` (les deux branches, tenant-admin **et**
+     global-admin — actuellement aucune des deux ne propage un champ
+     top-level autre que `meta_class`/`classes`, ce correctif ajoute la
+     propagation pour `version` uniquement, pas pour `depends_on` qui
+     reste une limite préexistante hors périmètre de cette action).
+     Ajouter un nouveau champ `"versions"` à la réponse JSON (dict
+     `{meta_class: version}` pour les meta-classes effectivement
+     chargées) — **additif**, ne change pas la forme de `loaded` (liste
+     de noms, inchangée, pour ne pas casser
+     `ConfigurationPage.tsx:249` qui fait `res.loaded.join(', ')`).
+  4. `backend/routes_write.py` (`write_metaclass`) : même propagation —
+     `data["version"] = body.get("version", 1)` avant la validation JSON
+     Schema, pour qu'un appel direct à cette route (hors fichier modèle)
+     puisse aussi déclarer une version.
+  5. Pas de nouvelle colonne SQL : `version` reste dans le JSONB `data`
+     de `definition` (même traitement que `depends_on` aujourd'hui) —
+     une colonne dédiée pour requêter efficacement les versions sera
+     ajoutée plus tard, seulement quand un vrai mécanisme de migration en
+     aura besoin (décision explicitement reportée par l'utilisateur).
+  6. Tests : chaque fichier `model/*.json` existant reste chargeable sans
+     `version` (défaut 1, non-régression) ; un document avec `version`
+     explicite la conserve après chargement (`/api/init` et
+     `/api/write/metaclass`) ; réponse `/api/init` contient bien
+     `versions` sans changer la forme de `loaded` ; RBAC tenant-admin
+     (fusion classe par classe) continue de fonctionner avec un document
+     versionné.
+- **Effort** : faible (champ de schéma + propagation dans 2 endpoints +
+  doc). Pas de migration réelle implémentée — juste la donnée pour la
+  construire plus tard.
+- **Fichiers** : `model/schema.json`, `backend/routes_init.py`,
+  `backend/routes_write.py`, `specifications/04-api-backend.md`,
+  nouveaux tests backend.
+- **Statut** : ✅ fait, en 2 itérations suite à revue croisée.
+  **Itération 1** : `model/schema.json` — propriété top-level
+  optionnelle `"version"` (integer, `minimum: 1`), non `required`.
+  `backend/routes_init.py` : version propagée dans `store_data` des
+  deux branches (fusion tenant-admin et remplacement global-admin) ;
+  nouveau champ `versions` ajouté à la réponse JSON (additif), `loaded`
+  inchangé. `backend/routes_write.py` (`write_metaclass`) : propage
+  `version` avant validation JSON Schema. Doc
+  `specifications/04-api-backend.md` §4.5 relue, déjà conforme.
+  **Itération 2** (suite revue croisée pessimiste) : rejet explicite
+  d'un `version` flottant même à valeur entière (ex. `2.0`, accepté à
+  tort par `jsonschema` pour `type: integer` — comportement de la spec
+  JSON Schema, pas un bug de lib) — skip dans `backend/routes_init.py`,
+  `abort(400)` dans `backend/routes_write.py`. Dans la branche
+  tenant-admin de `backend/routes_init.py`, la version du document
+  n'est plus écrasée par celle du fichier rechargé quand au moins une
+  classe a été réellement skippée pour hors-périmètre pendant la
+  fusion (flag `any_class_skipped`) — affiné une 2e fois en cours
+  d'itération pour ne figer la version QUE dans ce cas précis (pas dès
+  qu'une ligne existait déjà, sinon un tenant-admin qui retouche 100%
+  de son périmètre ne pourrait jamais faire avancer la version). Doc
+  `specifications/04-api-backend.md` §4.4 complétée (ne mentionnait pas
+  le champ `version` sur `write_metaclass`). Tests :
+  `backend/test_model_version_action_5.py` — 193/193 tests backend au
+  final (aucune régression). Testeur-global : OK (docker compose, logs
+  propres, pas de nouvelle dépendance donc pas de rebuild nécessaire,
+  curl réel confirme routes/auth OK).
+  **Limite connue acceptée** (pas corrigée, décision explicite de ne
+  pas itérer une 3e fois dessus vu le scope volontairement minimal de
+  cette action — champ purement informatif, aucune logique de
+  migration réelle ne le consomme encore) : le champ `version` peut
+  avancer (suivre la version du fichier rechargé) même si une classe
+  est omise du fichier sans avoir été réellement skippée pour raison
+  RBAC (cas différent du skip RBAC explicite, qui lui gèle bien la
+  version) — cette classe omise reste en fait inchangée en base, mais
+  la version du document progresse quand même comme si tout avait été
+  retouché. Acceptable tant qu'aucune logique de migration ne consomme
+  ce champ ; à revoir si/quand un vrai mécanisme de migration est
+  construit.
+
 ## Récapitulatif d'avancement
 
 > Tableau à tenir à jour en même temps que le champ **Statut** de chaque
@@ -550,3 +666,4 @@
 | 2 | Interface de stockage de fichiers (abstraite, impl. à plat) | ✅ fait |
 | 3 | Types d'attribut "fichier", "image" et "csv" | ✅ fait |
 | 4 | Logo surchargeable par objet et icône par défaut par classe | ✅ fait |
+| 5 | Versionnage des fichiers modèle (préparation migrations) | ✅ fait |

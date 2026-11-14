@@ -11,6 +11,11 @@
             "type": "string",
             "description": "Nom de la meta-classe regroupant les classes"
         },
+        "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Version du document modèle (plan-mark3.md action 5, préparation migrations futures). Absent = version 1 par défaut. Purement informatif pour l'instant : aucune logique de migration appliquée au runtime."
+        },
         "depends_on": {
             "type": "array",
             "items": {

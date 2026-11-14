@@ -172,6 +172,9 @@ Corps : `{"meta_class": str, "class": {"class": str, "attributes": [...]}}`.
 Corps : `{"meta_class": str, "classes": [...]}` (même format que les
 fichiers `model/*.json`, sans la clé `$schema`).
 - `400` si `meta_class` ou `classes` absents.
+- Corps accepte un champ optionnel `"version"` (entier >= 1, défaut `1` si
+  absent), propagé tel quel dans `data` ; `400` si ce n'est pas un entier
+  valide, notamment un float à valeur entière (ex. `2.0`) est rejeté.
 - Si la meta-classe existe déjà, son `data` est **entièrement remplacé**
   (toutes les classes précédemment définies pour cette meta-classe sont
   perdues si elles ne sont pas réincluses dans `classes`) ; sinon une
@@ -181,15 +184,41 @@ fichiers `model/*.json`, sans la clé `$schema`).
 ## 4.5 Initialisation depuis les fichiers modèles
 
 **`POST /api/init`**
-Pas de corps attendu. Parcourt le dossier `MODEL_DIR` (env var, défaut
-`/model`, monté dans le conteneur backend depuis `./model` du host),
-pour chaque fichier `*.json` **sauf `schema.json`** :
+Pas de corps attendu. Parcourt **tous** les fichiers du dossier
+`MODEL_DIR` (env var, défaut `/model`) — c'est le dossier `./model` du
+host, monté dans le conteneur `backend` via `docker-compose.yml`
+(`volumes: - ./model:/model`) ; tout fichier `*.json` qu'on dépose dans
+`./model/` sur le host est donc automatiquement vu par `/api/init`, sans
+modifier le code ni la config. Pour chaque fichier `*.json` **sauf
+`schema.json`** :
 - charge le JSON ; si les clés `meta_class`/`classes` sont absentes, le
   fichier est **silencieusement ignoré** (pas d'erreur retournée) ;
-- sinon, upsert dans `definition` : `INSERT ... ON CONFLICT (meta_class) DO
-  UPDATE SET data = EXCLUDED.data` — remplace entièrement les classes de
-  cette meta-classe si elle existait déjà.
-- Réponse `200` : `{"status":"ok","loaded": ["personne", "element_avec_ip", ...]}`
-  (noms des meta-classes effectivement chargées ; ordre dépendant de
-  l'ordre renvoyé par `os.listdir`, non garanti alphabétique).
-- Aucune validation JSON Schema n'est appliquée (voir §3.2).
+- validation JSON Schema appliquée (`jsonschema.validate` contre
+  `model/schema.json`, voir §3.2) : fichier invalide au regard du schéma
+  → **pas d'erreur HTTP**, l'entrée est ajoutée à `skipped` avec la
+  raison, le chargement des autres fichiers continue ;
+- RBAC multi-tenant (action 11, `plan-mark2.md`) :
+  - `tenant-readonly` → `403` systématique, rien n'est chargé.
+  - `tenant-admin` → fusion **classe par classe**, pas un remplacement
+    intégral du fichier : une classe déjà existante mais hors du
+    périmètre de l'appelant (globale ou taguée pour un autre tenant)
+    est laissée inchangée et listée dans `skipped` (jamais re-taguée
+    silencieusement) ; une classe déjà en base mais absente du fichier
+    rechargé n'est **jamais supprimée** par ce rechargement partiel ;
+    le reste (classes nouvelles ou dans son périmètre) est chargé
+    normalement.
+  - `global-admin` → pas de restriction, les classes du fichier
+    remplacent entièrement celles de la meta-classe en base (upsert
+    `INSERT ... ON CONFLICT (meta_class) DO UPDATE SET data =
+    EXCLUDED.data`).
+- Champ `"version"` (optionnel, entier, absent = `1`, action 5
+  `plan-mark3.md` — préparation migrations futures, aucune logique de
+  migration appliquée pour l'instant) : propagé tel quel dans `data`
+  lors du chargement, visible dans la réponse via `versions` ci-dessous.
+- Réponse `200` : `{"status":"ok", "loaded": ["personne", "element_avec_ip", ...],
+  "skipped": [{"meta_class":str, "file"?:str, "class"?:str, "reason":str}, ...],
+  "versions": {"personne": 1, ...}}` — `loaded` reste une liste de noms
+  de meta-classes (ordre dépendant de `os.listdir`, non garanti
+  alphabétique) pour ne pas casser le frontend existant
+  (`ConfigurationPage.tsx` fait `res.loaded.join(', ')`) ; `versions` est
+  additif, une entrée par meta-classe effectivement chargée.

@@ -770,6 +770,7 @@ def write_metaclass():
 
     meta_class_name = body["meta_class"]
     data = {"meta_class": meta_class_name, "classes": body["classes"]}
+    data["version"] = body.get("version", 1)
 
     conn = app.get_db()
     try:
@@ -794,6 +795,9 @@ def write_metaclass():
                 _check_existing_class_tenant_scope(ctx, existing_cls)
         for cls in data["classes"]:
             _check_class_tenant_write_permission(ctx, cls)
+
+        if isinstance(data["version"], float):
+            abort(400, description=f"champ 'version' invalide : doit être un entier, reçu un nombre à virgule ({data['version']!r})")
 
         try:
             jsonschema.validate(instance=data, schema=load_schema())
