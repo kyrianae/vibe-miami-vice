@@ -167,6 +167,123 @@ Design retenu :
 
 Détail complet et suivi : `plan-mark3.md` action 2.
 
+## 10.8 Types d'attribut fichier/image, logo d'objet, icône de classe (conçu — `plan-mark3.md` actions 3-4)
+
+Idée (`tocheck.md` points 14, 15, 16, 17) : attribut de type « fichier »,
+spécialisation « image » (jpg/svg/png), logo surchargeable par objet
+(utilisé dans les diagrammes), icône par défaut par classe. Dépend de
+§10.7 (interface de stockage).
+
+### Types d'attribut « fichier » et « image » (`tocheck.md` #14/#15 — `plan-mark3.md` action 3)
+
+- Nouveaux types dans `model/schema.json` : `"file"` et `"image"` ajoutés
+  à l'enum `attributes[].type` (aux côtés de `string|integer|float|
+  joint-1-1|joint-1-n`). `constraint`/`sql_constraint` restent sans objet
+  pour ces deux types (pas de `classes` requis non plus, contrairement à
+  `joint-1-1`/`joint-1-n`).
+- Représentation en base : **aucune nouvelle colonne**. La contrainte
+  `CHECK` de `attribute_value` (exactement une des 4 colonnes non-NULL,
+  §3.4) reste inchangée — la valeur stockée dans `value_string` est un
+  pointeur `"<version>:<nom_fichier_original>"` vers le contenu réel géré
+  par `FileStorage` (§10.7), pas le contenu lui-même. L'historisation
+  existante (`valid_from`/`valid_to`, `plan-mark2.md` action 6.0)
+  s'applique normalement à ce pointeur : une nouvelle valeur ferme
+  l'ancienne ligne et en ouvre une nouvelle avec un pointeur vers une
+  nouvelle version `FileStorage` — l'ancien fichier n'est jamais effacé
+  tant que sa ligne `attribute_value` reste dans la fenêtre de grâce
+  (cohérent avec la purge différée, action 6.2).
+- Deux nouvelles routes (le contenu est binaire, `POST /api/write/object`
+  reste JSON, inchangé) :
+  - `POST /api/write/object/<int:object_id>/file/<string:attribute>`
+    (`multipart/form-data`, champ `file`) : vérifie que l'objet existe et
+    n'est pas supprimé logiquement, que l'attribut est bien déclaré de
+    type `file`/`image` sur la classe de l'objet, applique le même
+    contrôle RBAC tenant en écriture que les autres endpoints d'écriture
+    (`_check_class_tenant_write_permission`/équivalent), appelle
+    `FileStorage.save(...)`, puis ferme/ouvre la ligne `attribute_value`
+    comme ci-dessus.
+  - `GET /api/read/object/<int:object_id>/file/<string:attribute>`
+    (`?version=N` optionnel, sinon la version active) : applique le même
+    filtre de lecture tenant que `_build_object_payload`, puis sert les
+    octets via `FileStorage.read(...)` avec `Content-Type` déduit de
+    l'extension et `Content-Disposition`.
+- Limite de taille d'upload explicite (`MAX_CONTENT_LENGTH` Flask ou
+  contrôle avant écriture) — même logique de prudence que le refus du
+  `depth` illimité (§10.1) : une API avec authentification mais sans
+  limite de taille de corps reste un vecteur de déni de service par
+  remplissage disque.
+- Validation spécifique au type `image` : extension dans
+  `{jpg, jpeg, png, svg}` **et** contenu vérifié (signature binaire pour
+  jpg/png ; pour svg, XML bien formé avec racine `<svg>`). ⚠️ Point de
+  sécurité à ne pas rater : un SVG peut embarquer du script
+  (`<script>`, gestionnaires d'évènements, entités externes) — un SVG
+  uploadé par un utilisateur et resservi tel quel est un vecteur de XSS
+  stocké classique. Le servir en `Content-Disposition: attachment` (pas
+  de rendu inline direct dans un `<img>`/`<iframe>` sans sanitization) ou
+  le sanitizer au moment de l'upload — à trancher explicitement lors de
+  l'implémentation, pas une simple validation d'extension.
+
+### Logo surchargeable par objet et icône par défaut par classe (`tocheck.md` #16/#17 — `plan-mark3.md` action 4)
+
+- **Icône de classe (#17)** : nouveau champ optionnel `"icon"` sur une
+  classe dans `model/schema.json` (chaîne = identifiant choisi dans un
+  **jeu fixe** d'icônes embarquées côté frontend, pas un upload libre —
+  cohérent avec le texte `tocheck.md` : « sélection d'icône par défaut
+  quand actif »). Sélecteur dans `ConfigurationPage.tsx` (grille des
+  icônes du jeu fixe). Utilisée par `DiagramPage`/`NavigationPage` comme
+  représentation par défaut d'un objet de cette classe, en dernier
+  recours après le logo (ci-dessous) s'il existe.
+- **Icône par défaut auto-récupérée (complément #17, demande
+  2026-11-14)** : quand une classe n'a ni logo ni icône choisie
+  manuellement, générer un défaut au lieu de retomber direct sur la
+  couleur de palette (§6.4) :
+  1. Fonction backend (module dédié, ex. `backend/class_icon.py`) qui
+     prend un mot-clé (nom de la classe) et tente de récupérer un SVG
+     correspondant sur svgrepo.com.
+  2. **Homogénéisation** : les SVG de svgrepo.com ont des styles
+     hétérogènes (tailles, couleurs, traits). Passer le SVG récupéré
+     dans une étape de normalisation configurable — `viewBox` fixe,
+     couleur de trait/remplissage recolorée vers une couleur unique
+     (cohérent avec la palette actuelle par classe, §6.4), `stroke-width`
+     normalisé — pilotée par une config centralisée (même pattern que
+     `FILE_STORAGE_ROOT`/`SCHEMA_PATH` : constantes ou petit bloc JSON
+     dédié), pour que toutes les icônes par défaut se ressemblent malgré
+     des sources variées.
+  3. **Fallback obligatoire** : si la recherche ne trouve rien ou que la
+     requête échoue (réseau, timeout, SVG invalide), générer localement
+     un SVG simple — un rond uni (couleur de palette de la classe,
+     §6.4) avec le nom de la classe (ou ses initiales si trop long)
+     centré dedans. Aucune dépendance externe sur ce chemin de repli.
+  4. Résultat mis en cache/stocké (réutilise `FileStorage` de l'action 2
+     une fois dispo, sinon fichier local) — pas d'appel réseau à chaque
+     rendu de page, seulement à la création/configuration de la classe
+     ou si forcé en rafraîchissement.
+  5. ⚠️ **Point à trancher avant implémentation** : svgrepo.com n'a pas
+     d'API de recherche publique documentée à ce jour — à vérifier
+     (recherche par mot-clé côté site, convention d'URL de téléchargement
+     par slug) et respecter leurs conditions d'usage/limites de débit
+     avant de construire une dépendance dessus. Si indisponible ou trop
+     fragile, le fallback rond+nom peut devenir le comportement par
+     défaut permanent plutôt qu'un simple filet de sécurité.
+- **Logo d'objet (#16)** : convention proposée — une classe qui « a un
+  logo » porte un attribut réservé de type `image` (ex. nom `logo`,
+  domaine `display`), réutilisant intégralement la plomberie de l'action
+  3 (upload/download, stockage versionné). Sur un objet donné, l'UI
+  permet de choisir un fichier à importer **ou** de sélectionner un logo
+  déjà présent parmi ceux des autres objets de classes à logo — ce
+  deuxième cas (réutiliser un logo existant plutôt que de dupliquer les
+  octets) est un point de conception **encore ouvert**, à trancher avant
+  implémentation : soit le pointeur `attribute_value` référence le
+  `(classe, object_id, attribut, version)` d'un *autre* objet, soit
+  l'upload copie réellement les octets vers une nouvelle version propre
+  à l'objet. `DiagramPage` resterait inchangé dans les deux cas côté
+  rendu (`symbol: 'image://<url de lecture>'`), seule la couche de
+  stockage/référence diffère.
+
+Détail complet et suivi : `plan-mark3.md` actions 3 et 4.
+
 > Statut courant (2026-11-13) : `plan-mark3.md` fait suite à `plan-mark2.md`
 > sans report de backlog. Actions ouvertes à ce jour : 1 (découpage
-> `app.py`, fait), 2 (interface de stockage de fichiers, à faire).
+> `app.py`, fait), 2 (interface de stockage de fichiers, en cours de
+> revue croisée), 3 (types fichier/image, à faire), 4 (logo/icône, à
+> faire).

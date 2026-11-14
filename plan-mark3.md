@@ -218,6 +218,123 @@
   pas de route Flask, pas de câblage à un type d'attribut, conformément au
   périmètre fixé.
 
+## 3. [Nouvelle fonctionnalité] Types d'attribut "fichier" et "image"
+
+> Demande utilisateur (`tocheck.md` points 14 et 15, 2026-11-13). Détail
+> de conception : `specifications/07-roadmap.md` §10.8. Dépend de
+> l'action 2 (`FileStorage`/`LocalFileStorage`).
+
+- **Problème** : pas de moyen d'attacher un fichier (ou une image) à un
+  objet ; l'interface de stockage (action 2) existe mais n'est câblée à
+  rien.
+- **Correctif** :
+  1. `model/schema.json` : ajouter `"file"` et `"image"` à l'enum
+     `attributes[].type` (aux côtés de `string|integer|float|joint-1-1|
+     joint-1-n`) ; ces deux types n'utilisent ni `constraint`/
+     `sql_constraint` ni `classes`.
+  2. Aucune nouvelle colonne en base : la valeur stockée dans
+     `attribute_value.value_string` est un pointeur
+     `"<version>:<nom_fichier_original>"` vers le contenu réel géré par
+     `FileStorage`, pas le contenu lui-même. Historisation inchangée
+     (`valid_from`/`valid_to`, `_apply_attribute_diff`,
+     `plan-mark2.md` action 6.0) : une nouvelle valeur ferme l'ancienne
+     ligne et ouvre une nouvelle ligne pointant une nouvelle version
+     `FileStorage` ; l'ancien fichier n'est jamais effacé tant que sa
+     ligne reste dans la fenêtre de grâce (action 6.2).
+  3. Nouvelle route `POST /api/write/object/<int:object_id>/file/
+     <string:attribute>` (`multipart/form-data`, champ `file`) : objet
+     existant et non supprimé logiquement, attribut déclaré `file`/
+     `image` sur la classe de l'objet, contrôle RBAC tenant en écriture
+     identique aux autres endpoints d'écriture, puis
+     `FileStorage.save(...)` + fermeture/ouverture de la ligne
+     `attribute_value`.
+  4. Nouvelle route `GET /api/read/object/<int:object_id>/file/
+     <string:attribute>` (`?version=N` optionnel, sinon version active) :
+     même filtre de lecture tenant que `_build_object_payload`, puis
+     `FileStorage.read(...)` avec `Content-Type` déduit de l'extension et
+     `Content-Disposition`.
+  5. Limite de taille d'upload explicite (`MAX_CONTENT_LENGTH` Flask ou
+     contrôle avant écriture) — même logique que le refus du `depth`
+     illimité (§10.1) : pas de limite de taille de corps = vecteur de
+     déni de service par remplissage disque, même avec authentification.
+  6. Validation spécifique au type `image` : extension dans
+     `{jpg, jpeg, png, svg}` **et** contenu vérifié (signature binaire
+     jpg/png ; XML bien formé racine `<svg>` pour svg). ⚠️ **Point de
+     sécurité à trancher explicitement à l'implémentation, pas une simple
+     validation d'extension** : un SVG peut embarquer du script
+     (`<script>`, gestionnaires d'évènements, entités externes) — resservi
+     tel quel à un navigateur, c'est un vecteur de XSS stocké classique.
+     Servir en `Content-Disposition: attachment` (pas de rendu inline
+     direct) ou sanitizer le SVG à l'upload — choisir l'un des deux, pas
+     les ignorer.
+  7. Tests : upload/download round-trip, versions multiples (historique
+     conservé), upload refusé si taille dépassée, upload `image` refusé
+     si extension/contenu hors liste blanche, SVG avec `<script>` refusé
+     ou neutralisé selon l'option choisie au point 6, lecture tenant-
+     scopée (un tenant ne doit pas pouvoir lire/écrire le fichier d'un
+     objet hors de son périmètre).
+- **Effort** : moyen à conséquent (2 nouvelles routes avec RBAC tenant +
+  historisation + validation de contenu binaire, point de sécurité SVG à
+  ne pas bâcler).
+- **Fichiers** : `model/schema.json`, `backend/routes_write.py` (ou
+  nouveau module dédié), `backend/file_storage.py` (consommé, pas
+  modifié), nouveau fichier de test.
+- **Statut** : ⬜ à faire.
+
+## 4. [Nouvelle fonctionnalité] Logo surchargeable par objet et icône par défaut par classe
+
+> Demande utilisateur (`tocheck.md` points 16 et 17, 2026-11-13). Détail
+> de conception : `specifications/07-roadmap.md` §10.8. Dépend de
+> l'action 3 (type d'attribut `image`) pour le logo ; l'icône de classe
+> est indépendante (pas de dépendance au stockage de fichiers).
+
+- **Problème** : aucune représentation visuelle configurable par classe
+  (icône) ni par objet (logo) dans `DiagramPage`/`NavigationPage` —
+  aujourd'hui une couleur de palette fixe par classe uniquement (§6.4).
+- **Correctif** :
+  1. **Icône de classe (#17)** : ajouter un champ optionnel `"icon"` sur
+     une classe dans `model/schema.json` (chaîne = identifiant choisi
+     dans un **jeu fixe** d'icônes embarquées côté frontend, pas un
+     upload libre). Sélecteur (grille) dans `ConfigurationPage.tsx`.
+     Utilisée par `DiagramPage`/`NavigationPage` comme représentation par
+     défaut d'un objet de cette classe, après le logo s'il existe.
+  1bis. **Icône par défaut auto-récupérée** (demande 2026-11-14, détail
+     `specifications/07-roadmap.md` §10.8) : si pas d'icône choisie
+     manuellement, fonction backend mot-clé (nom de classe) → SVG
+     svgrepo.com, passée par une étape d'homogénéisation configurable
+     (couleur/traits/viewBox normalisés), résultat mis en cache. Fallback
+     obligatoire si échec/pas de résultat : SVG généré localement, rond +
+     nom de classe. ⚠️ svgrepo.com n'a pas d'API de recherche publique
+     documentée — à vérifier avant implémentation (point ouvert).
+  2. **Logo d'objet (#16)** : convention — une classe qui « a un logo »
+     porte un attribut réservé de type `image` (ex. nom `logo`, domaine
+     `display`), réutilisant la plomberie de l'action 3. Sur un objet,
+     l'UI permet d'importer un fichier **ou** de sélectionner un logo
+     déjà présent parmi ceux d'autres objets de classes à logo.
+  3. **Point de conception à trancher avant implémentation** (non tranché
+     par cette spec) : réutiliser un logo existant doit-il faire pointer
+     `attribute_value` vers le `(classe, object_id, attribut, version)`
+     d'un *autre* objet, ou dupliquer réellement les octets vers une
+     nouvelle version propre à l'objet ? Impact : partage/dédoublonnage
+     de stockage vs. simplicité d'implémentation (une référence croisée
+     complique la purge/historisation — supprimer l'objet source ne doit
+     pas casser la référence d'un objet qui l'a choisi comme logo). Poser
+     la question à l'utilisateur en démarrant cette action si pas tranché
+     d'ici là.
+  4. `DiagramPage.tsx` : rendu `symbol: 'image://<url de lecture>'`
+     (route de l'action 3) si logo résolu, sinon icône de classe (point
+     1), sinon fallback couleur actuel (§6.4) — ordre de priorité
+     explicite à respecter.
+  5. Tests : rendu avec logo seul, icône seule, aucun des deux (fallback
+     couleur), et le point 3 une fois tranché.
+- **Effort** : moyen (essentiellement frontend — sélecteurs, rendu
+  graphe — plus la décision de conception du point 3 côté backend).
+- **Fichiers** : `model/schema.json`, `frontend/src/pages/
+  ConfigurationPage.tsx`, `frontend/src/pages/DiagramPage.tsx`,
+  `frontend/src/pages/NavigationPage.tsx`, backend (routes de l'action 3
+  réutilisées, pas de nouvelle route a priori sauf si le point 3 l'exige).
+- **Statut** : ⬜ à faire.
+
 ## Récapitulatif d'avancement
 
 > Tableau à tenir à jour en même temps que le champ **Statut** de chaque
@@ -227,3 +344,5 @@
 |---|--------|--------|
 | 1 | Découpage de `backend/app.py` en modules | ✅ fait |
 | 2 | Interface de stockage de fichiers (abstraite, impl. à plat) | ✅ fait |
+| 3 | Types d'attribut "fichier" et "image" | ⬜ à faire |
+| 4 | Logo surchargeable par objet et icône par défaut par classe | ⬜ à faire |
