@@ -109,6 +109,82 @@ export const apiWriteAttribute = (cls: string, id: number, attribute: string, va
     { method: 'PUT' }
   );
 
+// WRITE - Création d'objet + fichier(s) en une seule requête multipart
+// (plan-mark3.md action 3, point A de la revue croisée) : évite la fenêtre
+// "objet créé sans fichier" du flux JSON + upload séparé (si un upload
+// échoue après une création JSON déjà commitée, un retry recrée un
+// doublon). Réservé à la CRÉATION (pas d'édition par ce chemin, voir
+// NavigationPage.tsx) - un champ multipart 'metadata' (JSON) porte les
+// métadonnées/attributs non-fichier, un champ multipart par attribut
+// file/image/csv porte le fichier correspondant.
+export const apiWriteObjectCreateMultipart = async (
+  metadata: { meta_class: string; class: string; attributes: Record<string, unknown>; tenants?: string[] | null },
+  files: Record<string, File>
+) => {
+  const token = getAuthToken();
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const formData = new FormData();
+  formData.append('metadata', JSON.stringify(metadata));
+  for (const [attrName, file] of Object.entries(files)) {
+    formData.append(attrName, file);
+  }
+  const res = await fetch(`${BASE}/write/object`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status}: ${body}`);
+  }
+  return res.json() as Promise<{ status: string; id: number; action: string; tenants?: string[] }>;
+};
+
+// WRITE - Fichiers (plan-mark3.md action 3) : multipart/form-data, champ
+// 'file'. Utilisé pour l'édition d'un objet existant (appelé séparément de
+// apiWriteObject JSON, cf. NavigationPage.tsx) - la création avec
+// fichier(s) passe par apiWriteObjectCreateMultipart ci-dessus.
+export const apiWriteObjectFile = async (objectId: number, attribute: string, file: File) => {
+  const token = getAuthToken();
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${BASE}/write/object/${objectId}/file/${attribute}`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status}: ${body}`);
+  }
+  return res.json() as Promise<{ status: string; object_id: number; attribute: string; version: number; filename: string; value: string }>;
+};
+
+// READ - Fichiers : routes /api/read/object/*/file/* non protégées côté
+// backend (pas de 401 sans token), mais le filtrage tenant dépend du Bearer
+// identique à fetchJson - un <img src=...>/<a href=...> direct ne porterait
+// pas ce header, d'où un fetch explicite + Blob (URL.createObjectURL côté
+// appelant) plutôt qu'une simple URL statique.
+export const apiReadObjectFileBlob = async (objectId: number, attribute: string, version?: number) => {
+  const token = getAuthToken();
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const url = `${BASE}/read/object/${objectId}/file/${attribute}${version != null ? `?version=${version}` : ''}`;
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status}: ${body}`);
+  }
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  const filename = match ? match[1] : `${attribute}`;
+  const blob = await res.blob();
+  return { blob, filename };
+};
+
 // DELETE - Objects (suppression logique, plan-mark2.md action 6.1)
 export const apiDeleteObject = (id: number) =>
   fetchJsonAuth<{ status: string; id: number; deleted_at: string }>(

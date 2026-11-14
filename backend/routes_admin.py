@@ -5,6 +5,7 @@ import psycopg2.extras
 from flask import Blueprint, jsonify, request, abort
 
 import app
+from file_storage import LocalFileStorage
 from rbac import _check_existing_class_tenant_scope
 
 admin_bp = Blueprint("admin", __name__)
@@ -143,6 +144,79 @@ def purge_objects():
     except Exception as e:
         conn.rollback()
         raise e
+
+
+# ---------------------
+# Sweep des fichiers orphelins du stockage (plan-mark3.md action 3, point B
+# de la revue croisée).
+# ---------------------
+
+@admin_bp.route("/api/admin/sweep_orphan_files", methods=["POST"])
+def sweep_orphan_files():
+    """Purge les fichiers présents sur FileStorage mais jamais indexés par
+    une ligne `attribute_value` (plan-mark3.md action 3, point B).
+
+    Scénario visé : un fichier écrit sur disque (`FileStorage.save`) sans
+    que la transaction Postgres qui devait l'indexer n'ait jamais commité -
+    ex. crash du process entre l'écriture et le commit dans
+    `_write_object_multipart`/`write_object_file`, cas que le nettoyage
+    best-effort de ces routes (`_cleanup_saved_files`, except déjà exécuté)
+    ne couvre pas s'il n'a pas eu l'occasion de s'exécuter. Complète ce
+    nettoyage au niveau requête, ne le remplace pas.
+
+    Un fichier est conservé dès qu'il existe AU MOINS UNE ligne
+    attribute_value dont le pointeur correspond, qu'elle soit active ou
+    déjà fermée (historisée) - cohérent avec la purge physique différée
+    (plan-mark2.md action 6.2, fenêtre de grâce) : tant qu'une version
+    historique n'a pas été physiquement supprimée de la base, le fichier
+    qu'elle référence doit rester disponible en lecture (`?version=N`).
+
+    Énumération du contenu du stockage via `FileStorage.list_all()` (ajouté
+    pour ce sweep, coûteux - parcours complet de l'arborescence disque,
+    jamais utilisé par le chemin d'écriture/lecture normal). Correspondance
+    vérifiée par triplet exact (object_id, nom d'attribut, pointeur
+    "<version>:<nom_fichier>"), indépendamment de la classe actuelle de
+    l'objet en base - un objet dont la classe a été changée après l'upload
+    (via write_object) garde ses fichiers historiques valides même si leur
+    chemin disque porte l'ancienne classe.
+
+    RBAC : réservé à global-admin, même garde que /api/purge (opération de
+    maintenance traversant tous les tenants, sans scoping tenant-admin
+    possible)."""
+    ctx = app.get_auth_context()
+    if not ctx.is_global_admin:
+        abort(403, description="Réservé à global-admin")
+
+    conn = app.get_db()
+    storage = LocalFileStorage()
+    on_disk = storage.list_all()
+
+    purged = []
+    with conn.cursor() as cur:
+        # Dette assumée (revue croisée action 3, point 2) : une requête SQL par
+        # fichier scanné, sans commit intermédiaire - sur un volume important
+        # (dizaines de milliers de fichiers) peut créer une transaction
+        # idle-in-transaction longue côté Postgres. Acceptable au volume actuel
+        # (Mark 3) ; à traiter (requête groupée, ou commits par lot/chunking)
+        # avant d'exposer cet endpoint sur un volume important.
+        for class_name, object_id, attribute_name, version, filename in on_disk:
+            pointer = f"{version}:{filename}"
+            cur.execute(
+                """SELECT 1 FROM attribute a
+                   JOIN attribute_value av ON av.attribute_id = a.id
+                   WHERE a.object_id = %s AND a.name = %s AND av.value_string = %s
+                   LIMIT 1""",
+                (object_id, attribute_name, pointer),
+            )
+            if cur.fetchone() is not None:
+                continue
+            storage.delete(class_name, object_id, attribute_name, version=version)
+            purged.append({
+                "class": class_name, "object_id": object_id,
+                "attribute": attribute_name, "version": version, "filename": filename,
+            })
+
+    return jsonify({"status": "ok", "purged_count": len(purged), "purged": purged}), 200
 
 
 @admin_bp.route("/api/delete/class/<string:meta_class>/<string:cls>", methods=["DELETE"])

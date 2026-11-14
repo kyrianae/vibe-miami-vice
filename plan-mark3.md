@@ -305,7 +305,91 @@
   nouveau module dédié), `backend/file_storage.py` (consommé, pas
   modifié), `frontend/src/pages/NavigationPage.tsx`, nouveaux fichiers de
   test (backend et frontend).
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-14, `worker`/`testeur`/`pessimiste`/
+  `candide`). Livré en 2 itérations.
+
+  **Itération 1** : `model/schema.json` — ajout `"file"`, `"image"`,
+  `"csv"` à l'enum `attributes[].type`, champ `"separator"` (défaut `,`)
+  sur `csv`. Nouveau `backend/routes_files.py` (Blueprint `files_bp`) :
+  `POST /api/write/object/<id>/file/<attribute>` (`write_object_file`,
+  multipart) et `GET /api/read/object/<id>/file/<attribute>`
+  (`read_object_file`, `?version=N` optionnel), RBAC tenant identique aux
+  autres routes d'écriture/lecture, pointeur `"<version>:<nom_fichier>"`
+  dans `attribute_value.value_string`, historisation via
+  `_apply_attribute_diff` inchangée. Garde ajoutée dans le JSON
+  `write_object`/`write_attribute_value` (`routes_write.py`) : un attribut
+  `file`/`image`/`csv` ne peut jamais être fourni comme valeur JSON
+  classique, seulement via le champ multipart dédié — erreur 400 explicite
+  sinon. IHM `frontend/src/pages/NavigationPage.tsx` : 3 branches de rendu
+  ajoutées (`file` = nom + téléchargement, `image` jpg/jpeg/png = aperçu
+  `<img>` inline + téléchargement, `csv` = tableau lecture seule parsé
+  côté client selon `separator` + téléchargement brut), `<input
+  type="file">` au formulaire de création/modif pour les trois types.
+  **Décision sécurité SVG tranchée** (point 6 du correctif) : pas de
+  sanitization du contenu SVG à l'upload (jugée trop fragile sans lib
+  dédiée) — validation structurelle seule (XML bien formé, racine
+  `<svg>`) et **attachment systématique** en lecture, y compris pour le
+  SVG (jamais de rendu `<img>` inline pour ce format) — neutralise le
+  vecteur XSS stocké sans prétendre nettoyer le contenu.
+
+  **Itération 2**, suite à revue croisée (pessimiste/candide) +
+  décision utilisateur : 4 corrections intégrées sans revenir sur
+  l'itération 1 — (a) fusion création objet + fichier(s) en une seule
+  transaction Postgres (`_write_object_multipart` dans
+  `routes_write.py`) : la création d'un objet portant des attributs
+  `file`/`image`/`csv` à l'upload n'est plus un POST objet suivi d'un
+  second POST fichier (fenêtre d'incohérence si le second échoue), les
+  deux sont désormais atomiques ; (b) nettoyage des fichiers orphelins
+  (`POST /api/admin/sweep_orphan_files` dans `routes_admin.py`,
+  `sweep_orphan_files`) pour couvrir le cas résiduel d'un crash process
+  entre écriture disque et commit, réservé global-admin ; (c) fix DoS XML
+  sur la validation SVG : `defusedxml` remplace `xml.etree.ElementTree`
+  brut (entités externes/bombes XML) dans `backend/file_validation.py` ;
+  (d) fixes de noms de fichiers limites (`"."`, séparateurs,
+  `IsADirectoryError` non catché) catchés proprement en 400 via
+  `save_file_or_400` plutôt qu'en 500 brute ; validation CSV basique
+  ajoutée (`validate_csv_content`, extension `.csv` + décodabilité
+  texte UTF-8/latin-1 — limite assumée et documentée dans la docstring
+  de la fonction : le repli latin-1 n'échoue jamais en pratique, donc ne
+  rejette en pratique que par l'extension, pas une détection de binaire
+  robuste).
+
+  **Tests** : `backend/test_file_attribute_type.py` (632 lignes) et
+  `backend/test_file_sweep_orphans.py` (109 lignes) ajoutés — round-trip
+  upload/download, versions multiples (historique conservé), refus taille/
+  extension/contenu hors liste blanche, SVG avec script refusé en
+  validation stricte mais toujours servi en attachment, lecture
+  tenant-scopée, atomicité `_write_object_multipart`, sweep orphelins.
+  Suite complète : `SCHEMA_PATH=.../model/schema.json .venv/bin/pytest
+  backend/ -v` → **157/157 passés**, 0 régression sur les 96 tests
+  préexistants (actions 1 et 2). Pas de tests frontend ajoutés — le
+  projet n'a pas de script `test` dans `frontend/package.json` ni de
+  suite de tests frontend existante avant cette action (pattern déjà en
+  place, pas introduit ici) ; revue du rendu des 3 branches faite par
+  `pessimiste`/`candide` en lecture de code et test manuel, pas par
+  automatisation.
+
+  **3 dettes identifiées en revue croisée finale, arbitrées acceptées
+  telles quelles pour Mark 3 (documentées en commentaire dans le code,
+  aucune correction comportementale requise)**, closes pour cette action
+  avec cette dette assumée :
+  1. Transaction Postgres ouverte pendant l'I/O disque de
+     `FileStorage.save` dans `_write_object_multipart`
+     (`backend/routes_write.py`) — acceptable avec `LocalFileStorage`
+     (I/O locale rapide), à revisiter si un backend `FileStorage` réseau
+     (S3 ou autre) est implémenté un jour (transaction longue, verrous
+     tenus plus longtemps) — commentaire ajouté juste avant la boucle
+     d'upload dans `_write_object_multipart`.
+  2. `sweep_orphan_files` fait une requête SQL par fichier scanné sans
+     commit intermédiaire (`backend/routes_admin.py`) — acceptable au
+     volume actuel, à traiter (requête groupée ou chunking) avant un
+     volume important — commentaire ajouté en tête de la boucle de
+     sweep.
+  3. `validate_csv_content` (`backend/file_validation.py`) ne rejette en
+     pratique que par l'extension `.csv`, pas par le contenu (repli
+     latin-1 n'échoue jamais) — déjà documenté explicitement dans la
+     docstring existante de la fonction depuis l'itération 2, confirmé
+     suffisant en revue finale, aucun changement nécessaire.
 
 ## 4. [Nouvelle fonctionnalité] Logo surchargeable par objet et icône par défaut par classe
 
@@ -336,37 +420,62 @@
      porte un attribut réservé de type `image` (ex. nom `logo`, domaine
      `display`), réutilisant intégralement la plomberie de l'action 3 —
      backend (upload/download) **et** IHM (action 3, point 8) : aperçu
-     inline et bouton téléchargement dans `NavigationPage.tsx` comme pour
-     n'importe quel attribut `image`, `DiagramPage.tsx` restant la vue
-     spécialisée (rendu dans le diagramme, point 4 ci-dessous). Sur un
+     inline dans `NavigationPage.tsx`, **cliquable** pour ouvrir le
+     sélecteur de fichier (pas de bouton séparé — clic sur l'aperçu =
+     ouverture directe de l'upload), `DiagramPage.tsx` restant la vue
+     spécialisée en lecture seule (rendu dans le diagramme, point 4
+     ci-dessous — pas d'interaction clic sur les nœuds du diagramme dans
+     le périmètre de cette action, `DiagramPage.tsx` n'a aujourd'hui aucun
+     binding clic sur les nœuds, ce serait une brique distincte). Sur un
      objet, l'UI permet d'importer un fichier **ou** de sélectionner un
      logo déjà présent parmi ceux d'autres objets de classes à logo.
-  3. **Point de conception à trancher avant implémentation** (non tranché
-     par cette spec) : réutiliser un logo existant doit-il faire pointer
-     `attribute_value` vers le `(classe, object_id, attribut, version)`
-     d'un *autre* objet, ou dupliquer réellement les octets vers une
-     nouvelle version propre à l'objet ? Impact : partage/dédoublonnage
-     de stockage vs. simplicité d'implémentation (une référence croisée
-     complique la purge/historisation — supprimer l'objet source ne doit
-     pas casser la référence d'un objet qui l'a choisi comme logo). Poser
-     la question à l'utilisateur en démarrant cette action si pas tranché
-     d'ici là.
+  3. **Point de conception tranché (décision utilisateur, 2026-11-14)** :
+     réutiliser un logo existant fait pointer `attribute_value` vers le
+     `(classe, object_id, attribut, version)` d'un *autre* objet —
+     **référence, pas duplication d'octets**. Conséquences à implémenter :
+     - La purge différée (§10.4, action 6.2) doit vérifier, avant de
+       supprimer une version de fichier, qu'**aucun** `attribute_value`
+       de n'importe quel objet/classe ne pointe encore dessus — pas
+       seulement l'historique propre de l'objet propriétaire. Supprimer
+       (et purger) l'objet source ne doit **pas** supprimer le fichier
+       tant qu'une référence externe existe ailleurs.
+     - Avertissement à la suppression (souhaitable, non bloquant pour
+       cette action si le temps manque) : si l'objet qu'on supprime
+       possède un logo référencé par d'autres objets, avertir l'
+       utilisateur (« logo utilisé par N autres objets ») avant de
+       confirmer la suppression.
+     - **Garde-fou obligatoire (auto-réparation)** : à l'affichage du
+       logo d'un objet, si le fichier pointé est introuvable (référence
+       cassée malgré la purge sécurisée ci-dessus — cas limite), ne pas
+       laisser une image cassée indéfiniment : nettoyer la valeur de cet
+       attribut `logo` sur l'objet affecté (retour à vide) pour qu'il
+       retombe sur le fallback normal (icône de classe puis couleur,
+       point 4) dès l'affichage suivant.
   4. `DiagramPage.tsx` : rendu `symbol: 'image://<url de lecture>'`
      (route de l'action 3) si logo résolu, sinon icône de classe (point
      1), sinon fallback couleur actuel (§6.4) — ordre de priorité
-     explicite à respecter.
+     explicite à respecter. Le garde-fou du point 3 (nettoyage si fichier
+     introuvable) s'applique aussi ici : un logo cassé ne doit jamais
+     bloquer le rendu du diagramme, juste retomber au niveau de fallback
+     suivant.
   5. Tests : rendu avec logo seul, icône seule, aucun des deux (fallback
-     couleur), et le point 3 une fois tranché.
+     couleur) ; réutilisation d'un logo par référence puis suppression de
+     l'objet source (fichier conservé, toujours lisible depuis l'objet
+     référent) ; référence cassée simulée → affichage retombe sur le
+     fallback et la valeur de l'attribut est nettoyée côté serveur.
 - **Cas d'usage débloqués** (`use case.md`) : CMDB avec supervision
   intégrée — icône de classe + logo par objet pour les diagrammes
   (ligne 11) ; outil de ticket — icône par type de ticket (ligne 21, le
   volet pièce jointe de ce cas dépend de l'action 3 ci-dessus).
-- **Effort** : moyen (essentiellement frontend — sélecteurs, rendu
-  graphe — plus la décision de conception du point 3 côté backend).
+- **Effort** : moyen (frontend — sélecteurs, clic-pour-éditer, rendu
+  graphe — plus la logique backend de purge référence-consciente et
+  l'auto-réparation du point 3).
 - **Fichiers** : `model/schema.json`, `frontend/src/pages/
   ConfigurationPage.tsx`, `frontend/src/pages/DiagramPage.tsx`,
-  `frontend/src/pages/NavigationPage.tsx`, backend (routes de l'action 3
-  réutilisées, pas de nouvelle route a priori sauf si le point 3 l'exige).
+  `frontend/src/pages/NavigationPage.tsx`, backend : job/route de purge
+  (action 6.2, probablement `backend/routes_admin.py`) à rendre
+  référence-consciente (point 3), route de lecture fichier (action 3,
+  `backend/routes_files.py`) à adapter pour l'auto-réparation.
 - **Statut** : ⬜ à faire.
 
 ## Récapitulatif d'avancement
@@ -378,5 +487,5 @@
 |---|--------|--------|
 | 1 | Découpage de `backend/app.py` en modules | ✅ fait |
 | 2 | Interface de stockage de fichiers (abstraite, impl. à plat) | ✅ fait |
-| 3 | Types d'attribut "fichier", "image" et "csv" | ⬜ à faire |
+| 3 | Types d'attribut "fichier", "image" et "csv" | ✅ fait |
 | 4 | Logo surchargeable par objet et icône par défaut par classe | ⬜ à faire |

@@ -55,8 +55,8 @@
                                 },
                                 "type": {
                                     "type": "string",
-                                    "enum": ["string", "integer", "float", "joint-1-1", "joint-1-n"],
-                                    "description": "Type de la valeur de l'attribut (joint-1-1 pour liaison 1:1, joint-1-n pour liaison 1:N)"
+                                    "enum": ["string", "integer", "float", "joint-1-1", "joint-1-n", "file", "image", "csv"],
+                                    "description": "Type de la valeur de l'attribut (joint-1-1 pour liaison 1:1, joint-1-n pour liaison 1:N, file/image/csv pour un pointeur vers FileStorage)"
                                 },
                                 "classes": {
                                     "type": "array",
@@ -72,6 +72,10 @@
                                 "sql_constraint": {
                                     "type": "string",
                                     "description": "Contrainte SQL supplémentaire appliquée à l'attribut"
+                                },
+                                "separator": {
+                                    "type": "string",
+                                    "description": "Séparateur de colonnes réservé au type 'csv' (défaut ',' si absent, appliqué côté code, pas dans ce schéma). Sans objet pour les autres types."
                                 }
                             },
                             "additionalProperties": false,

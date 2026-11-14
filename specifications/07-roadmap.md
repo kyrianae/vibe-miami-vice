@@ -296,20 +296,32 @@ par classe. Dépend de §10.7 (interface de stockage).
      avant de construire une dépendance dessus. Si indisponible ou trop
      fragile, le fallback rond+nom peut devenir le comportement par
      défaut permanent plutôt qu'un simple filet de sécurité.
-- **Logo d'objet (#16)** : convention proposée — une classe qui « a un
-  logo » porte un attribut réservé de type `image` (ex. nom `logo`,
-  domaine `display`), réutilisant intégralement la plomberie de l'action
-  3 (upload/download, stockage versionné). Sur un objet donné, l'UI
-  permet de choisir un fichier à importer **ou** de sélectionner un logo
-  déjà présent parmi ceux des autres objets de classes à logo — ce
-  deuxième cas (réutiliser un logo existant plutôt que de dupliquer les
-  octets) est un point de conception **encore ouvert**, à trancher avant
-  implémentation : soit le pointeur `attribute_value` référence le
-  `(classe, object_id, attribut, version)` d'un *autre* objet, soit
-  l'upload copie réellement les octets vers une nouvelle version propre
-  à l'objet. `DiagramPage` resterait inchangé dans les deux cas côté
-  rendu (`symbol: 'image://<url de lecture>'`), seule la couche de
-  stockage/référence diffère.
+- **Logo d'objet (#16)** : convention — une classe qui « a un logo »
+  porte un attribut réservé de type `image` (ex. nom `logo`, domaine
+  `display`), réutilisant intégralement la plomberie de l'action 3
+  (upload/download, stockage versionné, aperçu+téléchargement §10.8
+  IHM). Dans `NavigationPage.tsx`, l'aperçu du logo est **cliquable** et
+  ouvre directement le sélecteur de fichier (pas de bouton séparé).
+  `DiagramPage` reste en lecture seule côté rendu (`symbol:
+  'image://<url de lecture>'`) — aucune interaction clic sur les nœuds
+  n'est dans le périmètre de cette action.
+- **Réutilisation d'un logo existant (décision utilisateur, 2026-11-14)**
+  : sur un objet, l'UI permet d'importer un fichier **ou** de
+  sélectionner un logo déjà présent parmi ceux d'autres objets de
+  classes à logo. Tranché : le pointeur `attribute_value` **référence**
+  le `(classe, object_id, attribut, version)` de l'*autre* objet (pas de
+  duplication d'octets). Conséquences :
+  - La purge différée (§10.4) doit compter les références croisées
+    avant de supprimer une version de fichier — pas seulement
+    l'historique propre de l'objet propriétaire — sinon supprimer
+    l'objet source casserait le logo des objets qui le référencent.
+  - Avertissement à la suppression d'un objet dont le logo est
+    référencé ailleurs : souhaitable, pas strictement bloquant.
+  - Garde-fou obligatoire : si le fichier référencé devient introuvable
+    malgré tout (cas limite), l'affichage du logo doit nettoyer la
+    valeur de l'attribut sur l'objet affecté plutôt que de rester cassé
+    indéfiniment, pour retomber sur le fallback (icône de classe, puis
+    couleur §6.4) dès l'affichage suivant.
 
 Détail complet et suivi : `plan-mark3.md` actions 3 et 4.
 

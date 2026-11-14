@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask
 
 from db import get_db, close_db, load_schema  # noqa: F401 (ré-export, cf. plan-mark3.md action 1)
@@ -5,6 +7,17 @@ from rbac import AuthContext, get_auth_context, _existing_class_out_of_tenant_sc
 from auth import require_auth
 
 app = Flask(__name__)
+
+# Limite de taille d'upload (plan-mark3.md action 3, point 5) : une API avec
+# authentification mais sans limite de taille de corps reste un vecteur de
+# déni de service par remplissage disque, même chose que le refus du depth
+# illimité §10.1. 20 Mo par défaut, configurable via MAX_UPLOAD_SIZE_BYTES
+# (même pattern que FILE_STORAGE_ROOT/SCHEMA_PATH). Flask/Werkzeug applique
+# cette limite à TOUTE requête (pas seulement les routes fichier), en
+# s'appuyant sur app.config relu dynamiquement à chaque requête - un test
+# peut donc monkeypatcher app.config["MAX_CONTENT_LENGTH"] directement sans
+# avoir besoin de relancer le process pour simuler une limite basse.
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", str(20 * 1024 * 1024)))
 
 # Imports des Blueprints après la création de `app` : chaque module
 # routes_*.py fait `import app` à son propre niveau module (pour pouvoir
@@ -18,6 +31,7 @@ import routes_read
 import routes_write
 import routes_init
 import routes_admin
+import routes_files
 
 # Hook d'authentification et fermeture de la connexion DB : enregistrement
 # explicite (plutôt que décorateur) puisque require_auth/close_db sont
@@ -32,6 +46,7 @@ app.register_blueprint(routes_read.read_bp)
 app.register_blueprint(routes_write.write_bp)
 app.register_blueprint(routes_init.init_bp)
 app.register_blueprint(routes_admin.admin_bp)
+app.register_blueprint(routes_files.files_bp)
 
 
 if __name__ == "__main__":

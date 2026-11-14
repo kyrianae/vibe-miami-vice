@@ -1,7 +1,163 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { apiReadObjects, apiReadObject, apiWriteObject, apiWriteAttribute, apiDeleteObject, apiReadClasses } from '../api';
+import { useEffect, useState, useCallback, useRef, type MouseEvent } from 'react';
+import { apiReadObjects, apiReadObject, apiWriteObject, apiWriteObjectCreateMultipart, apiWriteAttribute, apiDeleteObject, apiReadClasses, apiWriteObjectFile, apiReadObjectFileBlob } from '../api';
 import type { ObjectSummary, ObjectDetail, ClassInfo, AttributeDefinition } from '../types';
 import type { AuthInfo } from '../auth';
+
+// --- Types file/image/csv (plan-mark3.md action 3) ---
+//
+// Pointeur stocké côté backend : "<version>:<nom_fichier>" (value_string).
+// parseFilePointer en extrait (version, filename) côté client, pour
+// affichage et pour cibler une version précise en lecture.
+function parseFilePointer(value: string | number | { joint_id: number } | undefined): { version: number; filename: string } | null {
+  if (typeof value !== 'string' || !value.includes(':')) return null;
+  const idx = value.indexOf(':');
+  const versionStr = value.slice(0, idx);
+  const filename = value.slice(idx + 1);
+  const version = Number(versionStr);
+  if (!Number.isInteger(version)) return null;
+  return { version, filename };
+}
+
+function fileExtensionOf(filename: string): string {
+  return filename.includes('.') ? filename.split('.').pop()!.toLowerCase() : '';
+}
+
+function FileDownloadButton({ objectId, attribute, version, filename }: { objectId: number; attribute: string; version: number; filename: string }) {
+  const [busy, setBusy] = useState(false);
+  const handleDownload = async (e: MouseEvent) => {
+    e.stopPropagation();
+    setBusy(true);
+    try {
+      const { blob, filename: serverFilename } = await apiReadObjectFileBlob(objectId, attribute, version);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = serverFilename || filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Pas de toast ici : ce composant n'a pas accès à addToast (défini
+      // dans NavigationPage) - un échec de téléchargement reste silencieux
+      // côté UI, acceptable pour ce premier passage.
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button onClick={handleDownload} disabled={busy}
+      style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 12, padding: 0, textDecoration: 'underline' }}
+    >{busy ? '...' : '↓ télécharger'}</button>
+  );
+}
+
+// Cache des blobs fichier (plan-mark3.md action 3, correction post-revue
+// point D6) : ImagePreview/CsvPreviewTable refetchaient le même blob à
+// chaque render de cellule (un re-render du tableau parent, ex. après
+// loadObjects, recrée ces composants) - une version de fichier est
+// immuable une fois écrite (jamais mutée en place), donc une Promise par
+// clé "<objectId>:<attribute>:<version>" peut être partagée indéfiniment
+// entre toutes les instances, sans invalidation nécessaire. Map module-level
+// (pas de contexte React) : volontairement non bornée pour ce premier
+// passage - limite connue assumée (pas de LRU/éviction), acceptable vu le
+// volume attendu d'un back-office.
+const fileBlobCache = new Map<string, Promise<{ blob: Blob; filename: string }>>();
+function getCachedFileBlob(objectId: number, attribute: string, version: number) {
+  const key = `${objectId}:${attribute}:${version}`;
+  let entry = fileBlobCache.get(key);
+  if (!entry) {
+    entry = apiReadObjectFileBlob(objectId, attribute, version);
+    entry.catch(() => { fileBlobCache.delete(key); }); // n'y laisse pas un échec en cache
+    fileBlobCache.set(key, entry);
+  }
+  return entry;
+}
+
+// Aperçu inline jpg/png uniquement (plan-mark3.md action 3, décision
+// sécurité SVG : jamais d'<img> direct pour un SVG, cf. routes_files.py).
+function ImagePreview({ objectId, attribute, version }: { objectId: number; attribute: string; version: number }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let revoked = false;
+    let objectUrl: string | null = null;
+    getCachedFileBlob(objectId, attribute, version).then(({ blob }) => {
+      if (revoked) return;
+      objectUrl = URL.createObjectURL(blob);
+      setSrc(objectUrl);
+    }).catch(() => {});
+    return () => {
+      revoked = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [objectId, attribute, version]);
+  if (!src) return <span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}>chargement…</span>;
+  return <img src={src} alt={attribute} style={{ maxWidth: 80, maxHeight: 80, borderRadius: 4, display: 'block' }} />;
+}
+
+// Tableau lecture seule (pas d'édition de cellule, cf. §10.8) : parsing
+// client avec le separator défini sur l'attribut (défaut ',' si absent).
+function CsvPreviewTable({ objectId, attribute, version, separator }: { objectId: number; attribute: string; version: number; separator: string }) {
+  const [rows, setRows] = useState<string[][] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getCachedFileBlob(objectId, attribute, version).then(async ({ blob }) => {
+      const text = await blob.text();
+      if (cancelled) return;
+      const parsed = text.split(/\r?\n/).filter((l) => l.length > 0).map((line) => line.split(separator));
+      setRows(parsed);
+    }).catch(() => { if (!cancelled) setRows([]); });
+    return () => { cancelled = true; };
+  }, [objectId, attribute, version, separator]);
+
+  if (rows === null) return <span style={{ color: 'var(--color-text-muted)', fontSize: 11 }}>chargement…</span>;
+  if (rows.length === 0) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+  return (
+    <table style={{ fontSize: 11, borderCollapse: 'collapse' }}>
+      <tbody>
+        {rows.map((cols, i) => (
+          <tr key={i}>
+            {cols.map((cell, j) => <td key={j} style={{ border: '1px solid var(--color-border)', padding: '2px 6px' }}>{cell}</td>)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function FileAttributeValueDisplay({ objectId, attrDef, value }: { objectId: number; attrDef: AttributeDefinition; value: string }) {
+  const pointer = parseFilePointer(value);
+  if (!pointer) return <span>{value}</span>;
+  const { version, filename } = pointer;
+  const ext = fileExtensionOf(filename);
+
+  if (attrDef.type === 'image' && (ext === 'jpg' || ext === 'jpeg' || ext === 'png')) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <ImagePreview objectId={objectId} attribute={attrDef.name} version={version} />
+        <FileDownloadButton objectId={objectId} attribute={attrDef.name} version={version} filename={filename} />
+      </div>
+    );
+  }
+  if (attrDef.type === 'csv') {
+    return (
+      <div>
+        <CsvPreviewTable objectId={objectId} attribute={attrDef.name} version={version} separator={attrDef.separator || ','} />
+        <div style={{ marginTop: 4 }}>
+          <FileDownloadButton objectId={objectId} attribute={attrDef.name} version={version} filename={filename} />
+        </div>
+      </div>
+    );
+  }
+  // 'file' générique, et 'image' svg (pas d'aperçu inline - décision
+  // sécurité backend, routes_files.py) : nom + téléchargement seul.
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span>{filename}</span>
+      <FileDownloadButton objectId={objectId} attribute={attrDef.name} version={version} filename={filename} />
+    </div>
+  );
+}
 
 interface NavigationPageProps {
   selectedMetaClass: string | null;
@@ -54,6 +210,11 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
   const [newMetaClass, setNewMetaClass] = useState('');
   const [newClass, setNewClass] = useState('');
   const [newAttrs, setNewAttrs] = useState<Record<string, string>>({});
+  // Types file/image/csv (plan-mark3.md action 3) : fichier sélectionné par
+  // l'utilisateur dans le formulaire, séparé de newAttrs (pas une valeur
+  // texte) - uploadé via une route multipart dédiée au moment du save,
+  // jamais inclus dans le JSON envoyé à apiWriteObject.
+  const [newFileUploads, setNewFileUploads] = useState<Record<string, File | null>>({});
   // RBAC multi-tenant (plan.md action 11) : tenant explicite à poser sur un
   // objet en cours de création, utile uniquement pour un tenant-admin
   // multi-tenant (cas secondaire - un tenant-admin à un seul tenant est
@@ -291,14 +452,17 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
       const joints: Record<string, number[]> = {};
       for (const a of def.attributes) {
         if (a.type === 'joint-1-1' || a.type === 'joint-1-n') joints[a.name] = [];
+        else if (a.type === 'file' || a.type === 'image' || a.type === 'csv') continue; // géré par newFileUploads
         else attrs[a.name] = '';
       }
       setNewAttrs(attrs);
       setJointValues(joints);
+      setNewFileUploads({});
       loadCandidatesForDef(def);
     } else {
       setNewAttrs({});
       setJointValues({});
+      setNewFileUploads({});
     }
   };
 
@@ -322,6 +486,11 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
               .filter((v): v is { joint_id: number } => typeof v === 'object' && 'joint_id' in v)
               .map((v) => v.joint_id)
           : [];
+      } else if (attrDef.type === 'file' || attrDef.type === 'image' || attrDef.type === 'csv') {
+        // Géré par newFileUploads : la valeur actuelle (pointeur) reste
+        // lisible via detailCache dans le rendu du formulaire, jamais
+        // recopiée dans newAttrs (pas éditable en texte).
+        continue;
       } else {
         attrs[attrDef.name] = attrVal && attrVal.values.length > 0
           ? String(attrVal.values[0])
@@ -330,6 +499,7 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
     }
     setNewAttrs(attrs);
     setJointValues(joints);
+    setNewFileUploads({});
     loadCandidatesForDef(def);
     setShowCreate(true);
   };
@@ -371,24 +541,61 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
           else if (attr.type === 'joint-1-n') attributes[attr.name] = ids.map((id) => ({ joint_id: id }));
         }
       }
-      const payload: Record<string, unknown> = {
-        meta_class: newMetaClass,
-        class: newClass,
-        attributes,
-      };
-      if (editingObjectId) payload.id = editingObjectId;
-      else if (authInfo.isTenantAdmin && authInfo.tenants.length > 1 && objectTenant) payload.tenants = [objectTenant];
+      const fileEntries = Object.entries(newFileUploads).filter(
+        (entry): entry is [string, File] => entry[1] != null
+      );
 
-      const res = await apiWriteObject(payload as { meta_class: string; class: string; attributes: Record<string, unknown> });
+      let objectId: number;
+      let resultId: number;
+
+      if (!editingObjectId && fileEntries.length > 0) {
+        // Création avec fichier(s) : une seule requête multipart
+        // (plan-mark3.md action 3, point A de la revue croisée) - évite la
+        // fenêtre "objet créé sans fichier" du flux JSON + upload séparé
+        // (un retry après échec d'upload recréait un second objet,
+        // doublon). Réservé à la création : l'édition d'un objet existant
+        // n'a pas ce risque (un retry réutilise le même object_id), elle
+        // garde le flux JSON + upload(s) séparé(s) ci-dessous.
+        const metadata: { meta_class: string; class: string; attributes: Record<string, unknown>; tenants?: string[] } = {
+          meta_class: newMetaClass,
+          class: newClass,
+          attributes,
+        };
+        if (authInfo.isTenantAdmin && authInfo.tenants.length > 1 && objectTenant) metadata.tenants = [objectTenant];
+        const files: Record<string, File> = {};
+        for (const [attrName, file] of fileEntries) files[attrName] = file;
+        const res = await apiWriteObjectCreateMultipart(metadata, files);
+        objectId = res.id;
+        resultId = res.id;
+      } else {
+        const payload: Record<string, unknown> = {
+          meta_class: newMetaClass,
+          class: newClass,
+          attributes,
+        };
+        if (editingObjectId) payload.id = editingObjectId;
+        else if (authInfo.isTenantAdmin && authInfo.tenants.length > 1 && objectTenant) payload.tenants = [objectTenant];
+
+        const res = await apiWriteObject(payload as { meta_class: string; class: string; attributes: Record<string, unknown> });
+        objectId = editingObjectId || res.id;
+        resultId = res.id;
+
+        // Édition : upload(s) séparé(s) comme avant, pas de risque de
+        // doublon (object_id déjà fixé, un retry le réutilise).
+        for (const [attrName, file] of fileEntries) {
+          await apiWriteObjectFile(objectId, attrName, file);
+        }
+      }
+
       const action = editingObjectId ? 'mis à jour' : 'créé';
-      addToast('success', `Objet ${action} (id: ${res.id})`);
+      addToast('success', `Objet ${action} (id: ${resultId})`);
       closeModal();
       // Refresh
       loadObjects();
       // Invalidate detail cache for this object
-      if (editingObjectId) {
-        const refreshed = await apiReadObject(editingObjectId);
-        setDetailCache((prev) => ({ ...prev, [editingObjectId]: refreshed }));
+      if (editingObjectId || fileEntries.length > 0) {
+        const refreshed = await apiReadObject(objectId);
+        setDetailCache((prev) => ({ ...prev, [objectId]: refreshed }));
       }
     } catch (e: unknown) {
       addToast('error', e instanceof Error ? e.message : 'Erreur');
@@ -401,6 +608,7 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
     setNewAttrs({});
     setJointValues({});
     setObjectTenant('');
+    setNewFileUploads({});
   };
 
   // --- Inline cell click ---
@@ -409,6 +617,12 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
     if (!def) return;
     const attrDef = def.attributes.find((a) => a.name === attrName);
     if (!attrDef) return;
+    // file/image/csv (plan-mark3.md action 3) : pas d'édition inline de
+    // cellule, uniquement via le formulaire (<input type="file">) - un clic
+    // ne doit jamais ouvrir l'édition texte générique sur un pointeur
+    // "<version>:<nom>" (le JSON write le rejetterait de toute façon, cf.
+    // garde-fou routes_write.py).
+    if (attrDef.type === 'file' || attrDef.type === 'image' || attrDef.type === 'csv') return;
     const detail = detailCache[obj.id];
 
     if (attrDef.type === 'joint-1-n') {
@@ -804,6 +1018,34 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                   </div>
                 );
               }
+              if (attr.type === 'file' || attr.type === 'image' || attr.type === 'csv') {
+                const currentDetail = editingObjectId ? detailCache[editingObjectId] : undefined;
+                const currentAttrVal = currentDetail?.attributes.find((a) => a.name === attr.name);
+                const currentPointer = currentAttrVal && currentAttrVal.values.length > 0
+                  ? parseFilePointer(currentAttrVal.values[0])
+                  : null;
+                const picked = newFileUploads[attr.name];
+                return (
+                  <div className="form-group" key={attr.name}>
+                    <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span></label>
+                    {currentPointer && !picked && (
+                      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                        Fichier actuel : {currentPointer.filename}
+                      </div>
+                    )}
+                    <input
+                      type="file"
+                      accept={attr.type === 'image' ? '.jpg,.jpeg,.png,.svg' : attr.type === 'csv' ? '.csv' : undefined}
+                      onChange={(e) => setNewFileUploads({ ...newFileUploads, [attr.name]: e.target.files?.[0] || null })}
+                    />
+                    {picked && (
+                      <div style={{ fontSize: 12, color: 'var(--color-accent)', marginTop: 4 }}>
+                        Nouveau fichier sélectionné : {picked.name} (remplacera la version actuelle à l'enregistrement)
+                      </div>
+                    )}
+                  </div>
+                );
+              }
               return (
                 <div className="form-group" key={attr.name}>
                   <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span></label>
@@ -1031,16 +1273,21 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                             }
                             const attr = detail.attributes.find((a) => a.name === name);
                             const isEmpty = !attr || attr.values.length === 0;
+                            // file/image/csv (plan-mark3.md action 3) : pas
+                            // d'édition inline de cellule (cf. handleCellClick).
+                            const isFileType = attrDef?.type === 'file' || attrDef?.type === 'image' || attrDef?.type === 'csv';
                             return (
                               <td key={name}
-                                onClick={(e) => { if (!readOnly) { e.stopPropagation(); handleCellClick(obj, name); } }}
-                                style={{ cursor: readOnly ? 'default' : 'pointer', transition: 'background 0.15s' }}
-                                onMouseEnter={(e) => { if (!readOnly) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+                                onClick={(e) => { if (!readOnly && !isFileType) { e.stopPropagation(); handleCellClick(obj, name); } }}
+                                style={{ cursor: readOnly || isFileType ? 'default' : 'pointer', transition: 'background 0.15s' }}
+                                onMouseEnter={(e) => { if (!readOnly && !isFileType) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
                                 onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
-                                title={readOnly ? '' : (isJoint1N ? 'Clic pour modifier la jointure' : 'Clic pour modifier')}
+                                title={readOnly || isFileType ? '' : (isJoint1N ? 'Clic pour modifier la jointure' : 'Clic pour modifier')}
                               >
                                 {isEmpty ? (
                                   <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                                ) : isFileType && attrDef ? (
+                                  <FileAttributeValueDisplay objectId={obj.id} attrDef={attrDef} value={String(attr!.values[0])} />
                                 ) : (
                                   attr!.values.map((v, j) => <span key={j} style={{ marginRight: 6 }}>{formatValue(v)}</span>)
                                 )}

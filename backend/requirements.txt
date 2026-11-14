@@ -4,3 +4,4 @@ gunicorn
 jsonschema
 PyJWT
 cryptography
+defusedxml

@@ -50,6 +50,17 @@ class FileStorage(ABC):
         existants pour ce triplet. Liste vide si aucune version."""
         raise NotImplementedError
 
+    @abstractmethod
+    def list_all(self):
+        """Énumère TOUT le contenu du stockage, tous objets/attributs
+        confondus : liste de tuples (class_name, object_id, attribute_name,
+        version, filename). Coûteux (parcours complet), réservé à la
+        maintenance (sweep des fichiers orphelins, plan-mark3.md action 3
+        point B de la revue croisée) - jamais appelé par le chemin
+        d'écriture/lecture normal, qui connaît toujours son triplet cible
+        à l'avance."""
+        raise NotImplementedError
+
 
 def _sanitize_segment(value, segment_name):
     """Interdit tout composant de chemin dangereux dans un segment de
@@ -153,3 +164,35 @@ class LocalFileStorage(FileStorage):
     def list_versions(self, class_name, object_id, attribute_name):
         attribute_dir = self._attribute_dir(class_name, object_id, attribute_name)
         return self._existing_versions(attribute_dir)
+
+    def list_all(self):
+        results = []
+        if not os.path.isdir(self.root):
+            return results
+        for class_name in os.listdir(self.root):
+            class_path = os.path.join(self.root, class_name)
+            if not os.path.isdir(class_path):
+                continue
+            for object_dir in os.listdir(class_path):
+                if not object_dir.isdigit():
+                    continue
+                object_path = os.path.join(class_path, object_dir)
+                if not os.path.isdir(object_path):
+                    continue
+                object_id = int(object_dir)
+                for attribute_name in os.listdir(object_path):
+                    attribute_path = os.path.join(object_path, attribute_name)
+                    if not os.path.isdir(attribute_path):
+                        continue
+                    for version_dir in os.listdir(attribute_path):
+                        if not version_dir.isdigit():
+                            continue
+                        version_path = os.path.join(attribute_path, version_dir)
+                        if not os.path.isdir(version_path):
+                            continue
+                        version = int(version_dir)
+                        for filename in os.listdir(version_path):
+                            filepath = os.path.join(version_path, filename)
+                            if os.path.isfile(filepath):
+                                results.append((class_name, object_id, attribute_name, version, filename))
+        return results

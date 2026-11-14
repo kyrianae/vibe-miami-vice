@@ -1,4 +1,5 @@
 import json
+import os
 import re
 
 import psycopg2
@@ -9,6 +10,8 @@ from flask import Blueprint, jsonify, request, abort
 
 import app
 from db import load_schema
+from file_storage import LocalFileStorage
+from file_validation import save_file_or_400, validate_csv_content, validate_image_content
 from rbac import (
     _tenants_list_to_db,
     _tenants_db_to_list,
@@ -39,7 +42,16 @@ def write_object():
     }
 
     Si un champ "id" est présent, l'objet existant est mis à jour.
+
+    Accepte aussi `multipart/form-data` (correction post-revue, point A :
+    évite la duplication d'objet si un upload de fichier échoue après une
+    création réussie en deux requêtes séparées) - délégué à
+    `_write_object_multipart`, réservé à la CRÉATION d'un objet comportant
+    au moins un attribut file/image/csv. Voir sa docstring pour le format.
     """
+    if request.content_type and request.content_type.startswith("multipart/form-data"):
+        return _write_object_multipart()
+
     body = request.get_json()
     if not body or "meta_class" not in body or "class" not in body:
         abort(400, description="Champs 'meta_class' et 'class' requis")
@@ -134,6 +146,15 @@ def write_object():
                 if attr_def is None:
                     abort(400, description=f"Attribut {attr_name!r} non déclaré dans le modèle de la classe {body['class']!r}")
 
+                # Types fichier (plan-mark3.md action 3) : jamais via ce
+                # endpoint JSON générique, pas d'encodage JSON fiable d'un
+                # pointeur "<version>:<nom>" côté client - seule la route
+                # dédiée POST /api/write/object/<id>/file/<attribute>
+                # (multipart, routes_files.py) construit ce pointeur après
+                # avoir réellement écrit le contenu via FileStorage.
+                if attr_def.get("type") in ("file", "image", "csv"):
+                    abort(400, description=f"Attribut {attr_name!r} (type {attr_def['type']}) : écriture réservée à POST /api/write/object/<id>/file/<attribute> (multipart)")
+
                 received_values = attr_value if isinstance(attr_value, list) else [attr_value]
                 _apply_attribute_diff(
                     cur, object_id, attr_name, attr_def,
@@ -158,6 +179,174 @@ def write_object():
         abort(409, description="Conflit d'écriture concurrente, réessayez")
     except Exception as e:
         conn.rollback()
+        raise e
+
+
+def _cleanup_saved_files(storage, saved_files):
+    """Best-effort : supprime les versions FileStorage déjà écrites sur
+    disque dans la requête en cours quand la transaction qui devait les
+    indexer échoue avant commit (point A de la revue croisée). `saved_files`
+    = liste de tuples (class_name, object_id, attribute_name, version)
+    connus avec précision par l'appelant (pas de scan ni de sweep ici, voir
+    routes_admin.py pour le filet de sécurité qui couvre les cas où cette
+    purge elle-même échouerait, ex. crash process)."""
+    for class_name, object_id, attribute_name, version in saved_files:
+        try:
+            storage.delete(class_name, object_id, attribute_name, version=version)
+        except OSError:
+            pass
+
+
+def _write_object_multipart():
+    """Création d'un objet avec un ou plusieurs attributs file/image/csv en
+    une seule requête/transaction (plan-mark3.md action 3, point A de la
+    revue croisée).
+
+    Problème résolu : le flux historique (POST JSON /api/write/object suivi
+    d'un ou plusieurs POST multipart /api/write/object/<id>/file/<attr>) est
+    constitué de deux transactions Postgres séparées ; si le premier commit
+    réussit et qu'un upload échoue ensuite, l'objet existe déjà sans son
+    fichier - un retry naïf recrée un second objet (doublon). Ce chemin
+    fusionne les deux en une seule transaction : si quoi que ce soit échoue
+    avant le commit final, RIEN n'est persisté en base (aucun id n'est jamais
+    renvoyé en dehors d'un succès complet, cf. point D5) ; les fichiers déjà
+    écrits sur disque dans cette même requête sont nettoyés best-effort
+    (_cleanup_saved_files) avant de relancer l'erreur.
+
+    Réservé à la CRÉATION : un 'id' dans les métadonnées est rejeté (400) -
+    l'édition d'un objet déjà créé n'a pas ce risque (un retry réutilise le
+    même object_id), le flux JSON + upload séparé reste inchangé pour ce cas
+    (write_object_file, routes_files.py).
+
+    Body multipart/form-data attendu :
+    - champ 'metadata' (JSON, string) :
+        {"meta_class": "...", "class": "...", "attributes": {...}, "tenants": [...]}
+      "attributes" ne contient QUE les attributs non file/image/csv (même
+      garde-fou que le flux JSON pur : un pointeur ne doit jamais être reçu
+      tel quel, seul ce handler le construit après écriture réelle).
+    - un champ fichier par attribut de type file/image/csv à fournir, nommé
+      exactement comme l'attribut (ex. request.files['photo']). Un attribut
+      file/image/csv non fourni ici reste simplement non créé (pas d'erreur),
+      comme un attribut absent du JSON générique.
+
+    Ordre d'exécution : objet inséré (id obtenu, non commité) -> fichiers
+    écrits sur disque via FileStorage.save (le chemin dépend de cet id) ->
+    attribute_value insérés (classiques ET pointeurs fichier) -> commit
+    unique. L'écriture disque reste "hors Postgres" au sens où elle n'est
+    jamais annulée par un ROLLBACK (I/O fichier, pas transactionnel) : en cas
+    d'échec après coup, elle est désannulée explicitement par
+    _cleanup_saved_files plutôt que par la base.
+    """
+    ctx = app.get_auth_context()
+    if ctx.is_tenant_readonly:
+        abort(403, description="Rôle tenant-readonly : écriture d'objet interdite")
+
+    raw_metadata = request.form.get("metadata")
+    if not raw_metadata:
+        abort(400, description="Champ multipart 'metadata' (JSON) requis")
+    try:
+        body = json.loads(raw_metadata)
+    except (TypeError, ValueError) as e:
+        abort(400, description=f"Champ 'metadata' : JSON invalide ({e})")
+
+    if not isinstance(body, dict) or "meta_class" not in body or "class" not in body:
+        abort(400, description="'metadata' : champs 'meta_class' et 'class' requis")
+    if body.get("id"):
+        abort(400, description="Création multipart réservée à un nouvel objet : champ 'id' non autorisé ici (éditez via les routes dédiées existantes)")
+
+    conn = app.get_db()
+    storage = LocalFileStorage()
+    saved_files = []
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT data FROM definition WHERE meta_class = %s", (body["meta_class"],))
+            defn = cur.fetchone()
+            class_def = None
+            if defn:
+                for cls in defn["data"].get("classes", []):
+                    if cls["class"] == body["class"]:
+                        class_def = cls
+                        break
+
+        if defn is None or class_def is None:
+            abort(400, description=f"meta_class {body['meta_class']!r} / class {body['class']!r} non définie")
+
+        if ctx.is_tenant_admin:
+            class_tenants = (class_def or {}).get("tenants") or []
+            if class_tenants and not (set(class_tenants) & set(ctx.tenants)):
+                abort(403, description=f"Classe '{body['class']}' non autorisée pour votre tenant")
+
+        object_tenants = _determine_object_tenants(ctx, body, None)
+
+        file_attr_defs = {}
+        non_file_attr_defs = {}
+        for a in class_def.get("attributes", []):
+            if a.get("type") in ("file", "image", "csv"):
+                file_attr_defs[a["name"]] = a
+            else:
+                non_file_attr_defs[a["name"]] = a
+
+        attrs = body.get("attributes", {})
+        if not isinstance(attrs, dict):
+            abort(400, description="'metadata.attributes' doit être un objet JSON")
+        for attr_name in attrs:
+            if attr_name in file_attr_defs:
+                abort(400, description=f"Attribut {attr_name!r} (type fichier) : fournir un champ multipart nommé '{attr_name}', jamais une valeur dans 'metadata.attributes'")
+            if attr_name not in non_file_attr_defs:
+                abort(400, description=f"Attribut {attr_name!r} non déclaré dans le modèle de la classe {body['class']!r}")
+
+        # Lecture + validation de contenu de chaque fichier fourni AVANT toute
+        # écriture DB (échec de validation = aucun objet créé).
+        file_uploads = {}
+        for attr_name, attr_def in file_attr_defs.items():
+            if attr_name not in request.files:
+                continue
+            upload = request.files[attr_name]
+            filename = os.path.basename(upload.filename or "")
+            if not filename:
+                abort(400, description=f"Attribut {attr_name!r} : nom de fichier vide ou invalide")
+            content = upload.read()
+            if attr_def["type"] == "image":
+                validate_image_content(filename, content)
+            elif attr_def["type"] == "csv":
+                validate_csv_content(filename, content)
+            file_uploads[attr_name] = (attr_def, filename, content)
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO object (meta_class, class, tenants) VALUES (%s, %s, %s) RETURNING id",
+                (body["meta_class"], body["class"], _tenants_list_to_db(object_tenants))
+            )
+            object_id = cur.fetchone()[0]
+
+            # Dette assumée (revue croisée action 3, point 1) : `save_file_or_400`
+            # fait une I/O disque (FileStorage.save) alors que la transaction
+            # Postgres ci-dessus (INSERT objet non commité) est ouverte.
+            # Acceptable aujourd'hui avec LocalFileStorage (I/O locale rapide).
+            # file_storage.py est conçu pluggable (action 2, FileStorage abstrait) :
+            # un futur backend réseau (S3 ou autre) mettrait un appel réseau dans
+            # une transaction Postgres ouverte (transaction longue, verrous tenus
+            # plus longtemps) - à revisiter si/quand un tel backend est implémenté.
+            for attr_name, (attr_def, filename, content) in file_uploads.items():
+                version = save_file_or_400(storage, body["class"], object_id, attr_name, filename, content)
+                saved_files.append((body["class"], object_id, attr_name, version))
+                pointer = f"{version}:{filename}"
+                _apply_attribute_diff(cur, object_id, attr_name, attr_def, None, [pointer])
+
+            for attr_name, attr_value in attrs.items():
+                attr_def = non_file_attr_defs[attr_name]
+                received_values = attr_value if isinstance(attr_value, list) else [attr_value]
+                _apply_attribute_diff(cur, object_id, attr_name, attr_def, None, received_values)
+
+        conn.commit()
+        return jsonify({"status": "ok", "id": object_id, "action": "created", "tenants": object_tenants}), 201
+    except psycopg2.errors.DeadlockDetected:
+        conn.rollback()
+        _cleanup_saved_files(storage, saved_files)
+        abort(409, description="Conflit d'écriture concurrente, réessayez")
+    except Exception as e:
+        conn.rollback()
+        _cleanup_saved_files(storage, saved_files)
         raise e
 
 
@@ -373,6 +562,9 @@ def write_attribute_value(cls, object_id, attribute, value):
 
             if attr_def is None:
                 abort(400, description=f"Attribut '{attribute}' non déclaré dans le modèle de la classe '{cls}'")
+
+            if attr_def.get("type") in ("file", "image", "csv"):
+                abort(400, description=f"Attribut '{attribute}' (type {attr_def['type']}) : écriture réservée à la route dédiée d'upload multipart")
 
             existing_attr = _load_active_attributes_by_name(conn, object_id).get(attribute)
             _apply_attribute_diff(cur, object_id, attribute, attr_def, existing_attr, [value])

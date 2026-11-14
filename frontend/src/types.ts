@@ -3,10 +3,13 @@
 export interface AttributeDefinition {
   domain: string;
   name: string;
-  type: 'string' | 'integer' | 'float' | 'joint-1-1' | 'joint-1-n';
+  type: 'string' | 'integer' | 'float' | 'joint-1-1' | 'joint-1-n' | 'file' | 'image' | 'csv';
   classes?: string[];
   constraint?: string;
   sql_constraint?: string;
+  // Séparateur de colonnes, réservé au type 'csv' (plan-mark3.md action 3).
+  // Défaut ',' côté frontend si absent (voir NavigationPage.tsx).
+  separator?: string;
 }
 
 export interface ClassDefinition {

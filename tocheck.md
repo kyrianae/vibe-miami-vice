@@ -18,7 +18,7 @@ Notes sur 5 (1 = faible, 5 = fort). Intérêt = valeur produit perçue. Difficul
 | 12 | Workflow / scheduler des imports | 3 | 3 | Dépend de #11, besoin d'un worker/process séparé |
 | 14 | Type d'attribut "fichier" | 4 | 2 | Dépend du stockage fichiers — voir `plan-mark3.md` action 2. Bundlé avec #15/#20 dans l'action 3 (backend + IHM : téléchargement) |
 | 15 | Type d'attribut "image" (jpg/svg/png) | 3 | 2 | Spécialisation de #14 + validation mime. IHM : aperçu inline + téléchargement (`plan-mark3.md` action 3 point 8) |
-| 16 | Logo surchargeable par objet (sélection parmi logos existants ou import), utilisé dans les diagrammes | 3 | 3 | Dépend de #15, touche DiagramPage |
+| 16 | Logo surchargeable par objet (sélection parmi logos existants ou import), utilisé dans les diagrammes | 3 | 3 | Dépend de #15, touche DiagramPage. Tranché (2026-11-14) : réutilisation par référence (pas de copie d'octets), purge référence-consciente, auto-réparation si référence cassée — détail `plan-mark3.md` action 4 point 3 |
 | 17 | Icône par défaut par classe (sélection quand actif) | 2 | 2 | Petite feature UI, indépendante. Complément (2026-11-14) : auto-récupération d'un SVG sur svgrepo.com à partir du nom de classe, passé par une homogénéisation configurable (couleur/trait/viewBox) ; fallback rond+nom si échec ou pas d'API de recherche dispo côté svgrepo (point à vérifier) |
 | 18 | Type d'attribut select/enum (valeurs fixes : statut, priorité...) pour workflow type ticket | 4 | 2 | Manque identifié, gain rapide, peu coûteux |
 | 19 | Type d'attribut secret/password (flag valeur masquée) | 3 | 2 | Implique un vrai chiffrement, pas juste masquage UI |
