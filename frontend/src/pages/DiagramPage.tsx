@@ -1,7 +1,32 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import * as echarts from 'echarts';
-import { apiReadObjects, apiReadObject, apiReadClasses } from '../api';
+import { apiReadObjects, apiReadObject, apiReadClasses, apiReadObjectFileBlob, apiClassIconUrl } from '../api';
+import { findClassIcon, classIconDataUri } from '../classIcons';
 import type { ObjectSummary, ObjectDetail, ClassInfo } from '../types';
+
+// Cache des blobs logo résolus (même pattern que fileBlobCache,
+// NavigationPage.tsx) : une version de fichier est immuable une fois
+// écrite, donc une Promise par clé "<objectId>:<pointeur>" peut être
+// partagée indéfiniment. Clé incluant le pointeur entier (pas seulement
+// l'objectId) : invalide naturellement l'entrée dès que le pointeur change
+// (nouvel upload/nouvelle référence), sans mécanisme d'éviction dédié.
+// Correction post-revue (bug 2) : un logo d'objet ne peut pas être rendu
+// via une URL brute (`image://${apiObjectFileUrl(...)}`) - un <img>/ECharts
+// `image://<url>` ne peut jamais attacher le header Authorization Bearer
+// exigé par la lecture tenant-scoped (auth.py/rbac.py, fail-closed), donc
+// l'image échouait silencieusement pour tout objet tenant-scoped. Résolu
+// ici en Blob authentifié (apiReadObjectFileBlob) transformé en object URL.
+const logoBlobCache = new Map<string, Promise<{ blob: Blob; filename: string }>>();
+function getCachedLogoBlob(objectId: number, pointer: string) {
+  const key = `${objectId}:${pointer}`;
+  let entry = logoBlobCache.get(key);
+  if (!entry) {
+    entry = apiReadObjectFileBlob(objectId, 'logo');
+    entry.catch(() => { logoBlobCache.delete(key); });
+    logoBlobCache.set(key, entry);
+  }
+  return entry;
+}
 
 type LayoutType = 'force' | 'circular' | 'tree';
 
@@ -47,6 +72,11 @@ export default function DiagramPage({ selectedMetaClass, selectedClass, readOnly
   const [layout, setLayout] = useState<LayoutType>('force');
   const [hiddenClasses, setHiddenClasses] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  // Logos d'objet résolus en object URL (bug 2, correction post-revue) :
+  // pointeur + url pour détecter un pointeur devenu obsolète (nouvel
+  // upload/référence) avant de réutiliser une entrée en cache.
+  const [resolvedLogos, setResolvedLogos] = useState<Map<number, { pointer: string; url: string }>>(new Map());
+  const resolvedLogosRef = useRef<Map<number, { pointer: string; url: string }>>(new Map());
 
   // Load all objects and classes
   useEffect(() => {
@@ -129,6 +159,76 @@ export default function DiagramPage({ selectedMetaClass, selectedClass, readOnly
       return true;
     });
   }, [objects, selectedMetaClass, selectedClass, hiddenClasses]);
+
+  // Pointeur logo actif par objet (bug 2, correction post-revue) : extrait
+  // ici une seule fois, réutilisé à la fois par l'effet de résolution de
+  // blob ci-dessous et par graphData (évite toute divergence entre les deux
+  // calculs de "cet objet a-t-il un logo actif ?").
+  const activeLogoPointers = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const obj of filteredObjects) {
+      const detail = details[obj.id];
+      if (!detail) continue;
+      const classDef = classes.find((c) => c.meta_class === obj.meta_class && c.class === obj.class);
+      const hasLogoAttr = classDef?.attributes.some((a) => a.name === 'logo' && a.type === 'image') ?? false;
+      if (!hasLogoAttr) continue;
+      const logoValue = detail.attributes.find((a) => a.name === 'logo')?.values[0];
+      if (typeof logoValue === 'string' && logoValue.length > 0) map.set(obj.id, logoValue);
+    }
+    return map;
+  }, [filteredObjects, details, classes]);
+
+  // Résolution asynchrone des logos en object URL (bug 2, correction
+  // post-revue) : graphData (useMemo synchrone, ECharts) ne peut pas
+  // attendre un fetch - tant qu'un logo n'est pas encore résolu ici, le
+  // symbole retombe sur le niveau de priorité suivant (icône de classe,
+  // §6.4), jamais sur une URL brute cassée. Dès que le blob arrive, le
+  // changement de `resolvedLogos` fait recalculer graphData (re-render).
+  useEffect(() => {
+    let cancelled = false;
+    for (const [objectId, pointer] of activeLogoPointers) {
+      const current = resolvedLogosRef.current.get(objectId);
+      if (current && current.pointer === pointer) continue;
+      getCachedLogoBlob(objectId, pointer).then(({ blob }) => {
+        if (cancelled) return;
+        setResolvedLogos((prev) => {
+          if (prev.get(objectId)?.pointer === pointer) return prev;
+          const url = URL.createObjectURL(blob);
+          const next = new Map(prev);
+          const old = next.get(objectId);
+          if (old) URL.revokeObjectURL(old.url);
+          next.set(objectId, { pointer, url });
+          resolvedLogosRef.current = next;
+          return next;
+        });
+      }).catch(() => {});
+    }
+    // Révoque les entrées dont l'objet/pointeur n'est plus actif (logo
+    // changé ou objet sorti du filtre) - jamais de fuite d'object URL.
+    setResolvedLogos((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const [objectId, { pointer, url }] of prev) {
+        if (activeLogoPointers.get(objectId) !== pointer) {
+          URL.revokeObjectURL(url);
+          next.delete(objectId);
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      resolvedLogosRef.current = next;
+      return next;
+    });
+    return () => { cancelled = true; };
+  }, [activeLogoPointers]);
+
+  // Révocation finale au démontage (bug 2) : pas seulement sur changement
+  // de dataset ci-dessus.
+  useEffect(() => {
+    return () => {
+      for (const { url } of resolvedLogosRef.current.values()) URL.revokeObjectURL(url);
+    };
+  }, []);
 
   // Build graph data
   const graphData = useMemo(() => {
@@ -219,11 +319,44 @@ export default function DiagramPage({ selectedMetaClass, selectedClass, readOnly
       const detail = details[obj.id];
       const label = detail ? resolveDisplayName(detail) : `${obj.class} #${obj.id}`;
 
+      // Ordre de priorité de rendu (plan-mark3.md action 4, point 4) :
+      // 1. logo actif de l'objet (attribut réservé "logo", type image,
+      //    cf. model/*.json) ; 2. icône de classe choisie manuellement
+      //    (point 1, jeu fixe embarqué, data URI - aucune requête réseau) ;
+      //    3. icône de secours auto-générée côté backend (point 1bis) ;
+      //    4. repli couleur de palette existant (§6.4, itemStyle.color
+      //    jamais retiré - un logo/icône cassé en session retombe sur un
+      //    rendu <img> cassé le temps d'un rendu, garde-fou serveur côté
+      //    lecture, pas de détection d'erreur d'image ajoutée ici).
+      const classDef = classes.find((c) => c.meta_class === obj.meta_class && c.class === obj.class);
+      const activeLogoPointer = activeLogoPointers.get(obj.id);
+      const resolvedLogo = activeLogoPointer ? resolvedLogos.get(obj.id) : undefined;
+
+      let symbol: string | undefined;
+      if (resolvedLogo && resolvedLogo.pointer === activeLogoPointer) {
+        symbol = `image://${resolvedLogo.url}`;
+      } else {
+        // Pas (encore) de logo résolu : icône de classe choisie
+        // manuellement, puis icône de secours auto-générée (route non
+        // filtrée par tenant, URL brute correcte ici - voir
+        // routes_read.py), puis repli couleur. Couvre aussi bien l'absence
+        // de logo que le cas transitoire "logo actif mais blob pas encore
+        // arrivé" (bug 2, correction post-revue) : jamais d'URL brute
+        // cassée affichée pour un logo tenant-scoped.
+        const manualIcon = findClassIcon(classDef?.icon);
+        if (manualIcon) {
+          symbol = `image://${classIconDataUri(manualIcon.svg)}`;
+        } else if (classDef) {
+          symbol = `image://${apiClassIconUrl(classDef.meta_class, classDef.class)}`;
+        }
+      }
+
       nodes.push({
         id: String(obj.id),
         name: label,
         category: catIndex[obj.class] ?? 0,
         symbolSize: 40,
+        ...(symbol ? { symbol } : {}),
         itemStyle: { color: classColorMap[obj.class] || '#888' },
         label: { show: true, color: '#fff', fontSize: 11 },
       });
@@ -279,7 +412,7 @@ export default function DiagramPage({ selectedMetaClass, selectedClass, readOnly
     }
 
     return { nodes, links, categories };
-  }, [filteredObjects, objects, details, resolveDisplayName, classColorMap]);
+  }, [filteredObjects, objects, details, resolveDisplayName, classColorMap, classes, activeLogoPointers, resolvedLogos]);
 
   // Toggle class visibility
   const toggleClass = (cls: string) => {

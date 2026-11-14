@@ -180,6 +180,18 @@ def sweep_orphan_files():
     (via write_object) garde ses fichiers historiques valides même si leur
     chemin disque porte l'ancienne classe.
 
+    Référence-conscient (plan-mark3.md action 4, point 3 - réutilisation
+    d'un logo par référence croisée, routes_files.py) : un fichier n'est
+    supprimé que si NI un pointeur direct propriétaire NI un pointeur
+    "ref:<classe>:<object_id>:<attribut>:<version>:<nom>" porté par
+    N'IMPORTE QUEL AUTRE objet/attribut ne le référence. Sans cette seconde
+    recherche, purger l'objet qui a initialement reçu l'upload casserait le
+    logo de tout objet qui le référence encore - supprimer (et purger, voir
+    /api/purge) l'objet source ne supprime d'ailleurs jamais directement de
+    fichier : seul ce sweep le fait, et seulement s'il n'est plus jamais
+    référencé par personne (actif ou historique, dans ou hors de la fenêtre
+    de grâce).
+
     RBAC : réservé à global-admin, même garde que /api/purge (opération de
     maintenance traversant tous les tenants, sans scoping tenant-admin
     possible)."""
@@ -210,6 +222,18 @@ def sweep_orphan_files():
             )
             if cur.fetchone() is not None:
                 continue
+
+            # Référence croisée (plan-mark3.md action 4, point 3) : recherche
+            # SANS restriction d'object_id/attribut - un autre objet,
+            # n'importe quelle classe/attribut, peut référencer ce fichier.
+            ref_pointer = f"ref:{class_name}:{object_id}:{attribute_name}:{version}:{filename}"
+            cur.execute(
+                "SELECT 1 FROM attribute_value WHERE value_string = %s LIMIT 1",
+                (ref_pointer,),
+            )
+            if cur.fetchone() is not None:
+                continue
+
             storage.delete(class_name, object_id, attribute_name, version=version)
             purged.append({
                 "class": class_name, "object_id": object_id,

@@ -5,6 +5,7 @@ import {
 } from '../api';
 import type { MetaClassDefinition, ClassDefinition, AttributeDefinition, ClassInfo } from '../types';
 import type { AuthInfo } from '../auth';
+import { CLASS_ICONS, classIconDataUri } from '../classIcons';
 
 interface ConfigurationPageProps {
   selectedMetaClass: string | null;
@@ -227,6 +228,7 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
         const def: ClassDefinition = { class: c.class, attributes: cleanAttrs };
         if (c.displayname) def.displayname = c.displayname;
         if (c.tenants && c.tenants.length > 0) def.tenants = c.tenants;
+        if (c.icon) def.icon = c.icon;
         return def;
       });
 
@@ -390,6 +392,45 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
                             tenants: e.target.value.split(',').map((t) => t.trim()).filter(Boolean),
                           })}
                           placeholder="ex: tenant1, tenant2" style={smallInput} />
+                      </div>
+                    </div>
+
+                    {/* Icône de classe (plan-mark3.md action 4, point 1) :
+                        jeu fixe embarqué (classIcons.tsx), pas d'upload
+                        libre - utilisée en dernier recours (après un
+                        éventuel logo d'objet) dans DiagramPage/
+                        NavigationPage. */}
+                    <div className="form-group">
+                      <label style={{ fontSize: 12 }}>
+                        Icône par défaut <span style={{ color: 'var(--color-text-muted)' }}>(jeu fixe, optionnel)</span>
+                      </label>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={() => updateClass(classIdx, { icon: undefined })}
+                          title="Aucune icône"
+                          style={{
+                            width: 36, height: 36, borderRadius: 6, cursor: 'pointer',
+                            border: !cls.icon ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+                            background: 'var(--color-bg)', color: 'var(--color-text-muted)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11,
+                          }}
+                        >✕</button>
+                        {CLASS_ICONS.map((ic) => (
+                          <button
+                            type="button"
+                            key={ic.id}
+                            onClick={() => updateClass(classIdx, { icon: ic.id })}
+                            title={ic.label}
+                            style={{
+                              width: 36, height: 36, borderRadius: 6, cursor: 'pointer', padding: 4,
+                              border: cls.icon === ic.id ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+                              background: cls.icon === ic.id ? 'rgba(233,69,96,0.12)' : 'var(--color-bg)',
+                            }}
+                          >
+                            <img src={classIconDataUri(ic.svg)} alt={ic.label} style={{ width: '100%', height: '100%' }} />
+                          </button>
+                        ))}
                       </div>
                     </div>
 

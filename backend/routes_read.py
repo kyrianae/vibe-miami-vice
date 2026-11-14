@@ -1,7 +1,8 @@
 import psycopg2.extras
-from flask import Blueprint, jsonify, abort, request
+from flask import Blueprint, Response, jsonify, abort, request
 
 import app
+from class_icon import generate_class_fallback_icon
 from rbac import _tenant_read_filter, _tenants_db_to_list
 
 MAX_DEPTH = 5
@@ -29,6 +30,7 @@ def list_classes():
                     "class": cls["class"],
                     "displayname": cls.get("displayname"),
                     "tenants": cls.get("tenants"),
+                    "icon": cls.get("icon"),
                     "attributes": cls["attributes"]
                 })
         return jsonify(classes)
@@ -63,6 +65,7 @@ def get_class_by_id(class_id):
                         "class": cls["class"],
                         "displayname": cls.get("displayname"),
                         "tenants": cls.get("tenants"),
+                        "icon": cls.get("icon"),
                         "attributes": cls["attributes"]
                     })
         abort(404, description="Classe non trouvée")
@@ -88,6 +91,7 @@ def get_classes_by_meta_class(meta_class):
                 "class": cls["class"],
                 "displayname": cls.get("displayname"),
                 "tenants": cls.get("tenants"),
+                "icon": cls.get("icon"),
                 "attributes": cls["attributes"]
             })
         return jsonify({"meta_class": row["meta_class"], "classes": classes})
@@ -308,3 +312,42 @@ def get_object_by_id(object_id):
 
     resolve_attributes(obj, depth)
     return jsonify(obj)
+
+
+@read_bp.route("/api/class_icon/<string:meta_class>/<string:cls>", methods=["GET"])
+def get_class_fallback_icon(meta_class, cls):
+    """Sert le SVG de secours généré localement pour une classe sans logo NI
+    icône choisie manuellement (plan-mark3.md action 4, point 1bis ; détail
+    de conception specifications/07-roadmap.md §10.8 ; génération :
+    class_icon.py).
+
+    Répartition frontend/backend assumée, à ne pas confondre : le jeu fixe
+    d'icônes choisies manuellement (champ "icon" du schéma, point 1) est
+    entièrement embarqué côté frontend (frontend/src/classIcons.tsx) -
+    cette route ne sert JAMAIS une icône de ce jeu fixe, uniquement le
+    fallback auto-généré (rond + initiales), dernier recours avant la
+    couleur de palette (§6.4). Le frontend décide lui-même, sans requête
+    réseau, s'il doit rendre le SVG embarqué du jeu fixe (icône choisie
+    manuellement présente) ; il n'appelle cette route que si ni logo ni
+    icône manuelle ne sont disponibles pour l'objet/la classe concernée.
+
+    Pas de filtrage tenant ici (contrairement aux routes de lecture
+    d'objet) : cohérent avec les autres routes de lecture de schéma déjà
+    non filtrées par tenant (list_classes, get_class_by_id,
+    get_classes_by_meta_class ci-dessus) - le SVG généré ne dépend que du
+    NOM de la classe, jamais d'une donnée d'objet, donc aucune fuite
+    possible. 404 si la classe n'existe pas dans le modèle, pour éviter de
+    générer/cacher un SVG pour un nom de classe arbitraire non défini."""
+    with app.get_db().cursor() as cur:
+        cur.execute("SELECT data FROM definition WHERE meta_class = %s", (meta_class,))
+        row = cur.fetchone()
+    if not row:
+        abort(404, description=f"Meta-classe '{meta_class}' non trouvée")
+    class_def = next((c for c in row[0].get("classes", []) if c["class"] == cls), None)
+    if class_def is None:
+        abort(404, description=f"Classe '{cls}' non trouvée dans la meta-classe '{meta_class}'")
+
+    svg = generate_class_fallback_icon(cls)
+    response = Response(svg, content_type="image/svg+xml")
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return response

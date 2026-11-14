@@ -24,6 +24,7 @@
         {
             "class": "serveur",
             "displayname": "{{nom}}",
+            "icon": "server",
             "attributes": [
                 {
                     "domain": "details",
@@ -48,6 +49,11 @@
                     "classes": [
                         "datacenter"
                     ]
+                },
+                {
+                    "domain": "display",
+                    "name": "logo",
+                    "type": "image"
                 }
             ]
         },

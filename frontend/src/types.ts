@@ -19,6 +19,11 @@ export interface ClassDefinition {
   // cette classe (noms de groupes Keycloak, sans '/'). Absent/vide =
   // utilisable dans tous les tenants.
   tenants?: string[];
+  // Icône par défaut de la classe (plan-mark3.md action 4, point 1) :
+  // identifiant dans le jeu fixe frontend/src/classIcons.tsx, jamais un
+  // upload libre. Absent = pas d'icône manuelle choisie (repli sur l'icône
+  // auto-générée backend, puis la couleur de palette, cf. DiagramPage.tsx).
+  icon?: string;
   attributes: AttributeDefinition[];
 }
 
@@ -37,7 +42,22 @@ export interface ClassInfo {
   class: string;
   displayname?: string;
   tenants?: string[];
+  icon?: string;
   attributes: AttributeDefinition[];
+}
+
+// Entrée de GET /api/logos (plan-mark3.md action 4, point 2/3) : emplacement
+// PHYSIQUE déjà aplati (jamais un pointeur "ref:" intermédiaire, voir
+// backend/routes_files.py) d'un logo actuellement actif sur un objet,
+// utilisée par le sélecteur de réutilisation d'un logo existant
+// (NavigationPage.tsx).
+export interface LogoEntry {
+  class: string;
+  object_id: number;
+  attribute: string;
+  version: number;
+  filename: string;
+  display_name: string;
 }
 
 export interface ObjectSummary {

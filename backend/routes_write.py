@@ -606,6 +606,18 @@ def delete_object(object_id):
     joint_id pointe vers cet objet, restreinte aux objets sources du
     périmètre tenant de l'acteur pour un tenant-admin, sans restriction pour
     un global-admin.
+
+    Limite connue assumée (plan-mark3.md action 4, point 3 - réutilisation
+    d'un logo par référence croisée, routes_files.py) : aucun avertissement
+    n'est émis ici si l'objet supprimé porte un fichier (ex. logo)
+    actuellement référencé par d'autres objets via un pointeur "ref:...".
+    La suppression logique (et la purge éventuelle plus tard) de CET objet
+    ne casse rien côté fichier - sweep_orphan_files (routes_admin.py) reste
+    conscient de la référence et ne supprime jamais le fichier physique tant
+    qu'elle existe - mais l'utilisateur qui supprime l'objet source n'est
+    pas prévenu que son logo "survit" ailleurs. Non bloquant pour cette
+    action (explicitement toléré par la spec), documenté ici pour une
+    itération future plutôt qu'implémenté.
     """
     ctx = app.get_auth_context()
     if ctx.is_tenant_readonly:

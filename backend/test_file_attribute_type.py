@@ -92,6 +92,30 @@ class FileFakeCursor(FakeCursor):
             ]
             return
 
+        # _self_heal_broken_pointer (routes_files.py, plan-mark3.md action 4,
+        # point 3) : ferme la valeur active d'UN attribut précis (object_id
+        # ET name) UNIQUEMENT si son value_string correspond exactement au
+        # pointeur qui a échoué en lecture (correction post-revue, bug 3 -
+        # élimine la race où un pointeur réécrit entre-temps serait fermé
+        # par erreur). À distinguer du garde-fou plus large de
+        # delete_object (routes_write.py) qui ferme TOUS les attributs d'un
+        # objet et ne prend qu'un seul paramètre - le préfixe SQL partagé
+        # empêcherait un simple startswith de les distinguer, d'où cette
+        # branche dédiée, testée AVANT de déléguer au FakeCursor générique.
+        if sql_norm.startswith("UPDATE attribute_value av SET valid_to = now() FROM attribute a WHERE av.attribute_id = a.id AND a.object_id = %s AND a.name = %s AND av.valid_to IS NULL AND av.value_string = %s"):
+            self._result = None
+            self._results = None
+            self.rowcount = 0
+            object_id, name, failed_pointer = params
+            attr_ids = {
+                a["id"] for a in self.db.attributes.values()
+                if a["object_id"] == object_id and a["name"] == name
+            }
+            for v in self.db.attribute_values.values():
+                if v["attribute_id"] in attr_ids and v["valid_to"] is None and v.get("value_string") == failed_pointer:
+                    v["valid_to"] = "now"
+            return
+
         # sweep_orphan_files (routes_admin.py, point B) : existence d'une
         # ligne attribute_value (active OU fermée) dont le pointeur
         # correspond exactement à ce triplet (object_id, nom d'attribut).
@@ -109,6 +133,47 @@ class FileFakeCursor(FakeCursor):
                 if v["attribute_id"] in attr_ids
             )
             self._result = (1,) if found else None
+            return
+
+        # sweep_orphan_files (routes_admin.py, point 3, plan-mark3.md action
+        # 4) : existence d'un pointeur "ref:..." (référence croisée)
+        # pointant sur ce fichier, PORTÉ PAR N'IMPORTE QUEL AUTRE objet/
+        # attribut - recherche volontairement sans restriction object_id/
+        # nom d'attribut, contrairement à la requête ci-dessus.
+        if sql_norm.startswith("SELECT 1 FROM attribute_value WHERE value_string = %s LIMIT 1"):
+            self._result = None
+            self._results = None
+            self.rowcount = 0
+            (ref_pointer,) = params
+            found = any(v["value_string"] == ref_pointer for v in self.db.attribute_values.values())
+            self._result = (1,) if found else None
+            return
+
+        # list_logos (routes_files.py, plan-mark3.md action 4) : objets
+        # actifs portant une valeur active sur un attribut nommé "logo",
+        # filtrés par tenant comme les autres routes de lecture.
+        if sql_norm.startswith("SELECT o.id, o.class, av.value_string FROM object o JOIN attribute a ON a.object_id = o.id AND a.name = 'logo'"):
+            self._result = None
+            self._results = None
+            self.rowcount = 0
+            tenant_filter = set(params[0]) if params else None
+            rows = []
+            for obj in self.db.objects.values():
+                if obj.get("deleted_at") is not None:
+                    continue
+                if tenant_filter is not None:
+                    tenants_raw = obj.get("tenants")
+                    obj_tenants = set(tenants_raw.split(",")) if tenants_raw else set()
+                    if obj_tenants and not (obj_tenants & tenant_filter):
+                        continue
+                for attr in self.db.attributes.values():
+                    if attr["object_id"] != obj["id"] or attr["name"] != "logo":
+                        continue
+                    for v in self.db.attribute_values.values():
+                        if v["attribute_id"] == attr["id"] and v["valid_to"] is None and v.get("value_string") is not None:
+                            rows.append((obj["id"], obj["class"], v["value_string"]))
+            rows.sort(key=lambda r: r[0])
+            self._results = rows
             return
 
         super().execute(sql, params)

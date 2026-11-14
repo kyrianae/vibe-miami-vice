@@ -476,7 +476,68 @@
   (action 6.2, probablement `backend/routes_admin.py`) à rendre
   référence-consciente (point 3), route de lecture fichier (action 3,
   `backend/routes_files.py`) à adapter pour l'auto-réparation.
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-14, `worker`/`testeur`/`pessimiste`/
+  `candide`). Livré en 2 itérations.
+
+  **Itération 1** : `model/schema.json` — champ optionnel `"icon"` sur
+  une classe (identifiant dans un jeu fixe côté frontend). Nouveau
+  `frontend/src/classIcons.tsx` : 18 icônes SVG inline embarquées,
+  sélecteur en grille ajouté dans `ConfigurationPage.tsx`.
+  **Décision tranchée sur svgrepo.com** (point 1bis) : vérification
+  faite avant implémentation — pas d'API de recherche publique
+  documentée, page de recherche est une SPA non scrappable de façon
+  fiable (404 constaté sur tentative d'endpoint API), conforme à la
+  clause de repli prévue par la spec : le fallback rond+initiales
+  devient le comportement **permanent** (pas une tentative réseau puis
+  repli, directement le repli). Nouveau `backend/class_icon.py` :
+  génère ce SVG fallback (rond coloré par hash déterministe du nom de
+  classe sur une palette dupliquée de `CLASS_COLORS`, initiales
+  centrées), cache disque, servi par nouvelle route
+  `GET /api/class_icon/<meta_class>/<class>` (volontairement non
+  filtrée tenant, documenté — l'icône de classe n'est pas une donnée
+  sensible). Attribut réservé `logo` (type `image`, domaine `display`)
+  ajouté en démo sur la classe `serveur` de `model/itil_cmdb.json`.
+  `backend/routes_files.py` : format de pointeur étendu
+  `"ref:<classe>:<object_id>:<attribut>:<version>:<nom_fichier>"` pour
+  qu'un logo pointe vers le fichier d'un **autre** objet (référence, pas
+  duplication), résolution anti-chaîne, nouvelle route
+  `POST .../file/<attribute>/reference` et `GET /api/logos` (liste des
+  logos existants, filtrée RBAC tenant). Garde-fou auto-réparation :
+  fichier référencé introuvable à la lecture → nettoyage de l'attribut
+  sur l'objet affiché, 404 propre. `backend/routes_admin.py` :
+  `sweep_orphan_files` (purge physique différée, action 6.2) rendu
+  référence-conscient — vérifie **toute** la table `attribute_value`
+  (pas que l'objet propriétaire) avant de supprimer un fichier
+  physique. `frontend/src/pages/NavigationPage.tsx` : aperçu logo
+  cliquable (ouvre directement l'input file), sélecteur de réutilisation
+  d'un logo existant d'un autre objet. `frontend/src/pages/
+  DiagramPage.tsx` : ordre de priorité logo → icône classe manuelle →
+  icône fallback backend → couleur (§6.4). **Limite connue documentée,
+  non bloquante** : avertissement à la suppression d'un objet dont le
+  logo est référencé ailleurs — pas implémenté (skip assumé,
+  explicitement non-bloquant selon la spec).
+
+  **Itération 2**, 3 bugs trouvés en revue croisée pessimiste/candide/
+  testeur, corrigés : (a) `frontend/src/pages/NavigationPage.tsx`
+  (`parseFilePointer`) ne reconnaissait pas le préfixe `ref:` → aperçu
+  vide en édition pour un logo référencé — fix : parsing dédié qui
+  saute les 5 premiers `:` et préserve un nom de fichier contenant
+  lui-même `:`. (b) `frontend/src/pages/DiagramPage.tsx` : logo rendu
+  via URL brute (`image://<url>`) — bug réel et permanent, pas
+  transitoire : `<img>`/ECharts ne peut jamais attacher de header
+  `Authorization: Bearer`, et le RBAC tenant est fail-closed
+  (`rbac.py`), donc tout objet tenant-scoped avec logo était invisible
+  dans le diagramme pour tout viewer — fix : résolution du logo via
+  fetch authentifié (`apiReadObjectFileBlob`, même pattern que
+  `NavigationPage.tsx`) → object URL mis en cache, assigné au `symbol`
+  une fois résolu, fallback icône/couleur en attendant. (c)
+  `backend/routes_files.py` (`_self_heal_broken_pointer`) fermait
+  aveuglément la valeur active au moment de l'appel (race condition
+  étroite avec une réécriture concurrente) — fix : filtre désormais sur
+  le `value_string` exact qui a échoué.
+
+  **Testeur-global : OK (182/182, démarrage Flask propre, aucune
+  régression RBAC/purge/file storage/typage modèle).**
 
 ## Récapitulatif d'avancement
 
@@ -488,4 +549,4 @@
 | 1 | Découpage de `backend/app.py` en modules | ✅ fait |
 | 2 | Interface de stockage de fichiers (abstraite, impl. à plat) | ✅ fait |
 | 3 | Types d'attribut "fichier", "image" et "csv" | ✅ fait |
-| 4 | Logo surchargeable par objet et icône par défaut par classe | ⬜ à faire |
+| 4 | Logo surchargeable par objet et icône par défaut par classe | ✅ fait |

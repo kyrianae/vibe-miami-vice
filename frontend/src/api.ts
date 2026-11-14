@@ -4,6 +4,7 @@ import type {
   MetaClassDefinition,
   ObjectSummary,
   ObjectDetail,
+  LogoEntry,
 } from './types';
 
 const BASE = '/api';
@@ -184,6 +185,43 @@ export const apiReadObjectFileBlob = async (objectId: number, attribute: string,
   const blob = await res.blob();
   return { blob, filename };
 };
+
+// Logo par référence (plan-mark3.md action 4, point 2/3) : URL brute de
+// lecture d'un fichier d'objet, pour un usage <img>/ECharts `image://` qui
+// ne peut pas attacher l'en-tête Authorization (cf. apiReadObjectFileBlob
+// ci-dessus) - acceptable ici (DiagramPage.tsx), la spec tolère
+// explicitement une icône cassée le temps d'un rendu si le tenant de
+// l'appelant anonyme ne couvre pas l'objet.
+export const apiObjectFileUrl = (objectId: number, attribute: string) =>
+  `${BASE}/read/object/${objectId}/file/${attribute}`;
+
+// Icône de secours auto-générée par classe (plan-mark3.md action 4, point
+// 1bis) : dernier recours avant la couleur de palette, jamais appelée si
+// une icône du jeu fixe (classIcons.tsx) est choisie manuellement.
+export const apiClassIconUrl = (metaClass: string, cls: string) =>
+  `${BASE}/class_icon/${metaClass}/${cls}`;
+
+// Liste des logos actifs réutilisables (plan-mark3.md action 4, point 2) :
+// alimente le sélecteur "réutiliser un logo existant" de NavigationPage.tsx.
+export const apiListLogos = () => fetchJson<LogoEntry[]>(`${BASE}/logos`);
+
+// Référence croisée (plan-mark3.md action 4, point 3) : pointe l'attribut
+// file/image/csv d'un objet vers le fichier déjà stocké d'un AUTRE objet,
+// sans dupliquer les octets. `source` désigne l'emplacement (classe,
+// object_id, attribut, version) déjà connu (ex. une entrée de apiListLogos).
+export const apiSetObjectFileReference = (
+  objectId: number,
+  attribute: string,
+  source: { class: string; object_id: number; attribute: string; version: number }
+) =>
+  fetchJsonAuth<{ status: string; object_id: number; attribute: string; value: string }>(
+    `${BASE}/write/object/${objectId}/file/${attribute}/reference`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(source),
+    }
+  );
 
 // DELETE - Objects (suppression logique, plan-mark2.md action 6.1)
 export const apiDeleteObject = (id: number) =>

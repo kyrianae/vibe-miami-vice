@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, type MouseEvent } from 'react';
-import { apiReadObjects, apiReadObject, apiWriteObject, apiWriteObjectCreateMultipart, apiWriteAttribute, apiDeleteObject, apiReadClasses, apiWriteObjectFile, apiReadObjectFileBlob } from '../api';
-import type { ObjectSummary, ObjectDetail, ClassInfo, AttributeDefinition } from '../types';
+import { apiReadObjects, apiReadObject, apiWriteObject, apiWriteObjectCreateMultipart, apiWriteAttribute, apiDeleteObject, apiReadClasses, apiWriteObjectFile, apiReadObjectFileBlob, apiListLogos, apiSetObjectFileReference } from '../api';
+import type { ObjectSummary, ObjectDetail, ClassInfo, AttributeDefinition, LogoEntry } from '../types';
 import type { AuthInfo } from '../auth';
 
 // --- Types file/image/csv (plan-mark3.md action 3) ---
@@ -8,8 +8,35 @@ import type { AuthInfo } from '../auth';
 // Pointeur stocké côté backend : "<version>:<nom_fichier>" (value_string).
 // parseFilePointer en extrait (version, filename) côté client, pour
 // affichage et pour cibler une version précise en lecture.
+//
+// Format référence croisée (plan-mark3.md action 4, point 3 ; voir docstring
+// de module backend/routes_files.py) :
+// "ref:<classe>:<object_id>:<attribut>:<version>:<nom_fichier>". Seuls
+// (version, filename) sont nécessaires côté client (aperçu/URL de lecture) :
+// la résolution classe/object_id/attribut de la source est déjà faite côté
+// backend, de façon transparente, quelle que soit la version demandée. Le
+// nom de fichier peut lui-même contenir ':' (même règle que le format court),
+// donc on ne fait jamais un split naïf sur tout le pointeur : on saute
+// exactement les 5 premiers ':' (après ref, classe, object_id, attribut,
+// version) et on garde tout le reste tel quel comme filename.
 function parseFilePointer(value: string | number | { joint_id: number } | undefined): { version: number; filename: string } | null {
-  if (typeof value !== 'string' || !value.includes(':')) return null;
+  if (typeof value !== 'string') return null;
+  if (value.startsWith('ref:')) {
+    const colonIndexes: number[] = [];
+    let searchFrom = 0;
+    for (let i = 0; i < 5; i++) {
+      const idx = value.indexOf(':', searchFrom);
+      if (idx === -1) return null;
+      colonIndexes.push(idx);
+      searchFrom = idx + 1;
+    }
+    const versionStr = value.slice(colonIndexes[3] + 1, colonIndexes[4]);
+    const filename = value.slice(colonIndexes[4] + 1);
+    const version = Number(versionStr);
+    if (!Number.isInteger(version)) return null;
+    return { version, filename };
+  }
+  if (!value.includes(':')) return null;
   const idx = value.indexOf(':');
   const versionStr = value.slice(0, idx);
   const filename = value.slice(idx + 1);
@@ -215,6 +242,16 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
   // texte) - uploadé via une route multipart dédiée au moment du save,
   // jamais inclus dans le JSON envoyé à apiWriteObject.
   const [newFileUploads, setNewFileUploads] = useState<Record<string, File | null>>({});
+  // Réutilisation d'un logo existant par référence (plan-mark3.md action 4,
+  // point 2/3) : sélection distincte d'un upload (newFileUploads) - au plus
+  // l'un des deux par attribut, le dernier choisi par l'utilisateur gagne
+  // (voir les onChange ci-dessous, qui remettent l'autre à null).
+  const [newFileReferences, setNewFileReferences] = useState<Record<string, LogoEntry | null>>({});
+  const [availableLogos, setAvailableLogos] = useState<LogoEntry[]>([]);
+  // Refs du <input type="file"> caché de chaque attribut "logo" - cliquer
+  // sur l'aperçu déclenche directement le sélecteur de fichier natif (pas
+  // de bouton séparé, plan-mark3.md action 4, point 2).
+  const logoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   // RBAC multi-tenant (plan.md action 11) : tenant explicite à poser sur un
   // objet en cours de création, utile uniquement pour un tenant-admin
   // multi-tenant (cas secondaire - un tenant-admin à un seul tenant est
@@ -422,6 +459,16 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
   // --- Form helpers (create/edit modal) ---
   const selectedClassDef = classes.find((c) => c.meta_class === newMetaClass && c.class === newClass);
 
+  // Logos réutilisables (plan-mark3.md action 4, point 2) : chargés
+  // seulement si la classe sélectionnée porte l'attribut réservé "logo" -
+  // évite un appel réseau superflu pour les classes sans logo.
+  useEffect(() => {
+    if (!showCreate) { setAvailableLogos([]); return; }
+    const hasLogoAttr = selectedClassDef?.attributes.some((a) => a.name === 'logo' && a.type === 'image');
+    if (!hasLogoAttr) { setAvailableLogos([]); return; }
+    apiListLogos().then(setAvailableLogos).catch(() => setAvailableLogos([]));
+  }, [showCreate, selectedClassDef]);
+
   const loadCandidatesForDef = (def: ClassInfo) => {
     const jointAttrs = def.attributes.filter((a) => a.type === 'joint-1-1' || a.type === 'joint-1-n');
     if (jointAttrs.length === 0) return;
@@ -458,11 +505,13 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
       setNewAttrs(attrs);
       setJointValues(joints);
       setNewFileUploads({});
+      setNewFileReferences({});
       loadCandidatesForDef(def);
     } else {
       setNewAttrs({});
       setJointValues({});
       setNewFileUploads({});
+      setNewFileReferences({});
     }
   };
 
@@ -500,6 +549,7 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
     setNewAttrs(attrs);
     setJointValues(joints);
     setNewFileUploads({});
+    setNewFileReferences({});
     loadCandidatesForDef(def);
     setShowCreate(true);
   };
@@ -587,13 +637,29 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
         }
       }
 
+      // Réutilisation d'un logo existant par référence (plan-mark3.md
+      // action 4, point 2/3) : toujours une requête séparée APRÈS la
+      // création/édition de l'objet (objectId connu dans les deux branches
+      // ci-dessus, multipart ou JSON) - pas de risque de doublon d'objet,
+      // seul un retry de cette seule requête serait à refaire en cas
+      // d'échec, inchangé par ailleurs (idempotent côté backend : pointe à
+      // nouveau le même attribut vers la même source).
+      const referenceEntries = Object.entries(newFileReferences).filter(
+        (entry): entry is [string, LogoEntry] => entry[1] != null
+      );
+      for (const [attrName, ref] of referenceEntries) {
+        await apiSetObjectFileReference(objectId, attrName, {
+          class: ref.class, object_id: ref.object_id, attribute: ref.attribute, version: ref.version,
+        });
+      }
+
       const action = editingObjectId ? 'mis à jour' : 'créé';
       addToast('success', `Objet ${action} (id: ${resultId})`);
       closeModal();
       // Refresh
       loadObjects();
       // Invalidate detail cache for this object
-      if (editingObjectId || fileEntries.length > 0) {
+      if (editingObjectId || fileEntries.length > 0 || referenceEntries.length > 0) {
         const refreshed = await apiReadObject(objectId);
         setDetailCache((prev) => ({ ...prev, [objectId]: refreshed }));
       }
@@ -609,6 +675,7 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
     setJointValues({});
     setObjectTenant('');
     setNewFileUploads({});
+    setNewFileReferences({});
   };
 
   // --- Inline cell click ---
@@ -1025,6 +1092,81 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                   ? parseFilePointer(currentAttrVal.values[0])
                   : null;
                 const picked = newFileUploads[attr.name];
+                const pickedRef = newFileReferences[attr.name];
+
+                // Logo d'objet (plan-mark3.md action 4, point 2) : aperçu
+                // cliquable (ouvre directement le sélecteur de fichier,
+                // pas de bouton séparé) + sélecteur de réutilisation d'un
+                // logo existant par référence - comportement réservé à
+                // l'attribut réservé "logo" (convention de modèle), les
+                // autres attributs file/image/csv gardent le rendu
+                // générique ci-dessous.
+                if (attr.name === 'logo' && attr.type === 'image') {
+                  const ext = currentPointer ? fileExtensionOf(currentPointer.filename) : '';
+                  const hasInlinePreview = !!(editingObjectId && currentPointer && !picked && !pickedRef
+                    && (ext === 'jpg' || ext === 'jpeg' || ext === 'png'));
+                  const refKey = (r: LogoEntry) => `${r.class}:${r.object_id}:${r.attribute}:${r.version}`;
+                  return (
+                    <div className="form-group" key={attr.name}>
+                      <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>(logo — {attr.domain})</span></label>
+                      <div
+                        onClick={() => logoInputRefs.current[attr.name]?.click()}
+                        title="Cliquer pour changer le logo"
+                        style={{
+                          width: 80, height: 80, borderRadius: 8, cursor: 'pointer',
+                          border: '1px dashed var(--color-border)', display: 'flex',
+                          alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+                          background: 'var(--color-bg)', textAlign: 'center',
+                        }}
+                      >
+                        {hasInlinePreview ? (
+                          <ImagePreview objectId={editingObjectId as number} attribute={attr.name} version={currentPointer!.version} />
+                        ) : picked ? (
+                          <span style={{ fontSize: 11, color: 'var(--color-accent)', padding: 4 }}>{picked.name}</span>
+                        ) : pickedRef ? (
+                          <span style={{ fontSize: 11, color: 'var(--color-accent)', padding: 4 }}>{pickedRef.filename}</span>
+                        ) : currentPointer ? (
+                          <span style={{ fontSize: 11, color: 'var(--color-text-muted)', padding: 4 }}>{currentPointer.filename}</span>
+                        ) : (
+                          <span style={{ fontSize: 24, color: 'var(--color-text-muted)' }}>+</span>
+                        )}
+                      </div>
+                      <input
+                        ref={(el) => { logoInputRefs.current[attr.name] = el; }}
+                        type="file"
+                        accept=".jpg,.jpeg,.png,.svg"
+                        style={{ display: 'none' }}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null;
+                          setNewFileUploads({ ...newFileUploads, [attr.name]: file });
+                          if (file) setNewFileReferences({ ...newFileReferences, [attr.name]: null });
+                        }}
+                      />
+                      {availableLogos.length > 0 && (
+                        <div style={{ marginTop: 6 }}>
+                          <label style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>…ou réutiliser un logo existant :</label>
+                          <select
+                            value={pickedRef ? refKey(pickedRef) : ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (!val) { setNewFileReferences({ ...newFileReferences, [attr.name]: null }); return; }
+                              const entry = availableLogos.find((l) => refKey(l) === val) || null;
+                              setNewFileReferences({ ...newFileReferences, [attr.name]: entry });
+                              if (entry) setNewFileUploads({ ...newFileUploads, [attr.name]: null });
+                            }}
+                            style={{ fontSize: 12, marginTop: 2, width: '100%' }}
+                          >
+                            <option value="">-- Aucun --</option>
+                            {availableLogos.map((l) => (
+                              <option key={refKey(l)} value={refKey(l)}>{l.display_name} — {l.filename}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
                 return (
                   <div className="form-group" key={attr.name}>
                     <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span></label>
