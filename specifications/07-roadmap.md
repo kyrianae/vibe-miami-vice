@@ -167,20 +167,24 @@ Design retenu :
 
 Détail complet et suivi : `plan-mark3.md` action 2.
 
-## 10.8 Types d'attribut fichier/image, logo d'objet, icône de classe (conçu — `plan-mark3.md` actions 3-4)
+## 10.8 Types d'attribut fichier/image/csv, logo d'objet, icône de classe (conçu — `plan-mark3.md` actions 3-4)
 
-Idée (`tocheck.md` points 14, 15, 16, 17) : attribut de type « fichier »,
-spécialisation « image » (jpg/svg/png), logo surchargeable par objet
-(utilisé dans les diagrammes), icône par défaut par classe. Dépend de
-§10.7 (interface de stockage).
+Idée (`tocheck.md` points 14, 15, 16, 17, 20) : attribut de type
+« fichier », spécialisation « image » (jpg/svg/png) et « csv », logo
+surchargeable par objet (utilisé dans les diagrammes), icône par défaut
+par classe. Dépend de §10.7 (interface de stockage).
 
-### Types d'attribut « fichier » et « image » (`tocheck.md` #14/#15 — `plan-mark3.md` action 3)
+### Types d'attribut « fichier », « image » et « csv » (`tocheck.md` #14/#15/#20 — `plan-mark3.md` action 3)
 
-- Nouveaux types dans `model/schema.json` : `"file"` et `"image"` ajoutés
-  à l'enum `attributes[].type` (aux côtés de `string|integer|float|
-  joint-1-1|joint-1-n`). `constraint`/`sql_constraint` restent sans objet
-  pour ces deux types (pas de `classes` requis non plus, contrairement à
-  `joint-1-1`/`joint-1-n`).
+- Nouveaux types dans `model/schema.json` : `"file"`, `"image"` et
+  `"csv"` ajoutés à l'enum `attributes[].type` (aux côtés de
+  `string|integer|float|joint-1-1|joint-1-n`). `constraint`/
+  `sql_constraint` restent sans objet pour ces trois types (pas de
+  `classes` requis non plus, contrairement à `joint-1-1`/`joint-1-n`).
+  Le type `csv` porte un champ supplémentaire propre à la définition
+  d'attribut, `"separator"` (défaut `,`), au même niveau que `classes`
+  pour `joint-1-1`/`joint-1-n` — c'est une propriété du schéma, pas de
+  chaque valeur stockée.
 - Représentation en base : **aucune nouvelle colonne**. La contrainte
   `CHECK` de `attribute_value` (exactement une des 4 colonnes non-NULL,
   §3.4) reste inchangée — la valeur stockée dans `value_string` est un
@@ -222,6 +226,33 @@ spécialisation « image » (jpg/svg/png), logo surchargeable par objet
   de rendu inline direct dans un `<img>`/`<iframe>` sans sanitization) ou
   le sanitizer au moment de l'upload — à trancher explicitement lors de
   l'implémentation, pas une simple validation d'extension.
+- **IHM (`frontend/src/pages/NavigationPage.tsx`)** : les types `file`,
+  `image` et `csv` n'ont aucun rendu dédié aujourd'hui — seuls les types
+  `joint-1-1`/`joint-1-n` ont une branche spécifique (sélecteur d'objet
+  lié) ; tout le reste tombe dans le rendu générique champ texte, ce qui
+  afficherait le pointeur brut `"<version>:<nom_fichier>"` plutôt qu'un
+  contrôle utilisable. Trois branches de rendu à ajouter, par type :
+  - `file` : nom de fichier affiché + bouton **téléchargement** (lien
+    vers la route `GET .../file/<attribute>` de l'action 3, pas de rendu
+    inline — contenu de type arbitraire).
+  - `image` : **aperçu intégré** (vignette/`<img>` pointant vers la même
+    route de lecture) **et** bouton téléchargement. ⚠️ L'aperçu inline
+    d'un SVG implique que le choix de sécurité ci-dessus (sanitization à
+    l'upload) ait été tranché en faveur du rendu inline — si l'option
+    retenue est « servir en attachment », l'aperçu `image` se limite aux
+    formats raster (jpg/png) et le SVG retombe sur le même traitement
+    que `file` (téléchargement seul, pas d'`<img>` direct). Ce choix doit
+    être cohérent entre le point de sécurité backend et ce rendu.
+  - `csv` : **affichage** sous forme de tableau en lecture seule (parsing
+    client avec le `separator` défini sur l'attribut, pas de calcul
+    serveur additionnel) **et** bouton téléchargement du fichier brut
+    (même route que `file`). Pas d'édition de cellule dans ce tableau —
+    l'édition reste le remplacement du fichier entier via upload.
+  - Mode édition (formulaire de création/modif d'objet) : contrôle
+    d'upload (`<input type="file">`) pour les trois types, remplaçant la
+    valeur existante à la sauvegarde (nouvelle version, §10.7).
+  - Tests frontend à ajouter en conséquence (rendu des trois branches,
+    cohérence du choix d'aperçu SVG avec le backend).
 
 ### Logo surchargeable par objet et icône par défaut par classe (`tocheck.md` #16/#17 — `plan-mark3.md` action 4)
 

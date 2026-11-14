@@ -218,20 +218,21 @@
   pas de route Flask, pas de câblage à un type d'attribut, conformément au
   périmètre fixé.
 
-## 3. [Nouvelle fonctionnalité] Types d'attribut "fichier" et "image"
+## 3. [Nouvelle fonctionnalité] Types d'attribut "fichier", "image" et "csv"
 
-> Demande utilisateur (`tocheck.md` points 14 et 15, 2026-11-13). Détail
-> de conception : `specifications/07-roadmap.md` §10.8. Dépend de
+> Demande utilisateur (`tocheck.md` points 14, 15 et 20, 2026-11-13).
+> Détail de conception : `specifications/07-roadmap.md` §10.8. Dépend de
 > l'action 2 (`FileStorage`/`LocalFileStorage`).
 
-- **Problème** : pas de moyen d'attacher un fichier (ou une image) à un
-  objet ; l'interface de stockage (action 2) existe mais n'est câblée à
-  rien.
+- **Problème** : pas de moyen d'attacher un fichier (ou une image, ou un
+  csv) à un objet ; l'interface de stockage (action 2) existe mais n'est
+  câblée à rien, ni côté backend ni côté IHM.
 - **Correctif** :
-  1. `model/schema.json` : ajouter `"file"` et `"image"` à l'enum
-     `attributes[].type` (aux côtés de `string|integer|float|joint-1-1|
-     joint-1-n`) ; ces deux types n'utilisent ni `constraint`/
-     `sql_constraint` ni `classes`.
+  1. `model/schema.json` : ajouter `"file"`, `"image"` et `"csv"` à
+     l'enum `attributes[].type` (aux côtés de `string|integer|float|
+     joint-1-1|joint-1-n`) ; ces trois types n'utilisent ni `constraint`/
+     `sql_constraint` ni `classes`. `csv` porte en plus un champ
+     `"separator"` (défaut `,`) sur la définition d'attribut.
   2. Aucune nouvelle colonne en base : la valeur stockée dans
      `attribute_value.value_string` est un pointeur
      `"<version>:<nom_fichier_original>"` vers le contenu réel géré par
@@ -273,12 +274,37 @@
      ou neutralisé selon l'option choisie au point 6, lecture tenant-
      scopée (un tenant ne doit pas pouvoir lire/écrire le fichier d'un
      objet hors de son périmètre).
+  8. **IHM** (`frontend/src/pages/NavigationPage.tsx`, détail
+     `specifications/07-roadmap.md` §10.8) : ajouter une branche de rendu
+     par type, aujourd'hui absente (seuls `joint-1-1`/`joint-1-n` ont une
+     branche dédiée — le reste tomberait dans le champ texte générique et
+     afficherait le pointeur brut) :
+     - `file` : nom + bouton **téléchargement** (route de lecture du
+       point 4).
+     - `image` : **aperçu** inline (`<img>`) + bouton téléchargement —
+       le SVG ne bascule en aperçu inline que si le point 6 a tranché
+       pour la sanitization ; sinon traitement `file` (téléchargement
+       seul) pour le SVG.
+     - `csv` : **affichage** en tableau lecture seule (parsing client
+       via `separator`) + bouton téléchargement du fichier brut.
+     - Formulaire de création/modif : `<input type="file">` pour les
+       trois types (remplace la valeur = nouvelle version).
+     - Tests frontend : rendu des trois branches + cohérence du choix
+       d'aperçu SVG avec le backend.
+- **Cas d'usage débloqués** (`use case.md`) : coffre-fort documentaire/GED
+  — versions de fichiers par classe/id/attribut (ligne 15) ; inventaire
+  physique avec photos — parc matériel, immobilier, flotte véhicules
+  (ligne 19) ; bibliothèque/vinothèque — image de couverture/étiquette et
+  import catalogue en csv (ligne 25) ; migration/interconnexion en masse
+  via import csv (ligne 29) ; outil de ticket — pièces jointes (ligne 21,
+  le volet icône de ce cas dépend de l'action 4 ci-dessous).
 - **Effort** : moyen à conséquent (2 nouvelles routes avec RBAC tenant +
-  historisation + validation de contenu binaire, point de sécurité SVG à
-  ne pas bâcler).
+  historisation + validation de contenu binaire + rendu IHM dédié par
+  type, point de sécurité SVG à ne pas bâcler).
 - **Fichiers** : `model/schema.json`, `backend/routes_write.py` (ou
   nouveau module dédié), `backend/file_storage.py` (consommé, pas
-  modifié), nouveau fichier de test.
+  modifié), `frontend/src/pages/NavigationPage.tsx`, nouveaux fichiers de
+  test (backend et frontend).
 - **Statut** : ⬜ à faire.
 
 ## 4. [Nouvelle fonctionnalité] Logo surchargeable par objet et icône par défaut par classe
@@ -308,9 +334,13 @@
      documentée — à vérifier avant implémentation (point ouvert).
   2. **Logo d'objet (#16)** : convention — une classe qui « a un logo »
      porte un attribut réservé de type `image` (ex. nom `logo`, domaine
-     `display`), réutilisant la plomberie de l'action 3. Sur un objet,
-     l'UI permet d'importer un fichier **ou** de sélectionner un logo
-     déjà présent parmi ceux d'autres objets de classes à logo.
+     `display`), réutilisant intégralement la plomberie de l'action 3 —
+     backend (upload/download) **et** IHM (action 3, point 8) : aperçu
+     inline et bouton téléchargement dans `NavigationPage.tsx` comme pour
+     n'importe quel attribut `image`, `DiagramPage.tsx` restant la vue
+     spécialisée (rendu dans le diagramme, point 4 ci-dessous). Sur un
+     objet, l'UI permet d'importer un fichier **ou** de sélectionner un
+     logo déjà présent parmi ceux d'autres objets de classes à logo.
   3. **Point de conception à trancher avant implémentation** (non tranché
      par cette spec) : réutiliser un logo existant doit-il faire pointer
      `attribute_value` vers le `(classe, object_id, attribut, version)`
@@ -327,6 +357,10 @@
      explicite à respecter.
   5. Tests : rendu avec logo seul, icône seule, aucun des deux (fallback
      couleur), et le point 3 une fois tranché.
+- **Cas d'usage débloqués** (`use case.md`) : CMDB avec supervision
+  intégrée — icône de classe + logo par objet pour les diagrammes
+  (ligne 11) ; outil de ticket — icône par type de ticket (ligne 21, le
+  volet pièce jointe de ce cas dépend de l'action 3 ci-dessus).
 - **Effort** : moyen (essentiellement frontend — sélecteurs, rendu
   graphe — plus la décision de conception du point 3 côté backend).
 - **Fichiers** : `model/schema.json`, `frontend/src/pages/

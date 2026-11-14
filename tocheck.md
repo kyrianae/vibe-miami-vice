@@ -16,11 +16,11 @@ Notes sur 5 (1 = faible, 5 = fort). Intérêt = valeur produit perçue. Difficul
 | 10 | Générer des displays différents à partir des tabs éditées (sous-objets sélectionnés, read-only partiel) | 4 | 4 | Dépend de #9, ajoute RBAC fin par vue |
 | 11 | Outil d'ingestion avec binding (mapping champs source → attributs) | 4 | 4 | Fondation réutilisable (CSV, API, ...) |
 | 12 | Workflow / scheduler des imports | 3 | 3 | Dépend de #11, besoin d'un worker/process séparé |
-| 14 | Type d'attribut "fichier" | 4 | 2 | Dépend du stockage fichiers — voir `plan-mark3.md` action 2 |
-| 15 | Type d'attribut "image" (jpg/svg/png) | 3 | 2 | Spécialisation de #14 + validation mime |
+| 14 | Type d'attribut "fichier" | 4 | 2 | Dépend du stockage fichiers — voir `plan-mark3.md` action 2. Bundlé avec #15/#20 dans l'action 3 (backend + IHM : téléchargement) |
+| 15 | Type d'attribut "image" (jpg/svg/png) | 3 | 2 | Spécialisation de #14 + validation mime. IHM : aperçu inline + téléchargement (`plan-mark3.md` action 3 point 8) |
 | 16 | Logo surchargeable par objet (sélection parmi logos existants ou import), utilisé dans les diagrammes | 3 | 3 | Dépend de #15, touche DiagramPage |
 | 17 | Icône par défaut par classe (sélection quand actif) | 2 | 2 | Petite feature UI, indépendante. Complément (2026-11-14) : auto-récupération d'un SVG sur svgrepo.com à partir du nom de classe, passé par une homogénéisation configurable (couleur/trait/viewBox) ; fallback rond+nom si échec ou pas d'API de recherche dispo côté svgrepo (point à vérifier) |
 | 18 | Type d'attribut select/enum (valeurs fixes : statut, priorité...) pour workflow type ticket | 4 | 2 | Manque identifié, gain rapide, peu coûteux |
 | 19 | Type d'attribut secret/password (flag valeur masquée) | 3 | 2 | Implique un vrai chiffrement, pas juste masquage UI |
-| 20 | Type d'attribut CSV (avec attribut séparateur) | 2 | 2 | Simple, utilité plus niche |
+| 20 | Type d'attribut CSV (avec attribut séparateur) | 2 | 2 | Simple, utilité plus niche. Bundlé avec #14/#15 dans `plan-mark3.md` action 3 (2026-11-14) : IHM = affichage en tableau lecture seule + téléchargement du fichier brut |
 | 22 | Découpage microservices (ex: backend écriture / backend lecture séparés, backend storage dédié pour fichiers/autres côtés), pour scaler et intégrer des traitements type inférence/apprentissage, bascule Kubernetes | 5 | 4 | Fait d'abord : découpage interne de `app.py` en modules, `plan-mark3.md` action 1 ; prérequis d'infra pour #2/#3/#4 (ML) ; impacte RBAC/tenant partagé entre services et la cohérence read/write (réplication, latence). Bénéfice additionnel : une fois séparé, chaque modif ne demande d'analyser que le code du service concerné (contexte remonté plus petit à chaque passage, moins de risque de régression croisée) — baisse la difficulté perçue des évolutions futures, pas celle de la migration elle-même |
