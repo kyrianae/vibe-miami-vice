@@ -378,5 +378,5 @@
 |---|--------|--------|
 | 1 | Découpage de `backend/app.py` en modules | ✅ fait |
 | 2 | Interface de stockage de fichiers (abstraite, impl. à plat) | ✅ fait |
-| 3 | Types d'attribut "fichier" et "image" | ⬜ à faire |
+| 3 | Types d'attribut "fichier", "image" et "csv" | ⬜ à faire |
 | 4 | Logo surchargeable par objet et icône par défaut par classe | ⬜ à faire |
