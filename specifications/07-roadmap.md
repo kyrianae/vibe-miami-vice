@@ -133,7 +133,7 @@ profondeur et de volume (`MAX_HIDDEN_CHAIN_DEPTH`,
 un dédoublonnage indépendant de l'ordre d'itération SQL. Détail complet :
 voir `plan-mark2.md` action 10.
 
-## 10.7 Stockage de fichiers (tranché — `plan-mark3.md` action 2)
+## 10.7 Stockage de fichiers (fait — `plan-mark3.md` action 2)
 
 Idée (`tocheck.md` point 13) : prérequis pour les attributs de type
 « fichier » (#14), « image » (#15) et le logo surchargeable par objet
@@ -167,7 +167,15 @@ Design retenu :
 
 Détail complet et suivi : `plan-mark3.md` action 2.
 
-## 10.8 Types d'attribut fichier/image/csv, logo d'objet, icône de classe (conçu — `plan-mark3.md` actions 3-4)
+> **Mise à jour (2026-11-21, fait)** : design ci-dessus intégralement
+> implémenté sans écart — `backend/file_storage.py` (`FileStorage` ABC +
+> `LocalFileStorage`), `FILE_STORAGE_ROOT` (défaut `/data/files`, volume
+> `./files:/data/files` dans `docker-compose.yml`), versionnement par
+> listing de dossier, assainissement strict de tous les segments de
+> chemin (pas seulement le nom de fichier). 18/18 tests
+> `backend/test_file_storage.py`. Détail : `plan-mark3.md` action 2.
+
+## 10.8 Types d'attribut fichier/image/csv, logo d'objet, icône de classe (fait — `plan-mark3.md` actions 3-4)
 
 Idée (`tocheck.md` points 14, 15, 16, 17, 20) : attribut de type
 « fichier », spécialisation « image » (jpg/svg/png) et « csv », logo
@@ -323,10 +331,66 @@ par classe. Dépend de §10.7 (interface de stockage).
     indéfiniment, pour retomber sur le fallback (icône de classe, puis
     couleur §6.4) dès l'affichage suivant.
 
+> **Mise à jour (2026-11-21, fait) — décisions finales retenues**,
+> remplaçant les points ouverts (⚠️) ci-dessus par leur tranchage réel :
+> - **Sécurité SVG (point 6 ci-dessus)** : **pas de sanitization** du
+>   contenu SVG à l'upload (jugée trop fragile sans lib dédiée) —
+>   validation structurelle seule (XML bien formé, racine `<svg>`, via
+>   `defusedxml` plutôt que `xml.etree.ElementTree` brut, pour éviter un
+>   DoS par expansion d'entités XML) et **attachment systématique en
+>   lecture, y compris pour le SVG** (jamais de rendu `<img>` inline pour
+>   ce format, `backend/routes_files.py`) — neutralise le vecteur XSS
+>   stocké sans prétendre nettoyer le contenu. Conséquence IHM : l'aperçu
+>   `image` inline (`NavigationPage.tsx`) ne s'applique qu'aux formats
+>   raster jpg/jpeg/png ; le SVG reçoit le même traitement que `file`
+>   (téléchargement seul).
+> - **svgrepo.com (point 1bis ci-dessus)** : non retenu — vérifié avant
+>   implémentation, pas d'API de recherche publique documentée (404
+>   constaté), page de recherche non scrappable de façon fiable. Le
+>   fallback rond+initiales (`backend/class_icon.py`) devient le
+>   comportement **permanent** dès le premier passage, pas un filet de
+>   sécurité après tentative réseau : aucun appel réseau externe n'est
+>   implémenté.
+> - **Format de pointeur étendu** (réutilisation de logo par référence,
+>   point ci-dessous) : `"ref:<classe>:<object_id>:<attribut>:<version>:
+>   <nom_fichier>"`, construit par `POST .../file/<attribute>/reference`,
+>   toujours aplati sur l'emplacement physique final — détail complet
+>   (résolution, garde anti-chaîne, auto-réparation) : §4.6 de
+>   [04-api-backend.md](04-api-backend.md).
+> - **`POST /api/admin/sweep_orphan_files`** (`backend/routes_admin.py`,
+>   action 3 point B de la revue croisée) : nettoyage des fichiers
+>   orphelins (crash process entre écriture disque et commit), réservé
+>   `global-admin`, référence-conscient (ne supprime jamais un fichier
+>   encore référencé, directement ou via `ref:`, par un autre objet/
+>   attribut) — détail : §4.6 de [04-api-backend.md](04-api-backend.md).
+> - **2 itérations de bugfix post-revue croisée** (`plan-mark3.md` actions
+>   3/4, statuts détaillés) :
+>   1. `parseFilePointer` (`NavigationPage.tsx`) ne reconnaissait pas le
+>      préfixe `ref:` → aperçu vide en édition pour un logo référencé ;
+>      fix : parsing dédié qui saute les 5 premiers `:` et préserve un nom
+>      de fichier contenant lui-même `:`.
+>   2. `DiagramPage.tsx` rendait un logo via URL brute (`image://<url>`) —
+>      bug permanent, pas transitoire : un `<img>`/ECharts ne peut jamais
+>      attacher de header `Authorization: Bearer`, et le RBAC tenant est
+>      *fail-closed* (`rbac.py`), donc tout objet tenant-scoped avec logo
+>      était invisible dans le diagramme pour tout viewer ; fix :
+>      résolution du logo via fetch authentifié (`apiReadObjectFileBlob`)
+>      → object URL mis en cache, assigné au `symbol` une fois résolu,
+>      fallback icône/couleur en attendant.
+>   3. `_self_heal_broken_pointer` (`routes_files.py`) fermait aveuglément
+>      la valeur active au moment de l'appel (race condition étroite avec
+>      une réécriture concurrente) ; fix : filtre désormais sur le
+>      `value_string` exact qui a échoué.
+>
+> Tests finaux : 157/157 (`backend/`, action 3), testeur-global 182/182
+> (action 4) — voir `plan-mark3.md` actions 3 et 4 pour le détail complet.
+
 Détail complet et suivi : `plan-mark3.md` actions 3 et 4.
 
-> Statut courant (2026-11-13) : `plan-mark3.md` fait suite à `plan-mark2.md`
-> sans report de backlog. Actions ouvertes à ce jour : 1 (découpage
-> `app.py`, fait), 2 (interface de stockage de fichiers, en cours de
-> revue croisée), 3 (types fichier/image, à faire), 4 (logo/icône, à
-> faire).
+> Statut courant (2026-11-21) : `plan-mark3.md` fait suite à `plan-mark2.md`
+> sans report de backlog. Les 5 actions de `plan-mark3.md` sont closes :
+> 1 (découpage `app.py` en Blueprints, fait), 2 (interface de stockage de
+> fichiers, fait), 3 (types fichier/image/csv, fait), 4 (logo/icône de
+> classe, fait), 5 (versionnage des fichiers modèle, fait). Action 6
+> (synchronisation de `specifications/` avec les actions 1-5, dette
+> documentaire) ajoutée ce jour — voir `plan-mark3.md`.

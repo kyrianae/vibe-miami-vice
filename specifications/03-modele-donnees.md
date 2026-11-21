@@ -47,7 +47,49 @@ Structure attendue (draft-07) :
 }
 ```
 
-`additionalProperties: false` à tous les niveaux. ⚠️ Note : les fichiers
+`additionalProperties: false` à tous les niveaux.
+
+## 3.2bis Extensions Mark 3 : types `file`/`image`/`csv`, `icon`, `version` (ajout 2026-11-21)
+
+Trois ajouts à `model/schema.json`, livrés par `plan-mark3.md` actions 3-5
+(absents de la structure §3.2 ci-dessus, qui documente l'état pré-Mark 3) :
+
+- **Champ top-level `"version"`** (entier, `minimum: 1`, optionnel) sur un
+  document modèle, à côté de `meta_class`/`depends_on`/`classes`. Absent =
+  version 1 par défaut. Purement informatif pour l'instant — aucune
+  logique de migration ne le consomme encore (action 5, préparation
+  future) ; propagé tel quel par `backend/routes_init.py` (`/api/init`) et
+  `backend/routes_write.py` (`write_metaclass`), voir §4.4/§4.5 de
+  [04-api-backend.md](04-api-backend.md).
+- **`attributes[].type`** étendu à `"file"`, `"image"`, `"csv"` (aux côtés
+  de `string|integer|float|joint-1-1|joint-1-n`) — ces trois types
+  n'utilisent ni `constraint`/`sql_constraint` ni `classes`. Le type `csv`
+  porte en plus un champ optionnel `"separator"` sur la définition
+  d'attribut (défaut `,` si absent, appliqué côté code, pas une valeur par
+  défaut du schéma JSON lui-même). Représentation en base inchangée :
+  aucune nouvelle colonne, la valeur stockée dans
+  `attribute_value.value_string` est un pointeur vers le contenu réel géré
+  par `FileStorage`, pas le contenu lui-même — détail complet des deux
+  formats de pointeur (direct et référence `ref:`) en §4.6 de
+  [04-api-backend.md](04-api-backend.md).
+- **Champ `"icon"`** (chaîne, optionnel) sur une classe — identifiant
+  choisi dans le jeu fixe d'icônes embarquées côté frontend
+  (`frontend/src/classIcons.tsx`, 18 icônes), pas un upload libre, pas de
+  validation de valeur côté backend. Utilisé par `DiagramPage`/
+  `NavigationPage` comme représentation par défaut d'un objet de cette
+  classe, après un éventuel logo d'objet (voir ci-dessous) et avant le
+  repli couleur de palette (§6.4). Détail frontend : §6.8 de
+  [05-frontend.md](05-frontend.md).
+- **Convention « logo d'objet »** (pas un champ de schéma dédié, une
+  convention de nommage) : une classe qui « a un logo » porte un attribut
+  réservé nommé `logo`, type `image`, domaine `display` (ex. classe
+  `serveur` de `model/itil_cmdb.json`) ; la plomberie est celle d'un
+  attribut `image` ordinaire (section ci-dessus), avec en plus la
+  possibilité de *référencer* le fichier déjà stocké d'un autre objet
+  plutôt que d'uploader de nouveaux octets (voir §4.6 de
+  [04-api-backend.md](04-api-backend.md)).
+
+⚠️ Note : les fichiers
 `model/personnes.json` et `model/reseau.json` fournis contiennent une clé
 `"$schema": "schema.json"` au niveau racine, qui n'est pas déclarée dans
 `model/schema.json` — si la validation était un jour activée, ces fichiers

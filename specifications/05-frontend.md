@@ -174,6 +174,12 @@ Wrapper `fetch` minimal (`fetchJson`), pas d'Axios, erreurs levées comme
 | `apiWriteObject(data)` | `POST /api/write/object` |
 | `apiWriteAttribute(cls, id, attribute, value)` | `PUT /api/write/attribute/:cls/:id/:attribute/:value` — ⚠️ définie mais jamais appelée dans le code frontend actuel |
 | `apiInit()` | `POST /api/init` |
+| `apiWriteObjectCreateMultipart(...)` | `POST /api/write/object` (`multipart/form-data`, création atomique objet + fichiers, ajout Mark 3 action 3) |
+| `apiWriteObjectFile(objectId, attribute, file)` | `POST /api/write/object/:id/file/:attribute` (ajout Mark 3 action 3) |
+| `apiReadObjectFileBlob(objectId, attribute, version?)` | `GET /api/read/object/:id/file/:attribute[?version=N]` (ajout Mark 3 action 3) |
+| `apiSetObjectFileReference(...)` | `POST /api/write/object/:id/file/:attribute/reference` (ajout Mark 3 action 4) |
+| `apiListLogos()` | `GET /api/logos` (ajout Mark 3 action 4) |
+| `apiClassIconUrl(metaClass, cls)` | construit l'URL `GET /api/class_icon/:meta_class/:class` (pas de `fetch`, utilisée directement comme `src`/`symbol`, ajout Mark 3 action 4) |
 
 ## 6.7 Récapitulatif des anomalies frontend
 
@@ -195,3 +201,69 @@ Wrapper `fetch` minimal (`fetchJson`), pas d'Axios, erreurs levées comme
 - Le toggle lecture seule (RO/RW) et les thèmes sont des états purement
   côté client, non persistés et sans portée sur l'API (aucune autorisation
   réelle n'est appliquée côté serveur).
+
+## 6.8 Fichiers, logos, icônes de classe (ajout 2026-11-21, `plan-mark3.md` actions 3-4)
+
+**Rendu des types `file`/`image`/`csv` (`pages/NavigationPage.tsx`)** —
+trois branches de rendu dédiées (`FileAttributeValueDisplay`), en plus des
+branches déjà existantes `joint-1-1`/`joint-1-n` (§6.2) :
+- `file`, et `image` au format `svg` : nom de fichier + bouton
+  téléchargement seul (`FileDownloadButton`, fetch authentifié via
+  `apiReadObjectFileBlob` + `URL.createObjectURL`) — **jamais d'aperçu
+  `<img>` pour un SVG**, cohérent avec la décision de sécurité backend
+  (toujours servi en `Content-Disposition: attachment`, §4.6 de
+  [04-api-backend.md](04-api-backend.md)).
+- `image` aux formats jpg/jpeg/png : aperçu inline (`ImagePreview`, `<img>`
+  sur un object URL résolu par fetch authentifié) **et** bouton
+  téléchargement.
+- `csv` : tableau HTML en lecture seule (`CsvPreviewTable`, parsing client
+  du blob texte selon `attr.separator` défini sur l'attribut, défaut `,`)
+  **et** bouton téléchargement du fichier brut. Pas d'édition de cellule —
+  l'édition reste le remplacement du fichier entier via upload.
+- `parseFilePointer` reconnaît les deux formats de pointeur (direct
+  `"<version>:<nom>"` et référence `"ref:<classe>:<object_id>:<attribut>:
+  <version>:<nom>"`, §4.6) en ne découpant que les `:` significatifs, le
+  nom de fichier pouvant lui-même contenir `:`.
+- Formulaire de création/modif : `<input type="file">` pour les trois
+  types, remplaçant la valeur existante à la sauvegarde (nouvelle
+  version). Pas d'édition inline de cellule pour ces types (clic ignoré,
+  seul le formulaire permet l'upload).
+
+**Logo d'objet** — l'attribut réservé `logo` (type `image`, domaine
+`display`) a un traitement spécifique dans le formulaire de
+`NavigationPage.tsx` : aperçu **cliquable** (clic ouvre directement
+l'`<input type="file">` caché, pas de bouton séparé, via une ref par
+attribut) et sélecteur additionnel « …ou réutiliser un logo existant »
+alimenté par `GET /api/logos` (`apiListLogos`), qui construit une référence
+via `POST .../file/<attribute>/reference` (`apiSetObjectFileReference`)
+plutôt que de ré-uploader les octets.
+
+**Icônes de classe (`frontend/src/classIcons.tsx`)** — jeu fixe de **18**
+icônes SVG inline embarquées (`CLASS_ICONS`, viewBox uniforme `0 0 24 24`,
+trait gris fixe), encodées en data URI (`classIconDataUri`) pour un usage
+direct comme symbole ECharts ou `<img src=...>` sans requête réseau.
+Sélecteur en grille dans `pages/ConfigurationPage.tsx` (une classe choisit
+au plus une icône via le champ `icon`, bouton « aucune icône » pour
+revenir au fallback).
+
+**Rendu logo/icône dans `pages/DiagramPage.tsx`** — ordre de priorité
+explicite pour le `symbol` d'un nœud :
+1. **Logo résolu de l'objet** (attribut `logo`, type `image`) — résolu par
+   fetch **authentifié** (`apiReadObjectFileBlob`, même pattern que
+   `NavigationPage.tsx`) transformé en object URL mis en cache
+   (`logoBlobCache`), jamais une URL brute `image://<url>` : un `<img>`/
+   ECharts ne peut pas attacher de header `Authorization: Bearer`, et le
+   RBAC tenant est *fail-closed* (`rbac.py`) — un logo tenant-scoped serait
+   donc invisible sans ce détour. Tant que la résolution asynchrone n'est
+   pas terminée, le symbole retombe sur le niveau suivant (pas de case
+   cassée affichée en attendant).
+2. **Icône de classe choisie manuellement** (`classDef.icon`,
+   `findClassIcon` + `classIconDataUri`, `frontend/src/classIcons.tsx`).
+3. **Icône de secours générée par le backend**
+   (`GET /api/class_icon/<meta_class>/<class>`, `apiClassIconUrl`, §4.6).
+4. **Couleur de palette par classe** (§6.4, fallback final — aucun
+   `symbol` n'est alors assigné, ECharts applique son rendu de nœud par
+   défaut coloré).
+Le garde-fou d'auto-réparation backend (§4.6) s'applique aussi ici : un
+logo cassé ne bloque jamais le rendu, il retombe simplement sur le niveau
+de priorité suivant à l'affichage suivant.

@@ -655,6 +655,127 @@
   ce champ ; à revoir si/quand un vrai mécanisme de migration est
   construit.
 
+## 6. [Dette documentaire] Synchronisation `specifications/` avec les actions 1-5
+
+> Demande utilisateur (2026-11-21) : « regarde entre les specs et plan mark
+> 3 est ce qu'on est à jour » puis, après constat d'un retard par audit
+> (hors-agent) : « ajoute ce qu'il faut au plan pour être à jour et
+> corrige specs si besoin ».
+
+- **Problème** : `specifications/` ne reflétait pas tout ce qui a été livré
+  par les actions 1-5 de ce plan, constaté précisément en comparant le code
+  réel (`model/schema.json`, `model/itil_cmdb.json`, `backend/routes_files.py`,
+  `backend/class_icon.py`, `backend/routes_admin.py`,
+  `backend/file_validation.py`, `backend/app.py`, `frontend/src/pages/
+  NavigationPage.tsx`, `frontend/src/pages/DiagramPage.tsx`,
+  `frontend/src/pages/ConfigurationPage.tsx`, `frontend/src/classIcons.tsx`)
+  aux 5 fichiers `specifications/*.md` concernés :
+  - `specifications/03-modele-donnees.md` : aucune mention des types
+    d'attribut `file`/`image`/`csv` (ni du champ `separator` propre à
+    `csv`), du champ `icon` sur une classe, de la convention d'attribut
+    réservé `logo`, ni du champ top-level `version` d'un document modèle
+    (action 5).
+  - `specifications/04-api-backend.md` : aucune section sur
+    `backend/routes_files.py` — ni les 2 routes d'upload/lecture de
+    fichier, ni la route de référence de logo, ni `GET /api/logos`, ni
+    `GET /api/class_icon/<meta_class>/<class>`, ni
+    `POST /api/admin/sweep_orphan_files`, ni les 2 formats de pointeur
+    (direct et `ref:`), ni le garde-fou d'auto-réparation.
+  - `specifications/05-frontend.md` : aucune mention du rendu des types
+    `file`/`image`/`csv` dans `NavigationPage.tsx` (téléchargement, aperçu
+    `<img>`, tableau csv, SVG jamais inline), du logo cliquable + sélecteur
+    de réutilisation, du jeu de 18 icônes `classIcons.tsx` + sélecteur
+    grille dans `ConfigurationPage.tsx`, ni de l'ordre de priorité
+    logo/icône/couleur dans `DiagramPage.tsx` ; tableau du client API
+    (§6.6) incomplet (6 fonctions manquantes).
+  - `specifications/02-architecture.md` : aucune description du découpage
+    de `backend/app.py` en Blueprints (action 1, ni les modules ajoutés
+    par les actions 2-4).
+  - `specifications/07-roadmap.md` : §10.7/§10.8 avaient des en-têtes
+    « tranché »/« conçu » au lieu de « fait », et leur corps décrivait
+    encore les points ouverts/options envisagées d'origine plutôt que les
+    décisions finales réellement prises (sécurité SVG, fallback svgrepo,
+    format de pointeur `ref:`, sweep des orphelins, 2 itérations de
+    bugfix) ; la ligne de statut de fin de section 10 datait du
+    2026-11-13 et disait encore les actions 3/4 « à faire ».
+- **Correctif** : 5 fichiers `specifications/*.md` corrigés, basés sur une
+  lecture du code réel (pas seulement de ce plan) :
+  1. `specifications/03-modele-donnees.md` : nouvelle section « 3.2bis
+     Extensions Mark 3 » — types `file`/`image`/`csv` et `separator` sur
+     `csv`, champ `icon` sur une classe, convention d'attribut réservé
+     `logo` (exemple concret : classe `serveur` de `model/itil_cmdb.json`),
+     champ top-level `version`.
+  2. `specifications/04-api-backend.md` : nouvelle section « 4.6 Fichiers
+     (file/image/csv), logos et icônes de classe » — les 2 formats de
+     pointeur, `POST`/`GET .../file/<attribute>`, `POST
+     .../file/<attribute>/reference`, `GET /api/logos`,
+     `GET /api/class_icon/<meta_class>/<class>` (non filtrée tenant,
+     expliqué), `POST /api/admin/sweep_orphan_files` (global-admin,
+     référence-consciente), garde-fou d'auto-réparation. §4.4/§4.5
+     (champ `version`, action 5) non touchés, déjà corrects.
+  3. `specifications/05-frontend.md` : nouvelle section « 6.8 Fichiers,
+     logos, icônes de classe » — rendu des 3 branches de type dans
+     `NavigationPage.tsx`, logo cliquable + sélecteur de réutilisation,
+     `classIcons.tsx` (18 icônes vérifiées) + sélecteur grille dans
+     `ConfigurationPage.tsx`, ordre de priorité logo > icône classe >
+     icône fallback backend > couleur dans `DiagramPage.tsx` (fetch
+     authentifié) ; tableau §6.6 complété (6 fonctions `api.ts`
+     manquantes).
+  4. `specifications/02-architecture.md` — **deux corrections distinctes** :
+     - Nouvelle section « 2bis » décrivant le découpage réel de
+       `backend/app.py` en 5 Blueprints et les modules ajoutés par les
+       actions 1 à 4 (`auth.py`, `rbac.py`, `db.py`, `routes_read.py`,
+       `routes_write.py`, `routes_init.py`, `routes_admin.py`,
+       `routes_files.py`, `class_icon.py`, `file_storage.py`,
+       `file_validation.py`).
+     - **Correction séparée, sans rapport avec Mark 3** : ce fichier
+       contenait des passages datés prédatant même Mark 1 (« sans
+       authentification », « l'API est entièrement ouverte », « cet
+       import échoue » pour `gunicorn app:app`) — un rattrapage
+       antérieur découvert au passage, pas une régression ni un trou
+       de Mark 3. Corrigés pour refléter l'état réel vérifié dans le
+       code : authentification Keycloak active (`backend/auth.py`), RBAC
+       multi-tenant actif (`backend/rbac.py`), `backend/app.py` s'importe
+       et démarre normalement sous gunicorn.
+  5. `specifications/07-roadmap.md` : §10.7/§10.8 passés de
+     « tranché »/« conçu » à « fait », corps complété par un bloc
+     « décisions finales retenues » (sécurité SVG = attachment
+     systématique jamais sanitizé, fallback svgrepo devenu permanent,
+     format de pointeur `ref:`, `sweep_orphan_files`, 3 bugfix post-revue
+     croisée des actions 3/4) ; ligne de statut de fin de section 10 mise
+     à jour (2026-11-21, actions 1-5 toutes closes, action 6 ajoutée).
+     §10.9 (champ `version`, action 5) **non ajouté** : jugé redondant,
+     §4.4/§4.5 de `04-api-backend.md` documentent déjà ce champ en détail
+     et §3.2bis de `03-modele-donnees.md` le couvre côté schéma.
+- **Effort** : faible (doc only, aucun fichier backend/frontend/model
+  modifié — lecture seule pour vérifier la forme réelle).
+- **Fichiers** : `plan-mark3.md`, `specifications/02-architecture.md`,
+  `specifications/03-modele-donnees.md`, `specifications/04-api-backend.md`,
+  `specifications/05-frontend.md`, `specifications/07-roadmap.md`.
+- **Statut** : ✅ fait, en 2 itérations suite à revue croisée.
+  **Itération 1** (2026-11-21, `worker`) : Chaque point corrigé relu
+  contre le code source réel cité ci-dessus (pas seulement contre ce plan) :
+  `model/schema.json`/`model/itil_cmdb.json` pour §3.2bis ;
+  `backend/routes_files.py`/`class_icon.py`/`routes_admin.py`/
+  `file_validation.py`/`routes_read.py` pour §4.6 ; `frontend/src/pages/
+  NavigationPage.tsx`/`DiagramPage.tsx`/`ConfigurationPage.tsx`/
+  `classIcons.tsx`/`api.ts` pour §6.8 ; `backend/app.py`/`auth.py`/`rbac.py`
+  et un `ls backend/` réel pour la section 2bis. Aucun comportement de
+  code modifié (contrainte respectée).
+  **Itération 2** (2026-11-21, `worker`), suite revue croisée
+  pessimiste/candide — 1 bloquant + 2 mineurs corrigés : (a) bloquant —
+  `specifications/02-architecture.md` réécrivait EN PLACE 3 phrases de
+  l'audit figé (§0) avec de longs blocs ⚠️, violant la convention
+  « instantané figé » de `specifications/README.md` ; phrases originales
+  restaurées telles quelles, remplacées par un renvoi court en italique
+  vers `07-roadmap.md` §10.2/§10.3 (la section 2bis, additive, non
+  touchée) ; (b) titre de cette action normalisé au gabarit `## 6. [Tag]
+  ...` (était `## Action 6 : [Tag] ...`) ; (c) §4.6 de
+  `04-api-backend.md` sur `sweep_orphan_files` corrigé : contrôle
+  `403`/`ctx.is_global_admin` en handler, pas de pré-filtrage
+  `require_auth` (`401`) comme `/api/purge` — mécanisme différent,
+  résultat final identique.
+
 ## Récapitulatif d'avancement
 
 > Tableau à tenir à jour en même temps que le champ **Statut** de chaque
@@ -667,3 +788,4 @@
 | 3 | Types d'attribut "fichier", "image" et "csv" | ✅ fait |
 | 4 | Logo surchargeable par objet et icône par défaut par classe | ✅ fait |
 | 5 | Versionnage des fichiers modèle (préparation migrations) | ✅ fait |
+| 6 | [Dette documentaire] Synchronisation specifications/ avec actions 1-5 | ✅ fait |

@@ -222,3 +222,122 @@ modifier le code ni la config. Pour chaque fichier `*.json` **sauf
   alphabétique) pour ne pas casser le frontend existant
   (`ConfigurationPage.tsx` fait `res.loaded.join(', ')`) ; `versions` est
   additif, une entrée par meta-classe effectivement chargée.
+
+## 4.6 Fichiers (`file`/`image`/`csv`), logos et icônes de classe (ajout 2026-11-21, `plan-mark3.md` actions 3-4)
+
+Routes du Blueprint `backend/routes_files.py` (sauf mention contraire),
+consommant `backend/file_storage.py` (action 2) et
+`backend/file_validation.py`. Le contenu des attributs `file`/`image`/`csv`
+ne transite jamais par le JSON générique de `POST /api/write/object`/
+`PUT /api/write/attribute/...` : ces deux routes rejettent explicitement
+(`400`) toute tentative d'écrire une valeur sur un attribut de ce type
+(`routes_write.py`), afin qu'un appelant ne puisse jamais injecter un
+pointeur arbitraire ne correspondant à aucun fichier réellement stocké.
+`POST /api/write/object` accepte en plus, depuis l'action 3 itération 2, un
+corps `multipart/form-data` (détection sur `request.content_type`) pour
+créer **atomiquement** un objet et un ou plusieurs de ses attributs
+fichier en une seule transaction (`_write_object_multipart`,
+`routes_write.py`) — réservé à la création (`id` interdit dans ce mode).
+
+**Format de pointeur** stocké dans `attribute_value.value_string` (aucune
+nouvelle colonne) :
+- direct : `"<version>:<nom_fichier>"`, résolu dans le dossier
+  `<class>/<object_id>/<attribute>/<version>/` de l'objet/attribut courant.
+- référence (action 4, réutilisation d'un logo existant) :
+  `"ref:<classe>:<object_id>:<attribut>:<version>:<nom_fichier>"`, résolu
+  dans le dossier de l'objet **source** désigné — construit exclusivement
+  par `POST .../file/<attribute>/reference` ci-dessous, toujours aplati sur
+  l'emplacement physique final (jamais une référence vers une autre
+  référence). Le nom de fichier peut lui-même contenir `:` ; seul le
+  premier (format direct) ou les 5 premiers (format `ref:`) `:` sont
+  significatifs pour le split.
+
+**`POST /api/write/object/<int:object_id>/file/<string:attribute>`**
+(`multipart/form-data`, champ `file`) — upload d'une nouvelle version pour
+un attribut `file`/`image`/`csv` d'un objet existant et non supprimé
+logiquement. Vérifie que l'attribut est bien déclaré `file`/`image`/`csv`
+sur la classe de l'objet, applique le même RBAC tenant en écriture que les
+autres routes d'écriture (`403` tenant-readonly, `403` hors périmètre
+tenant), valide le contenu (`validate_image_content`/`validate_csv_content`,
+`file_validation.py` — signature binaire jpg/png, XML bien formé racine
+`<svg>` via `defusedxml` pour svg, extension + décodabilité texte pour
+csv), écrit via `FileStorage.save(...)` (nom de fichier = `os.path.basename`
+du nom reçu), puis ferme/ouvre la ligne `attribute_value` via
+`_apply_attribute_diff` (historisation inchangée, `plan-mark2.md` action
+6.0). Réponse `200` : `{"status":"ok","object_id":int,"attribute":str,
+"version":int,"filename":str,"value":"<pointeur>"}`. Limite de taille :
+`app.config["MAX_CONTENT_LENGTH"]` (20 Mo par défaut, configurable via
+`MAX_UPLOAD_SIZE_BYTES`), appliquée par Flask/Werkzeug à toute requête.
+
+**`GET /api/read/object/<int:object_id>/file/<string:attribute>`**
+(`?version=N` optionnel, sinon version active) — même filtre de lecture
+tenant que `_build_object_payload`, résout le pointeur (direct ou `ref:`)
+vers son emplacement physique, sert les octets via `FileStorage.read(...)`.
+`Content-Type` déduit de l'extension du nom de fichier ;
+`Content-Disposition: inline` **uniquement** pour une image jpg/jpeg/png
+(attribut déclaré `image`), `attachment` dans tous les autres cas — **y
+compris systématiquement pour le SVG**, décision de sécurité actée
+(pas de sanitization du contenu SVG à l'upload, trop fragile sans lib
+dédiée ; le neutraliser en lecture en ne le servant jamais inline supprime
+le vecteur XSS stocké sans prétendre nettoyer le contenu).
+
+**Auto-réparation (self-heal)** : si le fichier résolu (direct ou via
+référence) est introuvable sur le storage au moment de la lecture **de la
+valeur active** (pas d'une version historique explicite via `?version=N`,
+qui peut légitimement avoir été purgée), `_self_heal_broken_pointer` ferme
+côté serveur la valeur active de cet attribut sur l'objet affiché
+(`valid_to = now()`, filtré sur le `value_string` exact qui a échoué pour
+éviter une course avec une réécriture concurrente) avant de répondre `404`
+— jamais l'objet source référencé, qui n'est pas en cause. Retombe ainsi
+sur le fallback normal (icône de classe puis couleur) dès l'affichage
+suivant, plutôt que de laisser un pointeur mort actif indéfiniment.
+
+**`POST /api/write/object/<int:object_id>/file/<string:attribute>/reference`**
+(corps JSON `{"class":str,"object_id":int,"attribute":str,"version":int}`)
+— réutilise le fichier déjà stocké d'un **autre** objet (typiquement un
+logo) sans dupliquer les octets : construit un pointeur `ref:...` toujours
+aplati sur l'emplacement physique final. RBAC : mêmes gardes que l'upload
+sur l'objet/la classe **destination** ; l'objet **source** doit en plus
+être visible par l'appelant (même filtre tenant que les routes de lecture)
+et le fichier source doit exister sur le storage (`400` sinon), pour
+qu'un tenant ne puisse pas référencer — et donc exposer indirectement — le
+fichier d'un objet hors de son périmètre.
+
+**`GET /api/logos`** — liste les logos actifs (attribut réservé `logo`,
+domaine `display`, type `image`), filtrée par le même `_tenant_read_filter`
+que les routes de lecture d'objet. Chaque entrée expose l'emplacement
+physique déjà aplati (classe/object_id/attribut/version réels, jamais un
+pointeur `ref:` intermédiaire), avec un `display_name` identifiant l'objet
+porteur (`"<classe> #<id>"`) — alimente le sélecteur frontend de
+réutilisation d'un logo existant (`NavigationPage.tsx`).
+
+**`GET /api/class_icon/<string:meta_class>/<string:cls>`** (Blueprint
+`routes_read.py`, génération dans `backend/class_icon.py`) — sert le SVG de
+secours généré localement (rond coloré + initiales, hash déterministe du
+nom de classe, mis en cache disque sous
+`<FILE_STORAGE_ROOT>/_class_icon_cache/`) pour une classe sans logo ni
+icône choisie manuellement (jeu fixe `frontend/src/classIcons.tsx`, voir
+§6.8 de [05-frontend.md](05-frontend.md)). `404` si la classe n'existe pas
+dans le modèle. **Volontairement non filtrée tenant** — à la différence des
+routes de lecture d'objet — car le SVG généré ne dépend que du **nom** de
+la classe, jamais d'une donnée d'objet : aucune fuite possible, cohérent
+avec les autres routes de lecture de schéma déjà non filtrées tenant
+(`GET /api/read/class`, `GET /api/read/class/<id>`,
+`GET /api/read/<meta_class>`).
+
+**`POST /api/admin/sweep_orphan_files`** (`backend/routes_admin.py`) —
+purge les fichiers présents sur `FileStorage` mais jamais indexés par une
+ligne `attribute_value` (crash process entre écriture disque et commit).
+Réservé strictement à `global-admin` : contrôle fait dans le handler via
+`ctx.is_global_admin` (`403` si non admin, y compris anonyme) — à la
+différence de `/api/purge` qui est pré-filtré par `require_auth` (`401` si
+aucun token). **Référence-consciente** : un fichier n'est supprimé que
+s'il n'existe NI un pointeur direct propriétaire NI un pointeur `ref:...`
+porté par n'importe quel autre objet/attribut — sans cette seconde
+recherche, purger l'objet qui a initialement reçu l'upload casserait le
+logo de tout objet qui le référence encore. Réponse `200` :
+`{"status":"ok","purged_count":int,"purged":[{"class":str,"object_id":int,
+"attribute":str,"version":int,"filename":str}, ...]}`. Dette assumée
+documentée dans le code : une requête SQL par fichier scanné, sans commit
+intermédiaire — acceptable au volume actuel, à traiter avant un volume
+important (voir aussi §10.8 de [07-roadmap.md](07-roadmap.md)).

@@ -27,6 +27,60 @@
 - Aucune authentification, autorisation ou session n'existe nulle part dans
   le code (ni backend ni frontend) : l'API est entièrement ouverte.
 
+*(État réel actuel, hors scope de cet instantané figé — voir
+[07-roadmap.md](07-roadmap.md) §10.2/§10.3 : authentification Keycloak
+(`backend/auth.py`) et RBAC multi-tenant (`backend/rbac.py`) actifs depuis
+`plan-mark1.md` actions 7b et 11. Voir « Découpage en Blueprints »
+ci-dessous pour la structure à jour de ces modules.)*
+
+## 2bis. Découpage de `backend/app.py` en Blueprints (ajout 2026-11-21, `plan-mark3.md` actions 1-4)
+
+`backend/app.py` n'est plus un fichier plat (c'était le cas à l'audit
+initial, §0) : depuis `plan-mark3.md` action 1, c'est un point d'entrée
+mince qui construit `app = Flask(__name__)`, fixe `app.config
+["MAX_CONTENT_LENGTH"]` (limite d'upload, 20 Mo par défaut, configurable via
+`MAX_UPLOAD_SIZE_BYTES` — action 3, voir §10.1/§10.8), enregistre
+`app.before_request(require_auth)` et `app.teardown_appcontext(close_db)`
+par appel explicite, puis enregistre 5 Blueprints dans cet ordre (sans
+dépendance d'ordre vis-à-vis de `before_request`, qui s'applique à toutes
+les routes quel que soit l'ordre d'enregistrement) :
+`routes_read.read_bp`, `routes_write.write_bp`, `routes_init.init_bp`,
+`routes_admin.admin_bp`, `routes_files.files_bp`. Modules du dossier
+`backend/` et leur rôle :
+- `auth.py` : hook d'authentification Keycloak (`require_auth`,
+  `get_jwk_client`) — voir ci-dessus.
+- `rbac.py` : `AuthContext`, `get_auth_context`, filtrage/validation
+  tenant (`_tenant_read_filter`, `_check_class_tenant_write_permission`,
+  etc.).
+- `db.py` : `get_db`, `close_db`, `load_schema`.
+- `routes_read.py` (Blueprint `read_bp`) : tous les `GET /api/read/...`,
+  dont `GET /api/class_icon/<meta_class>/<class>` (action 4).
+- `routes_write.py` (Blueprint `write_bp`) : `POST/PUT /api/write/...`,
+  `DELETE /api/delete/object/<id>`, dont la détection multipart de
+  `POST /api/write/object` (création atomique objet + fichiers, action 3
+  itération 2, `_write_object_multipart`).
+- `routes_init.py` (Blueprint `init_bp`) : `POST /api/init`.
+- `routes_admin.py` (Blueprint `admin_bp`) : purge/suppression de schéma
+  (action Mark 2), et depuis l'action 3 `POST /api/admin/sweep_orphan_files`
+  (voir §4.6 de [04-api-backend.md](04-api-backend.md)).
+- `routes_files.py` (Blueprint `files_bp`, action 3-4) : routes de lecture/
+  écriture des attributs `file`/`image`/`csv` et des références de logo
+  (détail complet : §4.6 de [04-api-backend.md](04-api-backend.md)).
+- `class_icon.py` (action 4) : génération de l'icône de secours SVG par
+  classe (rond + initiales), consommée par `routes_read.py`.
+- `file_storage.py` (action 2) : interface `FileStorage` (ABC) +
+  `LocalFileStorage`, stockage à plat versionné des fichiers d'attribut.
+- `file_validation.py` (action 3) : validation de contenu (`image`/`csv`)
+  et écriture sûre (`save_file_or_400`), partagées entre `routes_files.py`
+  et `routes_write.py`.
+
+Chaque `routes_*.py` fait `import app` en tête de module et appelle
+`app.get_db()`/`app.get_auth_context()` à l'intérieur des corps de
+fonctions (jamais au niveau module) : permet aux tests de monkeypatcher
+directement `miami_app.get_db`/`miami_app.get_auth_context`, sans import
+circulaire constaté. Détail complet (vérifications, tests, dettes
+assumées) : `plan-mark3.md` action 1.
+
 ## 5. Flux de démarrage
 
 1. `docker-compose up -d` :
@@ -47,6 +101,11 @@
      `./model` en volumes, et lance `gunicorn --bind 0.0.0.0:8000 --reload
      app:app`. ⚠️ Dans l'état actuel du code, cet import échoue (voir §0) —
      le serveur ne démarre pas réellement.
+
+     *(État réel actuel, hors scope de cet instantané figé — voir
+     [07-roadmap.md](07-roadmap.md) §10.2/§10.3 : `backend/app.py` démarre
+     normalement sous `gunicorn ... app:app` depuis `plan-mark1.md`, voir
+     « Découpage en Blueprints » ci-dessous.)*
    - **`frontend`** se construit depuis `frontend/Dockerfile` (Node 20
      alpine + `npm install`), démarre après `backend` (ordre de démarrage
      seulement, pas de healthcheck), lance `npm run dev` (serveur Vite,
