@@ -1084,8 +1084,8 @@
 - **Fichiers** : `specifications/07-roadmap.md` (§10.12, découpage déjà
   écrit) ; fichiers d'implémentation réels à déterminer à
   l'implémentation (rien n'est codé).
-- **Statut** : ⬜ à faire — priorité 4, découpage en sous-actions à
-  valider avant implémentation, choix utilisateur 2026-11-22.
+- **Statut** : 🔀 scindée (2026-11-22) — voir note ci-dessous et actions
+  10a-10d. N'est plus directement actionnable telle quelle.
 
 > **Scission actée** (2026-11-22) : découpage §10.12 validé. Cette
 > action 10 est scindée en **10a** (modèle de données dashboard/tab),
@@ -1108,14 +1108,32 @@
   `model/dashboard.json`), **pas** de table applicative dédiée. Deux
   classes : `dashboard` (attribut `name`) et `tab` (attributs `name`,
   `dashboard` en `joint-1-1` vers la classe `dashboard`,
-  `target_meta_class` en `string` libre décrivant la meta-classe/classe
-  à afficher — pas encore de rendu ni de filtre, cf. 10d). Même principe
-  à retenir si la question se repose pour l'action 11 (stockage de la
-  config de binding).
+  `target_meta_class` **et** `target_class` en `string` libres décrivant
+  la meta-classe et la classe précise à afficher — deux champs, pas un
+  seul, car une meta-classe peut porter plusieurs classes (ex. `cmdb` :
+  7 classes, `datasource` : 2) et `target_meta_class` seul ne suffirait
+  pas à désambiguïser laquelle afficher ; pas encore de rendu ni de
+  filtre, cf. 10d. Même principe à retenir si la question se repose
+  pour l'action 11 (stockage de la config de binding).
 - **Effort** : faible/moyen (un seul fichier modèle, pas de code
   backend nouveau, pattern déjà connu).
 - **Fichiers** : `model/dashboard.json`.
-- **Statut** : 🔄 en cours.
+- **Statut** : ✅ fait (2026-11-22, `worker`/`testeur`/`pessimiste`/
+  `candide`/`testeur-global`). Meta-classe `dashboard` créée (classes
+  `dashboard`/`tab`), validée contre `model/schema.json`
+  (`jsonschema.Draft7Validator`), aucun code backend nécessaire ni
+  touché — confirmé par grep exhaustif (`routes_init.py` charge tout
+  `model/*.json` de façon générique, aucune whitelist/blacklist de
+  meta-classe). `target_class` ajouté en cours de revue (candide +
+  pessimiste ont indépendamment signalé que `target_meta_class` seul
+  était insuffisant pour désambiguïser une meta-classe à plusieurs
+  classes). Tests : suite complète 235/235 ; round-trip réel via l'API
+  (pas que pytest) — objet `dashboard` #149 (`name=Monitoring`) et objet
+  `tab` #151 (`name=Serveurs`, `dashboard` → joint-1-1 vers #149,
+  `target_meta_class=datasource`, `target_class=datasource_prometheus`)
+  créés et relus correctement, apparition confirmée dans `loaded` après
+  `/api/init` ; objets laissés en DB (démo/référence, pas de cleanup).
+  `testeur-global` : stack up, aucune régression.
 
 ## 10b. [Nouvelle fonctionnalité] IHM lecture seule d'un dashboard existant
 
@@ -1131,7 +1149,68 @@
 - **Effort** : moyen à élevé (nouveau frontend, dépend de 10a livré).
 - **Fichiers** : `frontend/src/` (composants à déterminer à
   l'implémentation).
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-22, 2 itérations). Fichiers :
+  nouveau `frontend/src/pages/DashboardPage.tsx` (page top-level lecture
+  seule, liste les dashboards via `apiReadObjects`/`apiReadObject`
+  génériques — pas de nouvelle route backend), câblage
+  `frontend/src/components/Navbar.tsx` (nouveau bouton "Dashboard",
+  sans gating RBAC, cohérent avec le bouton "Diagramme" existant),
+  `frontend/src/App.tsx` (nouvelle branche de rendu),
+  `frontend/src/components/Sidebar.tsx` (1 ligne de type élargie,
+  déviation de périmètre signalée par le worker et jugée acceptable par
+  l'orchestrateur — pure signature TS, aucune logique nouvelle).
+  Logique : auto-sélection si un seul dashboard, sélecteur si
+  plusieurs, état vide si aucun ; tabs d'un dashboard retrouvés par
+  filtre côté client sur l'attribut joint-1-1 `dashboard` (même
+  principe que `getParentIds`/`resolveDisplayName` de
+  `NavigationPage.tsx`, réimplémenté localement, composant
+  indépendant) ; tab actif affiche `target_class`/`target_meta_class`
+  en texte brut, aucun chargement des objets de la classe cible (hors
+  scope, action 10d) ; aucun appel write/delete (lecture seule
+  stricte). Itération 1 (worker) : implémentation initiale + build vite
+  (591 modules, 0 erreur) + test manuel réel via CDP headless chrome
+  sur la stack docker-compose vivante (login testuser/testuser123,
+  dashboard #149 Monitoring + tab #151 Serveurs,
+  target_meta_class=datasource/target_class=datasource_prometheus,
+  rendu correct). `testeur` (itération 1) : 7/7 PASS — build, grep
+  absence write/delete, cas nominal #149/#151, cas limite dashboard
+  orphelin #138/tab #140 (sans attribut target_class, objet pré-10a)
+  sans crash ni erreur console. `candide` : convergence totale avec
+  l'implémentation (même choix structurants : page top-level, pas de
+  nouvelle route, filtre client par joint_id, gestion de l'attribut
+  absent) — aucun angle mort trouvé, divergences relevées purement
+  cosmétiques sans impact. `pessimiste` (itération 1) : 1 point
+  bloquant confirmé — `DashboardPage.tsx` utilisait `Promise.all` (pas
+  `Promise.allSettled`) pour charger le détail de tous les
+  dashboards/tabs ; un seul objet en échec (ex. suppression
+  concurrente) faisait planter TOUTE la page via le `catch`/`setError`
+  global, alors que `NavigationPage.tsx` utilise `Promise.allSettled` à
+  6 endroits précisément pour éviter ce cas. Point non bloquant noté
+  comme limite connue : chargement de TOUS les dashboards/tabs du
+  système sans narrowing (contrairement à `NavigationPage.tsx` qui
+  filtre par sidebar) — coût non borné si le volume grossit, acceptable
+  au volume actuel, limite documentée (pattern déjà vu aux actions
+  3/4/7/9/13). Itération 2 (worker, fix ciblé) : remplacement des 2
+  `Promise.all` par `Promise.allSettled` + filtre `status ===
+  'fulfilled'` (objets en échec ignorés silencieusement, catch global
+  réservé à l'échec de `apiReadObjects()` seul) — pattern aligné sur
+  `NavigationPage.tsx`. Build vite re-confirmé (0 erreur),
+  non-régression cas nominal #149/#151 reconfirmée en réel. `testeur`
+  (retest itération 2) : 5/5 PASS (build, cas nominal via curl
+  authentifié, cas limite orphelin, absence write/delete) ; simulation
+  réelle d'un échec individuel d'objet non testable (CDP bloqué par le
+  sandbox cette fois, sans lien avec la stack), tranchée par relecture
+  de code (non ambiguë : `allSettled` + filtre `fulfilled` + catch
+  externe isolé = propagation impossible). `pessimiste` (revalidation) :
+  fix confirmé correct, plus bloquant, aucun nouveau problème
+  introduit. `testeur-global` : OK — 234/235 pytest backend (1 échec
+  pré-existant hors scope, `test_file_attribute_type.py`,
+  posix/windows backslash, fichier non touché par 10b) ; build
+  frontend : les 4 fichiers de l'action 10b compilent sans erreur, 3
+  erreurs TS pré-existantes dans `DiagramPage.tsx` déjà documentées
+  (ligne ~1339 du plan, non liées à 10b) ; dashboard bout-en-bout
+  confirmé via API réelle (objets #138/#140/#149/#151), endpoints
+  voisins non régressés, Keycloak/Prometheus up.
 
 ## 10c. [Nouvelle fonctionnalité] Édition des tabs dans l'IHM
 
@@ -1146,16 +1225,95 @@
 - **Effort** : moyen à élevé (nouveau frontend, formulaires CRUD).
 - **Fichiers** : `frontend/src/` (composants à déterminer à
   l'implémentation).
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-22, `worker`/`testeur`/`pessimiste`/
+  `candide`/`testeur-global`). Livré en 2 itérations (1 correction
+  bloquante suite revue croisée). Itération 1 : CRUD ajouté dans
+  `frontend/src/pages/DashboardPage.tsx` (passé de ~177 à ~300 lignes,
+  tout en un seul composant, pas de sous-composant dédié) au-dessus du
+  rendu lecture seule existant (10b) : nouvelle prop `readOnly: boolean`
+  câblée depuis `frontend/src/App.tsx` (1 ligne, même pattern que
+  `NavigationPage`/`DiagramPage`), toutes les sections de mutation
+  cachées (pas juste désactivées) sous `{!readOnly && (...)}` ;
+  création dashboard (name) via `apiWriteObject` ; création/édition de
+  tab (name/target_meta_class/target_class, `dashboard` en
+  `{joint_id:...}`) via `apiWriteObject`, champs texte vides omis du
+  payload (convention `NavigationPage.tsx` : un attribut omis ferme la
+  valeur active côté serveur) ; suppression de tab via
+  `window.confirm` + `apiDeleteObject` ; `loadData()` extrait du
+  montage initial pour être réutilisé après chaque mutation, mécanisme
+  `Promise.allSettled` de 10b préservé (pas de régression vers
+  `Promise.all`) ; état `mutationError` dédié et transitoire, distinct
+  de l'erreur de chargement initial, jamais avalé silencieusement. Pas
+  de CRUD de dashboard au-delà de la création (modifier/supprimer un
+  dashboard hors scope de cette action). Pas de nouvelle route backend
+  (routes génériques `/api/write/object`, `/api/delete/object/<id>`
+  réutilisées, cohérent avec 10a/10b). Pas de branche à ajouter dans
+  `NavigationPage.tsx` (convention inline-edit des actions 7/9/13 jugée
+  non pertinente ici : `DashboardPage` a son propre rendu
+  pills/formulaire dédié, pas le tableau générique d'attributs).
+  Bug bloquant trouvé en revue croisée (pessimiste), confirmé par
+  l'orchestrateur en lecture de code : `handleSaveTab` lisait
+  `selectedDashboardId` (state live) au lieu d'un snapshot pris à
+  l'ouverture du formulaire — changer le `<select>` Dashboard pendant
+  qu'un formulaire d'édition de tab restait ouvert reparentait
+  silencieusement ce tab vers le mauvais dashboard à l'enregistrement,
+  sans confirmation ni avertissement. Itération 2 (fix) :
+  `TabFormState` porte désormais `dashboardId: number`, snapshoté à
+  l'ouverture du formulaire (création : depuis `selectedDashboardId` ;
+  édition : depuis l'attribut `dashboard` du tab lui-même, plus
+  robuste) ; `handleSaveTab` utilise exclusivement
+  `tabForm.dashboardId`, plus jamais le state live ; un `useEffect` sur
+  `selectedDashboardId` ferme automatiquement le formulaire ouvert si
+  la sélection de dashboard change (skip du montage initial) ; un clic
+  sur une pill d'un autre tab ferme aussi le formulaire d'édition en
+  cours s'il ne correspond pas au tab cliqué. Revalidé PASS par testeur
+  et pessimiste (double verrou confirmé, scénario d'attaque original
+  rejoué impossible). Tests : build frontend (`tsc -b`/`vite build`,
+  591 modules, 0 nouvelle erreur, 3 erreurs TS pré-existantes dans
+  `DiagramPage.tsx` sans rapport) ; CRUD réel testé contre la stack
+  docker-compose vivante (`testuser`/`testuser123`) — création/édition/
+  suppression de tab et de dashboard round-trip confirmées via API
+  réelle, scénario du bug reparentage rejoué et confirmé résolu après
+  fix ; objets de démo `#138`/`#140`/`#149`/`#151` (actions 10a/10b)
+  confirmés inchangés après tous les tests. `testeur-global` : OK —
+  suite backend 235/235 (aucun fichier backend touché par cette
+  action), build frontend conforme, stack 6 services up, endpoints
+  voisins non régressés, démo intacte. 4 points mineurs relevés en
+  revalidation (pessimiste), non corrigés, dette acceptée (cohérent
+  avec le seuil déjà posé aux actions 7/9/13) : (1) le `useEffect` de
+  fermeture auto du formulaire sur changement de dashboard peut faire
+  perdre une saisie en cours sans avertissement (UX régressive mais pas
+  de corruption de données, préférable au bug corrigé) ; (2) le ref de
+  skip du premier rendu (`firstDashboardRenderRef`) n'est fiable que
+  parce que `selectedDashboardId` démarre à `null` et que
+  l'auto-sélection survient après un `await` — latent, pas actif, à
+  revoir si une future init synchrone non-null est introduite ; (3) le
+  clic sur une pill d'un autre tab ne ferme le formulaire que si
+  `tabForm.mode === 'edit'`, le mode `'create'` reste ouvert au
+  changement de tab sélectionné (sans risque car le dashboard ne change
+  pas dans ce cas, juste une incohérence visuelle mineure) ; (4)
+  `mutationError` n'est pas réinitialisé quand le formulaire se ferme
+  automatiquement (effet secondaire cosmétique : un message d'erreur
+  obsolète peut rester affiché). Autres points mineurs acceptés sans
+  correction (signalés en revue initiale) : `mountedRef` pas appliqué
+  dans `handleCreateDashboard`/`handleSaveTab`/`handleDeleteTab`
+  (seulement dans `loadData`) ; pas de bouton d'édition/suppression par
+  pill dans la liste des tabs (seulement pour le tab actuellement
+  actif, affiché sous le contenu) ; pas de classe CSS `btn-danger`
+  dédiée pour "Supprimer" (cohérent avec l'absence de cette classe
+  ailleurs dans le projet, style `btn-secondary` réutilisé comme pour
+  "Modifier"). Fichiers touchés : `frontend/src/pages/DashboardPage.tsx`
+  (seul fichier substantiellement modifié), `frontend/src/App.tsx`
+  (1 ligne).
 
 ## 10d. [Nouvelle fonctionnalité] Sélection des sous-objets affichés par tab
 
 > Sous-action issue de la scission de l'action 10 (§10.12), dépend de
 > 10a/10b/10c.
 
-- **Problème** : `target_meta_class` de 10a n'est qu'une string libre —
-  pas de filtre/requête configurable pour choisir quels objets afficher
-  dans un tab.
+- **Problème** : `target_meta_class`/`target_class` de 10a ne sont que
+  des strings libres — pas de filtre/requête configurable pour choisir
+  quels objets afficher dans un tab.
 - **Correctif** : mécanisme de sélection/filtre des sous-objets affichés
   (requête configurable sur la meta-classe/classe ciblée), conception
   détaillée à faire au moment de l'implémentation.
@@ -1337,10 +1495,10 @@
 | 7 | Type d'attribut select/enum | ✅ fait |
 | 8 | Type d'attribut secret/password | ✅ fait |
 | 9 | Type d'attribut datasource | ✅ fait |
-| 10 (scindée, voir 10a-10d) | Framework de dashboard/affichage configurable | 🔄 en cours |
-| 10a | Modèle de données dashboard/tab configurable | 🔄 en cours |
-| 10b | IHM lecture seule d'un dashboard existant | ⬜ à faire |
-| 10c | Édition des tabs dans l'IHM | ⬜ à faire |
+| 10 (scindée, voir 10a-10d) | Framework de dashboard/affichage configurable | 🔀 scindée |
+| 10a | Modèle de données dashboard/tab configurable | ✅ fait |
+| 10b | IHM lecture seule d'un dashboard existant | ✅ fait |
+| 10c | Édition des tabs dans l'IHM | ✅ fait |
 | 10d | Sélection des sous-objets affichés par tab | ⬜ à faire |
 | 11 | Outil d'ingestion avec binding | ⬜ à faire |
 | 12 | Réorganisation de backend/ en packages (auth, data, files, routes, tests) | ✅ fait |

@@ -4,7 +4,11 @@ import type { ClassInfo } from '../types';
 
 interface SidebarProps {
   open: boolean;
-  page: 'configuration' | 'navigation' | 'diagramme';
+  // 'dashboard' ajouté (plan-mark3.md action 10b) : uniquement pour matcher
+  // le type Page de App.tsx (qui passe `page` tel quel) - Sidebar ne
+  // branche sur aucune valeur spécifique de `page` autre que la dep du
+  // useEffect ci-dessous.
+  page: 'configuration' | 'navigation' | 'diagramme' | 'dashboard';
   selectedMetaClass: string | null;
   selectedClass: string | null;
   onSelectMetaClass: (mc: string | null) => void;

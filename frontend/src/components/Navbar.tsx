@@ -11,8 +11,8 @@ const THEME_LABELS: Record<Theme, string> = {
 };
 
 interface NavbarProps {
-  page: 'configuration' | 'navigation' | 'diagramme';
-  onPageChange: (page: 'configuration' | 'navigation' | 'diagramme') => void;
+  page: 'configuration' | 'navigation' | 'diagramme' | 'dashboard';
+  onPageChange: (page: 'configuration' | 'navigation' | 'diagramme' | 'dashboard') => void;
   readOnly: boolean;
   onToggleReadOnly: (v: boolean) => void;
   theme: Theme;
@@ -84,6 +84,14 @@ export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly,
         onClick={() => onPageChange('diagramme')}
       >
         Diagramme
+      </button>
+      {/* Dashboard (plan-mark3.md action 10b) : lecture seule, accessible à
+          tous comme Diagramme - pas de masquage RBAC particulier requis. */}
+      <button
+        className={page === 'dashboard' ? 'active' : ''}
+        onClick={() => onPageChange('dashboard')}
+      >
+        Dashboard
       </button>
       <div className="navbar-spacer" />
       <select

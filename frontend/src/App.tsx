@@ -4,9 +4,10 @@ import Sidebar from './components/Sidebar';
 import ConfigurationPage from './pages/ConfigurationPage';
 import NavigationPage from './pages/NavigationPage';
 import DiagramPage from './pages/DiagramPage';
+import DashboardPage from './pages/DashboardPage';
 import { getAuthInfo, type AuthInfo } from './auth';
 
-type Page = 'configuration' | 'navigation' | 'diagramme';
+type Page = 'configuration' | 'navigation' | 'diagramme' | 'dashboard';
 type Theme = 'dark' | 'midnight' | 'light';
 
 export default function App() {
@@ -62,6 +63,8 @@ export default function App() {
               selectedClass={selectedClass}
               readOnly={readOnly}
             />
+          ) : page === 'dashboard' ? (
+            <DashboardPage readOnly={readOnly} />
           ) : (
             <NavigationPage
               selectedMetaClass={selectedMetaClass}

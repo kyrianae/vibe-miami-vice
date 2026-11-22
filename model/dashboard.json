@@ -34,6 +34,11 @@
                     "domain": "affichage",
                     "name": "target_meta_class",
                     "type": "string"
+                },
+                {
+                    "domain": "affichage",
+                    "name": "target_class",
+                    "type": "string"
                 }
             ]
         }
