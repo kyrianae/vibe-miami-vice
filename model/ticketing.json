@@ -23,12 +23,14 @@
                 {
                     "domain": "logique",
                     "name": "statut",
-                    "type": "string"
+                    "type": "select",
+                    "values": ["ouvert", "en_cours", "resolu", "ferme"]
                 },
                 {
                     "domain": "logique",
                     "name": "priorite",
-                    "type": "string"
+                    "type": "select",
+                    "values": ["basse", "normale", "haute", "critique"]
                 },
                 {
                     "domain": "lien",

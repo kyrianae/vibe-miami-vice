@@ -54,6 +54,12 @@
                     "domain": "display",
                     "name": "logo",
                     "type": "image"
+                },
+                {
+                    "domain": "supervision",
+                    "name": "monitoring",
+                    "type": "datasource",
+                    "classes": ["datasource_prometheus"]
                 }
             ]
         },
