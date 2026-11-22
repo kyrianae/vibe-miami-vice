@@ -39,6 +39,16 @@
                     "domain": "affichage",
                     "name": "target_class",
                     "type": "string"
+                },
+                {
+                    "domain": "affichage",
+                    "name": "filter_attribute",
+                    "type": "string"
+                },
+                {
+                    "domain": "affichage",
+                    "name": "filter_value",
+                    "type": "string"
                 }
             ]
         }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { apiReadObjects, apiReadObject, apiWriteObject, apiDeleteObject } from '../api';
-import type { ObjectSummary, ObjectDetail } from '../types';
+import { apiReadObjects, apiReadObject, apiWriteObject, apiDeleteObject, apiReadMetaClass } from '../api';
+import type { ObjectSummary, ObjectDetail, AttributeDefinition } from '../types';
 
 // Action 10b (plan-mark3.md) : rendu en LECTURE SEULE d'un dashboard et de
 // ses tabs (meta-classe `dashboard`, classes `dashboard`/`tab`, créée en
@@ -9,8 +9,11 @@ import type { ObjectSummary, ObjectDetail } from '../types';
 // suppression de tab) au-dessus de ce rendu lecture seule - toutes les
 // actions d'écriture sont cachées (pas juste désactivées) quand
 // `readOnly === true`, le rendu lecture seule de 10b reste inchangé dans ce
-// cas. Le chargement dynamique des objets réellement ciblés par un tab (via
-// target_meta_class/target_class) reste hors scope (action 10d).
+// cas.
+// Action 10d : chargement réel (lazy, tab actif uniquement) des objets
+// ciblés par target_meta_class/target_class, filtre optionnel
+// filter_attribute/filter_value (égalité stricte après cast string), rendu
+// en tableau lecture seule (colonnes = attributs de target_class).
 
 interface DashboardPageProps {
   readOnly: boolean;
@@ -22,7 +25,17 @@ interface TabFormState {
   name: string;
   target_meta_class: string;
   target_class: string;
+  filter_attribute: string;
+  filter_value: string;
   dashboardId: number;
+}
+
+interface TargetObjectsState {
+  tabId: number;
+  loading: boolean;
+  error: string | null;
+  attributes: AttributeDefinition[];
+  objects: ObjectDetail[];
 }
 
 function getJointId(value: string | number | { joint_id: number } | undefined): number | null {
@@ -34,6 +47,20 @@ function getStringAttr(detail: ObjectDetail, name: string): string {
   if (!attr || attr.values.length === 0) return '';
   const v = attr.values[0];
   return typeof v === 'object' ? '' : String(v);
+}
+
+// Formatage ad hoc local (pas de réutilisation de formatValue de
+// NavigationPage.tsx, closure non extractible - cf. plan-mark3.md) : pas de
+// résolution de label, juste #<id> pour une jointure et une jointure par
+// virgule pour une liste de valeurs.
+function formatCellValue(values: (string | number | { joint_id: number })[], attrType: AttributeDefinition['type']): string {
+  if (values.length === 0) return '';
+  if (attrType === 'file') return '(fichier — non affiché ici)';
+  if (attrType === 'image') return '(image — non affichée ici)';
+  if (attrType === 'csv') return '(csv — non affiché ici)';
+  return values
+    .map((v) => (typeof v === 'object' && v !== null && 'joint_id' in v ? `#${v.joint_id}` : String(v)))
+    .join(', ');
 }
 
 export default function DashboardPage({ readOnly }: DashboardPageProps) {
@@ -51,6 +78,7 @@ export default function DashboardPage({ readOnly }: DashboardPageProps) {
 
   const [newDashboardName, setNewDashboardName] = useState('');
   const [tabForm, setTabForm] = useState<TabFormState | null>(null);
+  const [targetData, setTargetData] = useState<TargetObjectsState | null>(null);
 
   const mountedRef = useRef(true);
 
@@ -139,6 +167,60 @@ export default function DashboardPage({ readOnly }: DashboardPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDashboardId, tabs]);
 
+  const selectedTab = tabsForSelectedDashboard.find((t) => t.id === selectedTabId) || null;
+  const targetMetaClass = selectedTab ? getStringAttr(selectedTab, 'target_meta_class') : '';
+  const targetClass = selectedTab ? getStringAttr(selectedTab, 'target_class') : '';
+  const filterAttribute = selectedTab ? getStringAttr(selectedTab, 'filter_attribute') : '';
+  const filterValue = selectedTab ? getStringAttr(selectedTab, 'filter_value') : '';
+
+  // Chargement lazy des objets ciblés par le tab ACTIF uniquement (jamais
+  // les autres tabs) - déclenché par le changement de tab sélectionné ou de
+  // ses champs target_meta_class/target_class/filter_attribute/filter_value
+  // (ex. après édition du tab via handleSaveTab). Réutilise apiReadObjects()
+  // dédié (résumés légers) puis apiReadObject() uniquement pour les
+  // candidats déjà filtrés meta_class/class (RBAC tenant appliqué côté
+  // backend sur apiReadObject, rien à faire ici).
+  useEffect(() => {
+    if (selectedTabId == null || targetMetaClass === '' || targetClass === '') {
+      setTargetData(null);
+      return;
+    }
+    let cancelled = false;
+    setTargetData({ tabId: selectedTabId, loading: true, error: null, attributes: [], objects: [] });
+    (async () => {
+      try {
+        const metaClassDef = await apiReadMetaClass(targetMetaClass);
+        const classDef = metaClassDef.classes.find((c) => c.class === targetClass);
+        const summaries = await apiReadObjects();
+        const candidates = summaries.filter(
+          (o: ObjectSummary) => o.meta_class === targetMetaClass && o.class === targetClass
+        );
+        const results = await Promise.allSettled(candidates.map((o) => apiReadObject(o.id)));
+        let objects = results
+          .filter((r): r is PromiseFulfilledResult<ObjectDetail> => r.status === 'fulfilled')
+          .map((r) => r.value);
+        const attrName = filterAttribute.trim();
+        if (attrName !== '') {
+          const attrValue = filterValue.trim();
+          objects = objects.filter((o) => {
+            const attr = o.attributes.find((a) => a.name === attrName);
+            if (!attr || attr.values.length === 0) return false;
+            const raw = attr.values[0];
+            const jointId = getJointId(raw);
+            const comparable = jointId != null ? String(jointId) : String(raw);
+            return comparable === attrValue;
+          });
+        }
+        if (cancelled) return;
+        setTargetData({ tabId: selectedTabId, loading: false, error: null, attributes: classDef?.attributes ?? [], objects });
+      } catch (err) {
+        if (cancelled) return;
+        setTargetData({ tabId: selectedTabId, loading: false, error: err instanceof Error ? err.message : String(err), attributes: [], objects: [] });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedTabId, targetMetaClass, targetClass, filterAttribute, filterValue]);
+
   const handleCreateDashboard = async () => {
     const name = newDashboardName.trim();
     if (!name) return;
@@ -156,7 +238,7 @@ export default function DashboardPage({ readOnly }: DashboardPageProps) {
   const openCreateTabForm = () => {
     if (selectedDashboardId == null) return;
     setMutationError(null);
-    setTabForm({ mode: 'create', name: '', target_meta_class: '', target_class: '', dashboardId: selectedDashboardId });
+    setTabForm({ mode: 'create', name: '', target_meta_class: '', target_class: '', filter_attribute: '', filter_value: '', dashboardId: selectedDashboardId });
   };
 
   const openEditTabForm = (tab: ObjectDetail) => {
@@ -174,6 +256,8 @@ export default function DashboardPage({ readOnly }: DashboardPageProps) {
       name: getStringAttr(tab, 'name'),
       target_meta_class: getStringAttr(tab, 'target_meta_class'),
       target_class: getStringAttr(tab, 'target_class'),
+      filter_attribute: getStringAttr(tab, 'filter_attribute'),
+      filter_value: getStringAttr(tab, 'filter_value'),
       dashboardId,
     });
   };
@@ -203,6 +287,8 @@ export default function DashboardPage({ readOnly }: DashboardPageProps) {
       };
       if (tabForm.target_meta_class.trim() !== '') attributes.target_meta_class = tabForm.target_meta_class.trim();
       if (tabForm.target_class.trim() !== '') attributes.target_class = tabForm.target_class.trim();
+      if (tabForm.filter_attribute.trim() !== '') attributes.filter_attribute = tabForm.filter_attribute.trim();
+      if (tabForm.filter_value.trim() !== '') attributes.filter_value = tabForm.filter_value.trim();
 
       const payload: { id?: number; meta_class: string; class: string; attributes: Record<string, unknown> } = {
         meta_class: 'dashboard',
@@ -236,8 +322,6 @@ export default function DashboardPage({ readOnly }: DashboardPageProps) {
 
   if (loading) return <div className="card">Chargement…</div>;
   if (error) return <div className="card">Erreur : {error}</div>;
-
-  const selectedTab = tabsForSelectedDashboard.find((t) => t.id === selectedTabId) || null;
 
   return (
     <div>
@@ -323,6 +407,18 @@ export default function DashboardPage({ readOnly }: DashboardPageProps) {
                     value={tabForm.target_class}
                     onChange={(e) => setTabForm({ ...tabForm, target_class: e.target.value })}
                   />
+                  <input
+                    type="text"
+                    placeholder="filter_attribute (optionnel)"
+                    value={tabForm.filter_attribute}
+                    onChange={(e) => setTabForm({ ...tabForm, filter_attribute: e.target.value })}
+                  />
+                  <input
+                    type="text"
+                    placeholder="filter_value (optionnel)"
+                    value={tabForm.filter_value}
+                    onChange={(e) => setTabForm({ ...tabForm, filter_value: e.target.value })}
+                  />
                   <div className="btn-group" style={{ marginTop: 8 }}>
                     <button className="btn btn-primary" onClick={handleSaveTab}>Enregistrer</button>
                     <button className="btn btn-secondary" onClick={closeTabForm}>Annuler</button>
@@ -334,16 +430,50 @@ export default function DashboardPage({ readOnly }: DashboardPageProps) {
 
           {selectedTab && (
             <div style={{ marginTop: 16 }}>
-              {/* Contenu du tab : uniquement ses champs statiques
-                  (target_meta_class/target_class) en texte, pas de
-                  chargement des objets de la classe cible - sélection
-                  dynamique des sous-objets = action 10d, hors scope ici. */}
               <p>
-                Cible : classe <code>{getStringAttr(selectedTab, 'target_class') || '(non renseignée)'}</code>
-                {' '}(meta-classe <code>{getStringAttr(selectedTab, 'target_meta_class') || '(non renseignée)'}</code>)
+                Cible : classe <code>{targetClass || '(non renseignée)'}</code>
+                {' '}(meta-classe <code>{targetMetaClass || '(non renseignée)'}</code>)
+                {filterAttribute !== '' && (
+                  <> — filtre <code>{filterAttribute}</code> = <code>{filterValue}</code></>
+                )}
               </p>
+
+              {targetMetaClass !== '' && targetClass !== '' && (
+                targetData == null || targetData.tabId !== selectedTab.id ? (
+                  <p>Chargement des objets…</p>
+                ) : targetData.loading ? (
+                  <p>Chargement des objets…</p>
+                ) : targetData.error ? (
+                  <p style={{ color: 'var(--color-danger, #c0392b)' }}>
+                    Erreur de chargement des objets cibles : {targetData.error}
+                  </p>
+                ) : targetData.objects.length === 0 ? (
+                  <p>Aucun objet trouvé.</p>
+                ) : (
+                  <div className="table-container">
+                    <table>
+                      <thead>
+                        <tr>
+                          {targetData.attributes.map((a) => <th key={a.name}>{a.name}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {targetData.objects.map((o) => (
+                          <tr key={o.id}>
+                            {targetData.attributes.map((a) => {
+                              const attrVal = o.attributes.find((x) => x.name === a.name);
+                              return <td key={a.name}>{formatCellValue(attrVal?.values ?? [], a.type)}</td>;
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              )}
+
               {!readOnly && (
-                <div className="btn-group">
+                <div className="btn-group" style={{ marginTop: 12 }}>
                   <button className="btn btn-secondary" onClick={() => openEditTabForm(selectedTab)}>Modifier</button>
                   <button className="btn btn-secondary" onClick={() => handleDeleteTab(selectedTab)}>Supprimer</button>
                 </div>

@@ -1321,7 +1321,85 @@
   portée la plus ouverte des 4 sous-actions).
 - **Fichiers** : `frontend/src/` et potentiellement `model/dashboard.json`
   (champs supplémentaires sur `tab`, à déterminer à l'implémentation).
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-22, `worker`/`testeur`/`pessimiste`/
+  `candide`/`testeur-global`). Livré en 2 itérations (1 correction suite
+  revue croisée). Conception tranchée par l'orchestrateur (pas de blob
+  JSON) : réutilisation du modèle objet dynamique — 2 nouveaux attributs
+  string optionnels sur la classe `tab` de `model/dashboard.json` :
+  `filter_attribute`/`filter_value` (domaine `affichage`, même pattern
+  que `target_meta_class`/`target_class` de 10a : champs scalaires
+  séparés plutôt qu'un objet JSON). Filtre volontairement minimal :
+  égalité stricte `String(valeur) === filter_value.trim()` après
+  extraction de l'id si la valeur est une jointure (`getJointId`), pas
+  d'opérateurs (contains/</>), pas de multi-critères. Itération 1 :
+  `frontend/src/pages/DashboardPage.tsx` (358→482 lignes) — nouveau
+  `useEffect` lazy déclenché par le changement de tab actif
+  (`selectedTabId`/`targetMetaClass`/`targetClass`/`filterAttribute`/
+  `filterValue`) : charge les colonnes via `apiReadMetaClass(
+  target_meta_class)` (attributs déclarés sur `target_class`), charge
+  les candidats via `apiReadObjects()` filtré client `meta_class`/
+  `class`, puis `apiReadObject` par candidat (`Promise.allSettled`, flag
+  `cancelled` local pour ignorer une réponse tardive si le tab change
+  entre-temps) — explicitement scopé au tab ACTIF uniquement, jamais
+  tous les tabs (pas d'aggravation de la limite connue de 10b/10c sur le
+  chargement non borné des dashboards/tabs). Rendu = tableau HTML
+  lecture seule (colonnes = attributs de la classe cible, lignes =
+  objets candidats après filtre). Formulaire de tab (10c) étendu avec 2
+  champs optionnels `filter_attribute`/`filter_value`, convention "vide =
+  omis du payload" réutilisée. Revue croisée (pessimiste + candide,
+  convergence sur 2 points réels) : (1) filtre sur un attribut jointure
+  (`{joint_id}`) ne matchait jamais — `String({joint_id:N})` =
+  `"[object Object]"`, candide a noté que `getJointId` existait déjà
+  dans le fichier mais n'était pas réutilisé côté comparaison ; (2) un
+  attribut `file`/`image`/`csv` de la classe cible s'affichait en texte
+  brut (pointeur interne `"<version>:<nom>"` ou `"ref:..."`) dans le
+  tableau, contraste avec `NavigationPage.tsx` qui a un rendu dédié pour
+  ces types et ne les affiche jamais bruts — `secret` écarté de ce point
+  car déjà masqué côté serveur générique (`backend/routes/
+  routes_read.py`, `_build_object_payload`, placeholder fixe quel que
+  soit l'appelant), confirmé non concerné. Itération 2 (fix, `worker`) :
+  filtre réutilise désormais `getJointId(raw)` pour extraire l'id
+  jointure avant comparaison, fallback `String(raw)` sinon
+  (comportement scalaire inchangé) ; `formatCellValue` reçoit le type de
+  l'attribut cible et retourne un placeholder neutre
+  (`(fichier — non affiché ici)` / `(image — non affichée ici)` /
+  `(csv — non affiché ici)`) pour `file`/`image`/`csv` au lieu du
+  pointeur brut. Tests : `jsonschema` sur `model/dashboard.json` modifié
+  (Draft7) OK ; build frontend (`tsc -b`/`vite build`) 0 nouvelle erreur
+  (3 erreurs TS pré-existantes `DiagramPage.tsx`, sans rapport) ; test
+  réel stack docker-compose (`testuser`/`testuser123`) — dashboard #149/
+  tab #151 (target_meta_class=datasource, target_class=
+  datasource_prometheus) affiche bien l'objet #129
+  (`url=http://prometheus:9090`) en tableau ; filtre réel testé avec
+  tabs temporaires créés puis nettoyés (ex. ticket statut=ouvert, et
+  objet `query` #134 joint vers `datasource_prometheus` #129 via tab de
+  test `filter_attribute=datasource`/`filter_value=129` — matche
+  correctement après le fix, ne matchait pas avant) ; tab sans
+  `target_meta_class`/`target_class` ne crashe pas (message existant
+  conservé) ; CRUD 10c (création/édition/suppression de tab) toujours
+  fonctionnel avec les 2 nouveaux champs de formulaire ; objets de démo
+  #129/#130/#131/#134/#138/#140/#149/#151 inchangés après tous les
+  tests. Limites connues documentées, non corrigées (portée
+  volontairement minimale du filtre, décision orchestrateur) : (1) un
+  attribut `joint-1-n` (multi-valué) n'est testé par le filtre que sur
+  sa 1ère valeur (`attr.values[0]`), un objet dont la jointure cible est
+  en 2e position ou plus ne matchera jamais — limite déjà présente avant
+  le fix du point joint, pas une régression de cette itération,
+  maintenant nommée explicitement plutôt que silencieuse ; (2)
+  comparaison par égalité de chaîne stricte imparfaite sur un flottant
+  (`String(3.0)` donne `"3"`, un filtre saisi littéralement `"3.0"` ne
+  matche pas `3`) ; (3) pas de validation croisée de `filter_attribute`
+  contre les attributs réels de `target_class` — un nom d'attribut mal
+  orthographié donne silencieusement "Aucun objet trouvé",
+  indiscernable d'un vrai 0 résultat. `testeur-global` : OK — 235/235
+  pytest backend (aucun fichier backend touché par 10d), `model/
+  dashboard.json` valide, build frontend 0 nouvelle erreur, stack 6
+  services up, `/api/init` 401/200 confirmés, chaîne
+  dashboard→tab→datasource confirmée end-to-end au niveau API/données,
+  objets de démo tous intacts. Pas de vérification pixel navigateur
+  réelle possible (limite d'environnement sandbox déjà actée aux actions
+  précédentes), contournée par rejeu de la même logique via appels API
+  réels.
 
 ## 11. [Nouvelle fonctionnalité] Outil d'ingestion avec binding
 
@@ -1499,7 +1577,7 @@
 | 10a | Modèle de données dashboard/tab configurable | ✅ fait |
 | 10b | IHM lecture seule d'un dashboard existant | ✅ fait |
 | 10c | Édition des tabs dans l'IHM | ✅ fait |
-| 10d | Sélection des sous-objets affichés par tab | ⬜ à faire |
+| 10d | Sélection des sous-objets affichés par tab | ✅ fait |
 | 11 | Outil d'ingestion avec binding | ⬜ à faire |
 | 12 | Réorganisation de backend/ en packages (auth, data, files, routes, tests) | ✅ fait |
 | 13 | IHM de configuration : types d'attribut manquants (file/image/csv/select/secret/datasource) | ✅ fait |
