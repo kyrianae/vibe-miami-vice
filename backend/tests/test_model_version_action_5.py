@@ -10,7 +10,7 @@ vraie base Postgres ni de vrai Keycloak, get_db()/get_auth_context() sont
 monkeypatchés, et SCHEMA_PATH doit pointer vers le vrai model/schema.json
 du dépôt. Lancer avec, depuis la racine du dépôt :
 
-    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/test_model_version_action_5.py -v
+    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/tests/test_model_version_action_5.py -v
 """
 import copy
 import json
@@ -19,7 +19,7 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app as miami_app  # noqa: E402
 
 
@@ -125,7 +125,7 @@ def test_init_loads_all_existing_repo_model_files(client, monkeypatch):
     """Les fichiers model/*.json réels du dépôt (sans "version" pour la
     plupart) restent tous chargeables sans erreur, que le schéma aie ou non
     la propriété "version" ajoutée."""
-    repo_model_dir = os.path.join(os.path.dirname(__file__), "..", "model")
+    repo_model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "model")
 
     store = {}
     monkeypatch.setattr(miami_app, "get_db", lambda: FakeConn(store))

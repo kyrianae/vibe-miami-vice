@@ -9,14 +9,14 @@ que le reste du module fichier, déjà gérées par FileFakeCursor (y compris la
 requête de correspondance pointeur ajoutée pour ce sweep).
 
 Lancer avec, depuis la racine du dépôt :
-    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/test_file_sweep_orphans.py -v
+    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/tests/test_file_sweep_orphans.py -v
 """
 import os
 import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app as miami_app  # noqa: E402
 from test_model_driven_typing import make_ctx  # noqa: E402
 from test_file_attribute_type import (  # noqa: E402,F401
@@ -26,7 +26,7 @@ from test_file_attribute_type import (  # noqa: E402,F401
     _create_dossier,
     _upload,
 )
-from file_storage import LocalFileStorage  # noqa: E402
+from files.file_storage import LocalFileStorage  # noqa: E402
 
 
 def test_sweep_removes_file_never_indexed_in_db(client, db_and_ctx, isolated_storage_root):

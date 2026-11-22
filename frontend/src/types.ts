@@ -3,7 +3,7 @@
 export interface AttributeDefinition {
   domain: string;
   name: string;
-  type: 'string' | 'integer' | 'float' | 'joint-1-1' | 'joint-1-n' | 'file' | 'image' | 'csv' | 'select' | 'datasource';
+  type: 'string' | 'integer' | 'float' | 'joint-1-1' | 'joint-1-n' | 'file' | 'image' | 'csv' | 'select' | 'datasource' | 'secret';
   // Classes cibles autorisées : requis pour joint-1-1/joint-1-n (jointure)
   // ET pour datasource (classes datasource_* acceptées par ce pointeur,
   // plan-mark3.md action 9 - même champ réutilisé).

@@ -1,0 +1,41 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "dashboard",
+    "classes": [
+        {
+            "class": "dashboard",
+            "displayname": "{{name}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "name",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "tab",
+            "displayname": "{{name}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "name",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "dashboard",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "dashboard"
+                    ]
+                },
+                {
+                    "domain": "affichage",
+                    "name": "target_meta_class",
+                    "type": "string"
+                }
+            ]
+        }
+    ]
+}

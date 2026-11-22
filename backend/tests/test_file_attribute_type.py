@@ -22,7 +22,7 @@ protection XML entity expansion sur SVG (point C) ; voir aussi
 test_file_sweep_orphans.py pour le sweep de maintenance (point B).
 
 Lancer avec, depuis la racine du dépôt :
-    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/test_file_attribute_type.py -v
+    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/tests/test_file_attribute_type.py -v
 """
 import json
 import os
@@ -30,9 +30,9 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app as miami_app  # noqa: E402
-import rbac as miami_rbac  # noqa: E402
+import auth.rbac as miami_rbac  # noqa: E402
 from test_model_driven_typing import FakeDB, FakeCursor, FakeRealDictCursor, FakeConn, make_ctx  # noqa: E402
 
 
@@ -517,7 +517,7 @@ def test_write_attribute_value_json_rejected_on_file_type_attribute(client, db_a
 
 def test_schema_accepts_separator_on_csv_attribute():
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     jsonschema.validate(instance={
         "meta_class": "m",
@@ -530,7 +530,7 @@ def test_schema_accepts_separator_on_csv_attribute():
 
 def test_schema_accepts_csv_attribute_without_separator():
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     jsonschema.validate(instance={
         "meta_class": "m",
@@ -680,7 +680,7 @@ def test_create_object_multipart_failure_after_file_write_cleans_up_disk(client,
     vrai système de fichiers est vérifiée ici, pas l'absence de la ligne
     `object` en base (non observable avec ce FakeConn)."""
     from io import BytesIO
-    from file_storage import LocalFileStorage
+    from files.file_storage import LocalFileStorage
 
     metadata = {
         "meta_class": "classeur", "class": "dossier_strict",

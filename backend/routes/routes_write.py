@@ -9,17 +9,18 @@ import jsonschema
 from flask import Blueprint, jsonify, request, abort
 
 import app
-from db import load_schema
-from file_storage import LocalFileStorage
-from file_validation import save_file_or_400, validate_csv_content, validate_image_content
-from rbac import (
+from data.db import load_schema
+from files.file_storage import LocalFileStorage
+from files.file_validation import save_file_or_400, validate_csv_content, validate_image_content
+from secret_crypto import SecretEncryptionKeyError, encrypt_secret
+from auth.rbac import (
     _tenants_list_to_db,
     _tenants_db_to_list,
     _determine_object_tenants,
     _check_class_tenant_write_permission,
     _check_existing_class_tenant_scope,
 )
-from routes_read import _load_active_attributes_by_name
+from routes.routes_read import _load_active_attributes_by_name
 
 write_bp = Blueprint("write", __name__)
 
@@ -165,8 +166,26 @@ def write_object():
             # (sémantique « remplacement complet », specifications.md §4.3) :
             # fermeture de toutes ses valeurs actives, sans nouvelle
             # insertion - l'attribut devient fermé, plus de version active.
+            #
+            # Exception volontaire pour le type "secret" (plan-mark3.md
+            # action 8, point non tranché par l'utilisateur - solution la
+            # plus sûre retenue à l'implémentation) : un champ secret laissé
+            # vide à l'édition (NavigationPage.tsx) n'envoie jamais sa clé
+            # dans "attributes" (même logique de omission que tout autre
+            # type vidé), mais contrairement aux autres types ceci ne doit
+            # JAMAIS fermer la valeur active - le frontend n'a par
+            # construction plus accès au texte en clair pour le resoumettre
+            # à l'identique (lecture générique masquée), et un oubli de
+            # ressaisie ne doit jamais effacer silencieusement un secret.
             for attr_name, existing_attr in existing_by_name.items():
                 if attr_name in seen_attr_names:
+                    continue
+                omitted_attr_def = next((a for a in class_def.get("attributes", []) if a["name"] == attr_name), None)
+                if omitted_attr_def and omitted_attr_def.get("type") == "secret":
+                    # Limite connue acceptée (pas à corriger ici) : aucune voie
+                    # n'existe pour fermer explicitement un secret actif via
+                    # l'API - une valeur vide serait chiffrée et stockée comme
+                    # valeur active normale, pas comme fermeture.
                     continue
                 for ev in existing_attr["values"]:
                     cur.execute("UPDATE attribute_value SET valid_to = now() WHERE id = %s", (ev["id"],))
@@ -423,6 +442,23 @@ def _coerce_typed_value(attr_def, raw_value):
             abort(400, description=f"Valeur invalide pour l'attribut {attr_name!r} (type select) : {raw_value!r}, valeurs autorisées : {allowed_values!r}")
         return "value_string", str_value
 
+    if attr_type == "secret":
+        # Valeur sensible (plan-mark3.md action 8, specifications/
+        # 07-roadmap.md §10.10) : reçue en clair dans le JSON (scalaire
+        # normal, pas de multipart comme file/image/csv), CHIFFRÉE ici avant
+        # de transiter vers value_string - jamais le texte en clair stocké
+        # en base. Le reste de _apply_attribute_diff (historisation,
+        # comparaison de la valeur stockée) est totalement inchangé : voir
+        # secret_crypto.py pour la conséquence assumée (token non
+        # déterministe, jamais de dédup pour ce type même à plaintext
+        # identique). SecretEncryptionKeyError (clé absente/invalide)
+        # traduite en 500 explicite ici, jamais un enregistrement en clair
+        # de repli.
+        try:
+            return "value_string", encrypt_secret(str(raw_value))
+        except SecretEncryptionKeyError as e:
+            abort(500, description=str(e))
+
     # "string" (et tout type non reconnu, par sécurité) : toujours
     # value_string, jamais de tentative int()/float() même si la valeur a
     # l'air numérique (ex. code postal "007" doit rester "007").
@@ -622,6 +658,13 @@ def write_attribute_value(cls, object_id, attribute, value):
 
             if attr_def.get("type") in ("file", "image", "csv"):
                 abort(400, description=f"Attribut '{attribute}' (type {attr_def['type']}) : écriture réservée à la route dédiée d'upload multipart")
+
+            # Type "secret" (plan-mark3.md action 8) : jamais via cette route, la
+            # valeur transite dans le CHEMIN D'URL HTTP (pas le corps JSON) et se
+            # retrouverait en clair dans les logs d'accès reverse-proxy/CDN/APM
+            # avant même d'être chiffrée en DB.
+            if attr_def.get("type") == "secret":
+                abort(400, description=f"Attribut '{attribute}' (type secret) : écriture réservée à POST /api/write/object (jamais via l'URL, qui transiterait en clair dans les logs d'accès)")
 
             existing_attr = _load_active_attributes_by_name(conn, object_id).get(attribute)
             _apply_attribute_diff(cur, object_id, attribute, attr_def, existing_attr, [value])

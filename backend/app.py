@@ -2,9 +2,9 @@ import os
 
 from flask import Flask
 
-from db import get_db, close_db, load_schema  # noqa: F401 (ré-export, cf. plan-mark3.md action 1)
-from rbac import AuthContext, get_auth_context, _existing_class_out_of_tenant_scope  # noqa: F401
-from auth import require_auth
+from data.db import get_db, close_db, load_schema  # noqa: F401 (ré-export, cf. plan-mark3.md action 1)
+from auth.rbac import AuthContext, get_auth_context, _existing_class_out_of_tenant_scope  # noqa: F401
+from auth.auth import require_auth
 
 app = Flask(__name__)
 
@@ -27,11 +27,11 @@ app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_SIZE_BYTES", s
 # mais n'accède à aucun attribut de `app` au niveau module : pas de souci
 # d'import circulaire tant que ce fichier importe ces modules après avoir
 # défini `app` lui-même.
-import routes_read
-import routes_write
-import routes_init
-import routes_admin
-import routes_files
+from routes import routes_read
+from routes import routes_write
+from routes import routes_init
+from routes import routes_admin
+from routes import routes_files
 
 # Hook d'authentification et fermeture de la connexion DB : enregistrement
 # explicite (plutôt que décorateur) puisque require_auth/close_db sont

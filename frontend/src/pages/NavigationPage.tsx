@@ -542,6 +542,13 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
         // lisible via detailCache dans le rendu du formulaire, jamais
         // recopiée dans newAttrs (pas éditable en texte).
         continue;
+      } else if (attrDef.type === 'secret') {
+        // Jamais pré-rempli (plan-mark3.md action 8) : la lecture générique
+        // ne renvoie qu'un placeholder masqué, jamais la vraie valeur - le
+        // recopier dans newAttrs permettrait de resoumettre ce placeholder
+        // littéral comme nouveau texte en clair si le champ n'est pas
+        // retouché. Champ vide à l'ouverture, dans tous les cas.
+        attrs[attrDef.name] = '';
       } else {
         attrs[attrDef.name] = attrVal && attrVal.values.length > 0
           ? String(attrVal.values[0])
@@ -691,7 +698,11 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
     // ne doit jamais ouvrir l'édition texte générique sur un pointeur
     // "<version>:<nom>" (le JSON write le rejetterait de toute façon, cf.
     // garde-fou routes_write.py).
-    if (attrDef.type === 'file' || attrDef.type === 'image' || attrDef.type === 'csv') return;
+    // secret (plan-mark3.md action 8) : même exclusion - la cellule n'affiche
+    // que le placeholder masqué renvoyé par la lecture générique, jamais la
+    // vraie valeur ; pré-remplir une édition inline avec ce placeholder
+    // écraserait le secret réel par ce texte littéral à la sauvegarde.
+    if (attrDef.type === 'file' || attrDef.type === 'image' || attrDef.type === 'csv' || attrDef.type === 'secret') return;
     const detail = detailCache[obj.id];
 
     if (attrDef.type === 'joint-1-n') {
@@ -1258,6 +1269,26 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                   </div>
                 );
               }
+              if (attr.type === 'secret') {
+                // Valeur sensible (plan-mark3.md action 8) : saisie masquée,
+                // jamais pré-remplie avec la vraie valeur (newAttrs déjà
+                // forcé à '' à l'ouverture du formulaire d'édition, voir
+                // handleEditObject) - comportement d'un formulaire classique
+                // de changement de mot de passe. Pas de bouton reveal ici
+                // (seulement via l'API, réservée global-admin).
+                return (
+                  <div className="form-group" key={attr.name}>
+                    <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span></label>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      value={newAttrs[attr.name] || ''}
+                      onChange={(e) => setNewAttrs({ ...newAttrs, [attr.name]: e.target.value })}
+                      placeholder={editingObjectId ? 'Laisser vide pour ne pas modifier' : ''}
+                    />
+                  </div>
+                );
+              }
               return (
                 <div className="form-group" key={attr.name}>
                   <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span></label>
@@ -1532,16 +1563,19 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                             }
                             const attr = detail.attributes.find((a) => a.name === name);
                             const isEmpty = !attr || attr.values.length === 0;
-                            // file/image/csv (plan-mark3.md action 3) : pas
-                            // d'édition inline de cellule (cf. handleCellClick).
+                            // file/image/csv (plan-mark3.md action 3) et
+                            // secret (plan-mark3.md action 8) : pas d'édition
+                            // inline de cellule (cf. handleCellClick).
                             const isFileType = attrDef?.type === 'file' || attrDef?.type === 'image' || attrDef?.type === 'csv';
+                            const isSecretType = attrDef?.type === 'secret';
+                            const isNonInlineEditable = isFileType || isSecretType;
                             return (
                               <td key={name}
-                                onClick={(e) => { if (!readOnly && !isFileType) { e.stopPropagation(); handleCellClick(obj, name); } }}
-                                style={{ cursor: readOnly || isFileType ? 'default' : 'pointer', transition: 'background 0.15s' }}
-                                onMouseEnter={(e) => { if (!readOnly && !isFileType) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+                                onClick={(e) => { if (!readOnly && !isNonInlineEditable) { e.stopPropagation(); handleCellClick(obj, name); } }}
+                                style={{ cursor: readOnly || isNonInlineEditable ? 'default' : 'pointer', transition: 'background 0.15s' }}
+                                onMouseEnter={(e) => { if (!readOnly && !isNonInlineEditable) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
                                 onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
-                                title={readOnly || isFileType ? '' : (isJoint1N ? 'Clic pour modifier la jointure' : 'Clic pour modifier')}
+                                title={readOnly || isNonInlineEditable ? '' : (isJoint1N ? 'Clic pour modifier la jointure' : 'Clic pour modifier')}
                               >
                                 {isEmpty ? (
                                   <span style={{ color: 'var(--color-text-muted)' }}>—</span>

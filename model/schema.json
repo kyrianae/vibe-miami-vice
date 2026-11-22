@@ -64,8 +64,8 @@
                                 },
                                 "type": {
                                     "type": "string",
-                                    "enum": ["string", "integer", "float", "joint-1-1", "joint-1-n", "file", "image", "csv", "select", "datasource"],
-                                    "description": "Type de la valeur de l'attribut (joint-1-1 pour liaison 1:1, joint-1-n pour liaison 1:N, file/image/csv pour un pointeur vers FileStorage, select pour une liste de valeurs fixes, datasource pour un pointeur vers un objet d'une meta-classe datasource_* dédiée, ex. datasource_prometheus - plan-mark3.md action 9)"
+                                    "enum": ["string", "integer", "float", "joint-1-1", "joint-1-n", "file", "image", "csv", "select", "datasource", "secret"],
+                                    "description": "Type de la valeur de l'attribut (joint-1-1 pour liaison 1:1, joint-1-n pour liaison 1:N, file/image/csv pour un pointeur vers FileStorage, select pour une liste de valeurs fixes, datasource pour un pointeur vers un objet d'une meta-classe datasource_* dédiée, ex. datasource_prometheus - plan-mark3.md action 9, secret pour une valeur sensible chiffrée en base, jamais renvoyée en clair par la lecture générique - plan-mark3.md action 8)"
                                 },
                                 "classes": {
                                     "type": "array",

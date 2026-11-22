@@ -81,11 +81,11 @@ import psycopg2.extras
 from flask import Blueprint, Response, abort, jsonify, request
 
 import app
-from file_storage import LocalFileStorage
-from file_validation import extension_of, save_file_or_400, validate_csv_content, validate_image_content
-from rbac import _tenant_read_filter, _tenants_db_to_list
-from routes_read import _build_object_payload, _load_active_attributes_by_name
-from routes_write import _apply_attribute_diff
+from files.file_storage import LocalFileStorage
+from files.file_validation import extension_of, save_file_or_400, validate_csv_content, validate_image_content
+from auth.rbac import _tenant_read_filter, _tenants_db_to_list
+from routes.routes_read import _build_object_payload, _load_active_attributes_by_name
+from routes.routes_write import _apply_attribute_diff
 
 files_bp = Blueprint("files", __name__)
 

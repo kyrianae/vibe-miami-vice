@@ -1,4 +1,5 @@
 import os
+import re
 
 import jwt
 from jwt import PyJWKClient
@@ -54,9 +55,22 @@ def get_jwk_client():
 _PROTECTED_PREFIXES = ("/api/write/", "/api/delete/")
 _PROTECTED_EXACT_PATHS = ("/api/init", "/api/purge", "/api/config/purge_grace_period_days")
 
+# Route de lecture ciblée réservée global-admin strict (plan-mark3.md
+# action 8, révélation d'un attribut `secret` en clair) : seule route
+# GET /api/read/* protégée par un 401 systématique si le token est
+# absent/invalide - toutes les autres restent ouvertes en lecture
+# anonyme (filtrage RBAC/tenant appliqué séparément, voir rbac.py). Un
+# pattern dédié (pas _PROTECTED_EXACT_PATHS, chemin dynamique avec
+# object_id/attribute) plutôt qu'un simple startswith générique sur
+# "/api/read/" qui romprait l'ouverture anonyme de toutes les autres
+# routes de lecture.
+_PROTECTED_REGEXES = (re.compile(r"^/api/read/object/\d+/secret/[^/]+$"),)
+
 
 def _requires_auth(path):
-    return path.startswith(_PROTECTED_PREFIXES) or path in _PROTECTED_EXACT_PATHS
+    if path.startswith(_PROTECTED_PREFIXES) or path in _PROTECTED_EXACT_PATHS:
+        return True
+    return any(rx.match(path) for rx in _PROTECTED_REGEXES)
 
 
 def require_auth():

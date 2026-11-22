@@ -12,14 +12,14 @@ et SCHEMA_PATH doit pointer vers le vrai model/schema.json du dépôt.
 
 Lancer avec, depuis la racine du dépôt :
 
-    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/test_attribute_type_datasource.py -v
+    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/tests/test_attribute_type_datasource.py -v
 """
 import os
 import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app as miami_app  # noqa: E402
 from test_model_driven_typing import FakeDB, FakeConn, FakeCursor, FakeRealDictCursor, make_ctx  # noqa: E402
 
@@ -290,7 +290,7 @@ def test_write_attribute_value_datasource_non_integer_rejected_400(client, db_an
 
 def test_schema_rejects_datasource_attribute_without_classes():
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(instance={
@@ -304,7 +304,7 @@ def test_schema_rejects_datasource_attribute_without_classes():
 
 def test_schema_accepts_datasource_attribute_with_classes():
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     jsonschema.validate(instance={
         "meta_class": "m",
@@ -317,7 +317,7 @@ def test_schema_accepts_datasource_attribute_with_classes():
 
 def test_schema_is_valid_draft7_with_datasource_enum_entry():
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     jsonschema.Draft7Validator.check_schema(load_schema())
 

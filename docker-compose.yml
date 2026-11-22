@@ -71,6 +71,7 @@ services:
       KEYCLOAK_ISSUER: http://localhost:8080/realms/miami-vice
       KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/miami-vice/protocol/openid-connect/certs
       FILE_STORAGE_ROOT: /data/files
+      SECRET_ENCRYPTION_KEY: ddXSHT-E_tqov4_gqrxSnE9iVpwWAFwnfxhqZ03i6dc=
     depends_on:
       db:
         condition: service_healthy

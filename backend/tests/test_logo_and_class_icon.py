@@ -12,16 +12,16 @@ dédiée avec un VRAI attribut nommé "logo" est seedée séparément pour les
 tests de /api/logos, qui filtre spécifiquement a.name = 'logo'.
 
 Lancer avec, depuis la racine du dépôt :
-    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/test_logo_and_class_icon.py -v
+    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/tests/test_logo_and_class_icon.py -v
 """
 import os
 import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app as miami_app  # noqa: E402
-import rbac as miami_rbac  # noqa: E402
+import auth.rbac as miami_rbac  # noqa: E402
 from test_model_driven_typing import make_ctx  # noqa: E402
 from test_file_attribute_type import (  # noqa: E402,F401
     client,
@@ -46,7 +46,7 @@ def _set_ctx(monkeypatch, **kwargs):
 
 def test_fallback_icon_is_well_formed_svg():
     import defusedxml.ElementTree as ET
-    from class_icon import generate_class_fallback_icon
+    from files.class_icon import generate_class_fallback_icon
 
     svg = generate_class_fallback_icon("serveur")
     assert svg.startswith("<svg")
@@ -55,7 +55,7 @@ def test_fallback_icon_is_well_formed_svg():
 
 
 def test_fallback_icon_deterministic_same_class_same_result():
-    from class_icon import generate_class_fallback_icon
+    from files.class_icon import generate_class_fallback_icon
 
     first = generate_class_fallback_icon("application")
     second = generate_class_fallback_icon("application")
@@ -63,20 +63,20 @@ def test_fallback_icon_deterministic_same_class_same_result():
 
 
 def test_fallback_icon_color_deterministic_across_fresh_memory_cache():
-    from class_icon import _color_for_class
+    from files.class_icon import _color_for_class
 
     assert _color_for_class("serveur") == _color_for_class("serveur")
 
 
 def test_fallback_icon_uses_initials_for_long_class_name():
-    from class_icon import _initials_for_class
+    from files.class_icon import _initials_for_class
 
     assert _initials_for_class("base_de_donnees") == "BD"
     assert _initials_for_class("srv") == "SRV"
 
 
 def test_fallback_icon_cached_on_disk(isolated_storage_root):
-    from class_icon import generate_class_fallback_icon, _cache_file_path
+    from files.class_icon import generate_class_fallback_icon, _cache_file_path
 
     generate_class_fallback_icon("contrat_support")
     cache_path = _cache_file_path("contrat_support")
@@ -106,7 +106,7 @@ def test_fallback_icon_route_404_unknown_metaclass(client, db_and_ctx):
 
 def test_schema_accepts_icon_field_on_class():
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     jsonschema.validate(instance={
         "meta_class": "m",
@@ -117,9 +117,9 @@ def test_schema_accepts_icon_field_on_class():
 def test_real_itil_cmdb_model_includes_valid_icon_and_logo():
     import json
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
-    model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "model", "itil_cmdb.json")
+    model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "model", "itil_cmdb.json")
     with open(model_path) as f:
         data = json.load(f)
     data.pop("$schema", None)
@@ -289,7 +289,7 @@ def test_sweep_removes_file_once_no_reference_remains(client, db_and_ctx, isolat
 # ---------------------------------------------------------------------
 
 def test_read_self_heals_when_referenced_file_missing_on_disk(client, db_and_ctx):
-    from file_storage import LocalFileStorage
+    from files.file_storage import LocalFileStorage
 
     a = _create_dossier(client)
     _upload(client, a, "photo", "logo_a.jpg", JPEG_BYTES)
@@ -313,7 +313,7 @@ def test_read_self_heals_when_referenced_file_missing_on_disk(client, db_and_ctx
 
 
 def test_read_self_heal_does_not_touch_source_object(client, db_and_ctx):
-    from file_storage import LocalFileStorage
+    from files.file_storage import LocalFileStorage
 
     a = _create_dossier(client)
     _upload(client, a, "photo", "logo_a.jpg", JPEG_BYTES)
@@ -336,7 +336,7 @@ def test_read_direct_pointer_missing_file_still_self_heals(client, db_and_ctx):
     (pas seulement une référence croisée) - cas déjà couvert implicitement
     par le comportement 404 existant, vérifié ici explicitement avec le
     nettoyage ajouté par cette action."""
-    from file_storage import LocalFileStorage
+    from files.file_storage import LocalFileStorage
 
     a = _create_dossier(client)
     _upload(client, a, "photo", "logo_a.jpg", JPEG_BYTES)
@@ -358,7 +358,7 @@ def test_self_heal_does_not_close_pointer_rewritten_concurrently(client, db_and_
     et cet appel, serait fermé par erreur. Simule la race directement :
     appelle _self_heal_broken_pointer avec l'ANCIEN pointeur après qu'une
     réécriture légitime (nouvelle version) a déjà eu lieu."""
-    from routes_files import _self_heal_broken_pointer
+    from routes.routes_files import _self_heal_broken_pointer
 
     a = _create_dossier(client)
     first = _upload(client, a, "photo", "logo_a.jpg", JPEG_BYTES)

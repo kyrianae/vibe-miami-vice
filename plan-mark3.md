@@ -844,7 +844,54 @@
 - **Fichiers** : `specifications/07-roadmap.md` (§10.10, conception déjà
   écrite) ; fichiers d'implémentation réels à déterminer à
   l'implémentation (rien n'est codé).
-- **Statut** : ⬜ à faire — priorité 2, choix utilisateur 2026-11-22.
+- **Statut** : ✅ fait (2026-11-22, `worker`/`testeur`/`pessimiste`/
+  `candide`/`testeur-global`). Livré en 2 itérations (1 correction suite
+  revue croisée).
+
+  **Conception tranchée par l'utilisateur le 2026-11-22**, 3 points :
+  clé de chiffrement Fernet globale via la variable d'environnement
+  `SECRET_ENCRYPTION_KEY`, lue dynamiquement (pas de cache en mémoire
+  figé au démarrage) ; masquage strict en lecture générique (toute
+  lecture standard renvoie une valeur masquée, jamais le plaintext ni le
+  ciphertext) accompagné d'une route reveal dédiée réservée
+  global-admin uniquement ; écriture via JSON classique (pas de route
+  dédiée), chiffrement effectué côté `_coerce_typed_value`.
+
+  **Itération 1** : implémentation initiale — `model/schema.json` (ajout
+  `"secret"` à l'enum `attributes[].type`), nouveau `backend/secret_crypto.py`
+  (chiffrement/déchiffrement Fernet, lecture dynamique de
+  `SECRET_ENCRYPTION_KEY`), `backend/routes_write.py`
+  (`_coerce_typed_value` : chiffrement de la valeur avant stockage en
+  `value_string`), `backend/routes_read.py` (masquage générique en
+  lecture), `backend/auth.py` (garde global-admin pour la route reveal),
+  `docker-compose.yml` (variable d'environnement `SECRET_ENCRYPTION_KEY`),
+  `frontend/src/pages/NavigationPage.tsx` (rendu masqué + action reveal),
+  `frontend/src/types.ts` (type élargi). Nouveau fichier de test
+  `backend/test_attribute_type_secret.py`, 17 tests.
+
+  **Itération 2**, suite à revue croisée (pessimiste/candide, point
+  bloquant confirmé) : la route `PUT
+  /api/write/attribute/<cls>/<id>/<attribute>/<value>` n'excluait pas
+  `secret` du tuple de types bloqués en écriture via URL-path, alors que
+  `file`/`image`/`csv` l'étaient déjà — risque de fuite du plaintext dans
+  des logs d'accès proxy/APM via l'URL (pas un défaut de chiffrement DB).
+  Fix : `secret` ajouté au garde-fou, `abort(400)` avec message dédié.
+  Test ajouté.
+
+  **Tests** : suite backend complète — **235/235 passés**.
+
+  **Preuve bout en bout réelle** (`testeur-global`, docker-compose) :
+  objet créé avec un secret réel, valeur en DB chiffrée Fernet
+  (`gAAAAA...`), jamais le plaintext ; masquage en lecture générique
+  confirmé ; route reveal fonctionnelle réservée global-admin ; 401 sans
+  token ; écriture via URL PUT bloquée en 400.
+
+  **Limite connue acceptée, documentée, non corrigée** (décision
+  orchestrateur) : aucune voie API pour effacer/fermer explicitement un
+  attribut `secret` existant — l'omission ne ferme jamais un secret par
+  garde-fou volontaire, une valeur vide serait chiffrée et stockée comme
+  active, pas comme une fermeture. À traiter dans une action future si
+  besoin.
 
 ## 9. [Nouvelle fonctionnalité] Type d'attribut datasource
 
@@ -1040,6 +1087,84 @@
 - **Statut** : ⬜ à faire — priorité 4, découpage en sous-actions à
   valider avant implémentation, choix utilisateur 2026-11-22.
 
+> **Scission actée** (2026-11-22) : découpage §10.12 validé. Cette
+> action 10 est scindée en **10a** (modèle de données dashboard/tab),
+> **10b** (IHM lecture seule), **10c** (édition CRUD des tabs), **10d**
+> (sélection des sous-objets par tab/filtre). **10e** du découpage
+> §10.12 reste **exclu, hors scope** (dépend d'une idée future,
+> `tocheck.md` #10). Voir les 4 actions dédiées ci-dessous.
+
+## 10a. [Nouvelle fonctionnalité] Modèle de données dashboard/tab configurable
+
+> Sous-action issue de la scission de l'action 10 (§10.12 `specifications/
+> 07-roadmap.md`, validée le 2026-11-22). Détail de conception : même
+> section §10.12.
+
+- **Problème** : pas de modèle de données pour stocker la configuration
+  d'un dashboard/tab — préalable à toute IHM (10b/10c/10d).
+- **Correctif** : réutilisation du modèle dynamique existant (principe
+  déjà en place pour toutes les autres meta-classes du projet, ex.
+  action 9 `datasource`) — nouvelle meta-classe `dashboard` (fichier
+  `model/dashboard.json`), **pas** de table applicative dédiée. Deux
+  classes : `dashboard` (attribut `name`) et `tab` (attributs `name`,
+  `dashboard` en `joint-1-1` vers la classe `dashboard`,
+  `target_meta_class` en `string` libre décrivant la meta-classe/classe
+  à afficher — pas encore de rendu ni de filtre, cf. 10d). Même principe
+  à retenir si la question se repose pour l'action 11 (stockage de la
+  config de binding).
+- **Effort** : faible/moyen (un seul fichier modèle, pas de code
+  backend nouveau, pattern déjà connu).
+- **Fichiers** : `model/dashboard.json`.
+- **Statut** : 🔄 en cours.
+
+## 10b. [Nouvelle fonctionnalité] IHM lecture seule d'un dashboard existant
+
+> Sous-action issue de la scission de l'action 10 (§10.12), dépend de
+> 10a.
+
+- **Problème** : aucun rendu frontend d'une configuration dashboard/tab,
+  même statique.
+- **Correctif** : rendu en lecture seule, dans l'IHM, d'un dashboard et
+  de ses tabs déjà présents en base (config créée manuellement via les
+  routes génériques d'objets) — pas d'édition, pas de sélection de
+  sous-objets dynamique (10c/10d).
+- **Effort** : moyen à élevé (nouveau frontend, dépend de 10a livré).
+- **Fichiers** : `frontend/src/` (composants à déterminer à
+  l'implémentation).
+- **Statut** : ⬜ à faire.
+
+## 10c. [Nouvelle fonctionnalité] Édition des tabs dans l'IHM
+
+> Sous-action issue de la scission de l'action 10 (§10.12), dépend de
+> 10a/10b.
+
+- **Problème** : pas de CRUD de la configuration dashboard/tab dans
+  l'IHM, seule la création manuelle d'objets via les routes génériques
+  est possible.
+- **Correctif** : écrans d'édition (création/modification/suppression)
+  des tabs d'un dashboard, au-dessus du rendu lecture seule de 10b.
+- **Effort** : moyen à élevé (nouveau frontend, formulaires CRUD).
+- **Fichiers** : `frontend/src/` (composants à déterminer à
+  l'implémentation).
+- **Statut** : ⬜ à faire.
+
+## 10d. [Nouvelle fonctionnalité] Sélection des sous-objets affichés par tab
+
+> Sous-action issue de la scission de l'action 10 (§10.12), dépend de
+> 10a/10b/10c.
+
+- **Problème** : `target_meta_class` de 10a n'est qu'une string libre —
+  pas de filtre/requête configurable pour choisir quels objets afficher
+  dans un tab.
+- **Correctif** : mécanisme de sélection/filtre des sous-objets affichés
+  (requête configurable sur la meta-classe/classe ciblée), conception
+  détaillée à faire au moment de l'implémentation.
+- **Effort** : moyen à élevé (nouveau frontend + logique de filtre,
+  portée la plus ouverte des 4 sous-actions).
+- **Fichiers** : `frontend/src/` et potentiellement `model/dashboard.json`
+  (champs supplémentaires sur `tab`, à déterminer à l'implémentation).
+- **Statut** : ⬜ à faire.
+
 ## 11. [Nouvelle fonctionnalité] Outil d'ingestion avec binding
 
 > Choix utilisateur du 2026-11-22 parmi les idées de `tocheck.md`, par
@@ -1060,6 +1185,75 @@
   l'implémentation (rien n'est codé).
 - **Statut** : ⬜ à faire — priorité 5, choix utilisateur 2026-11-22.
 
+## 12. [Dette technique] Réorganisation de backend/ en packages (auth, data, files, routes, tests)
+
+- **Problème** : `backend/` plat (tous modules Python + tests à la
+  racine), charge de lecture/collision élevée pour les futures actions.
+  Demande utilisateur du 2026-11-22 : « pour backend faire des
+  libs/répertoires : auth, data/files, routes, tests ».
+- **Correctif** : déplacement mécanique en 5 packages —
+  `backend/auth/` (`auth.py`, `rbac.py`), `backend/data/` (`db.py`),
+  `backend/files/` (`file_storage.py`, `file_validation.py`,
+  `class_icon.py`), `backend/routes/` (`routes_read.py`,
+  `routes_write.py`, `routes_init.py`, `routes_admin.py`,
+  `routes_files.py`), `backend/tests/` (tous les `test_*.py`, 11
+  fichiers). `backend/app.py` et `backend/secret_crypto.py` restent à
+  la racine de `backend/` (`secret_crypto.py` jugé module de
+  chiffrement générique, sans lien direct avec un seul des 4
+  domaines). Imports internes corrigés vers les nouveaux chemins de
+  package (ex. `from files.file_storage import`, `from auth.rbac
+  import`, `from data.db import`). Pattern `import app` bare + appel
+  `app.get_db()`/`app.get_auth_context()` dans le corps des fonctions
+  préservé dans `backend/routes/*.py` (hérité de l'action 1), pour
+  compatibilité avec le monkeypatch direct sur `app` utilisé par
+  `test_rbac_class_tenant_scope.py`, `test_model_driven_typing.py`,
+  `test_purge_action_6_2.py`. Aucun changement requis au Dockerfile
+  (`COPY backend/ .` copie tout le dossier, `CMD gunicorn app:app`
+  reste valide, `WORKDIR /app` contient directement `auth/`, `data/`,
+  `files/`, `routes/`, `app.py` en conteneur). `backend/tests/__init__.py`
+  volontairement non créé (non requis par pytest). Commande de test
+  inchangée : `SCHEMA_PATH=<chemin absolu>/model/schema.json pytest
+  backend/ -v` depuis la racine du repo.
+- **Effort** : moyen (déplacement mécanique de ~12 fichiers de code +
+  11 fichiers de test en 5 packages, ajustement d'imports, aucune
+  nouvelle logique).
+- **Fichiers** : `backend/app.py` (imports mis à jour), nouveaux
+  `backend/auth/` (`auth.py`, `rbac.py`, `__init__.py`),
+  `backend/data/` (`db.py`, `__init__.py`), `backend/files/`
+  (`file_storage.py`, `file_validation.py`, `class_icon.py`,
+  `__init__.py`), `backend/routes/` (`routes_read.py`,
+  `routes_write.py`, `routes_init.py`, `routes_admin.py`,
+  `routes_files.py`, `__init__.py`), `backend/tests/` (11 fichiers
+  `test_*.py` déplacés).
+- **Statut** : ✅ fait (2026-11-22, `worker`/`testeur`/`pessimiste`/
+  `candide`/`testeur-global`). Livré en 1 itération (aucune correction
+  bloquante remontée). Suite complète : 235/235 avant/après, aucune
+  régression de compte. Vérifications croisées (pessimiste + candide,
+  convergence totale, aucun point bloquant) : imports internes tous
+  corrigés vers les nouveaux chemins de package, aucun import resté
+  sur un ancien chemin plat, `__init__.py` cohérents (vides,
+  suffisants), rien oublié à la racine de `backend/` selon le mapping
+  demandé, `secret_crypto.py` confirmé bien placé. Preuve d'exécution
+  réelle (pas seulement `import app`) : chaque Blueprint
+  (read/write/init/admin/files) exercé via les tests existants,
+  monkeypatchs `get_db`/`get_auth_context` confirmés actifs sur les 3
+  fichiers qui en dépendent. Comptage des routes Flask : 25 routes
+  applicatives cohérentes avant/après refactor (25 car le dépôt
+  incluait déjà, avant ce refactor, la route reveal secret de l'action
+  8). `testeur-global` : `docker compose config` OK, rebuild + boot
+  réel du conteneur backend confirmé (logs propres, aucun
+  ImportError/ModuleNotFoundError, `GET /api/init` répond 401
+  applicatif = pile complète fonctionnelle de bout en bout, pas
+  seulement le process qui démarre). Point mineur corrigé dans cette
+  même clôture : 11 fichiers de `backend/tests/` avaient une
+  docstring citant l'ancienne commande d'invocation à chemin plat
+  (`pytest backend/test_X.py`), corrigée en `pytest
+  backend/tests/test_X.py`. Dette documentaire restante, hors scope
+  de cette action (même nature que l'action 6) : `README.md` et
+  plusieurs fichiers `specifications/*.md` référencent encore les
+  anciens chemins plats des modules backend déplacés — à traiter dans
+  une future action de synchronisation documentaire si jugé utile.
+
 ## Récapitulatif d'avancement
 
 > Tableau à tenir à jour en même temps que le champ **Statut** de chaque
@@ -1074,7 +1268,12 @@
 | 5 | Versionnage des fichiers modèle (préparation migrations) | ✅ fait |
 | 6 | [Dette documentaire] Synchronisation specifications/ avec actions 1-5 | ✅ fait |
 | 7 | Type d'attribut select/enum | ✅ fait |
-| 8 | Type d'attribut secret/password | ⬜ à faire |
+| 8 | Type d'attribut secret/password | ✅ fait |
 | 9 | Type d'attribut datasource | ✅ fait |
-| 10 | Framework de dashboard/affichage configurable | ⬜ à faire |
+| 10 (scindée, voir 10a-10d) | Framework de dashboard/affichage configurable | 🔄 en cours |
+| 10a | Modèle de données dashboard/tab configurable | 🔄 en cours |
+| 10b | IHM lecture seule d'un dashboard existant | ⬜ à faire |
+| 10c | Édition des tabs dans l'IHM | ⬜ à faire |
+| 10d | Sélection des sous-objets affichés par tab | ⬜ à faire |
 | 11 | Outil d'ingestion avec binding | ⬜ à faire |
+| 12 | Réorganisation de backend/ en packages (auth, data, files, routes, tests) | ✅ fait |

@@ -6,8 +6,8 @@ import jsonschema
 from flask import Blueprint, jsonify, abort
 
 import app
-from db import load_schema
-from rbac import _check_class_tenant_write_permission, _existing_class_out_of_tenant_scope
+from data.db import load_schema
+from auth.rbac import _check_class_tenant_write_permission, _existing_class_out_of_tenant_scope
 
 init_bp = Blueprint("init", __name__)
 

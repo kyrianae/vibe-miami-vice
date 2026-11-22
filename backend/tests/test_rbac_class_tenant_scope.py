@@ -12,7 +12,7 @@ base Postgres ni à un vrai Keycloak (get_db/get_auth_context sont
 monkeypatchés). Lancer avec, depuis la racine du dépôt :
 
     .venv/bin/pip install pytest
-    .venv/bin/pytest backend/test_rbac_class_tenant_scope.py -v
+    .venv/bin/pytest backend/tests/test_rbac_class_tenant_scope.py -v
 """
 import copy
 import json
@@ -21,7 +21,7 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app as miami_app  # noqa: E402
 
 

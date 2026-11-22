@@ -2,10 +2,18 @@ import psycopg2.extras
 from flask import Blueprint, Response, jsonify, abort, request
 
 import app
-from class_icon import generate_class_fallback_icon
-from rbac import _tenant_read_filter, _tenants_db_to_list
+from files.class_icon import generate_class_fallback_icon
+from auth.rbac import _tenant_read_filter, _tenants_db_to_list
+from secret_crypto import SecretEncryptionKeyError, decrypt_secret
 
 MAX_DEPTH = 5
+
+# Placeholder fixe (plan-mark3.md action 8, specifications/07-roadmap.md
+# §10.10) : renvoyé par la lecture générique à la place d'un attribut
+# `secret` défini - jamais le texte chiffré brut, jamais la valeur
+# déchiffrée. Volontairement indépendant du nombre de caractères du texte
+# en clair (pas d'indice de longueur).
+_SECRET_PLACEHOLDER = "••••••••"
 
 read_bp = Blueprint("read", __name__)
 
@@ -186,6 +194,24 @@ def _load_active_attributes_by_name(conn, object_id):
     return by_name
 
 
+def _secret_attribute_names(conn, meta_class, cls):
+    """Noms des attributs de type `secret` déclarés sur (meta_class, cls)
+    (plan-mark3.md action 8) - utilisé par `_build_object_payload` pour
+    masquer leur valeur, jamais pour la déchiffrer. Une requête dédiée par
+    objet affiché (même coût qu'un lookup similaire dans routes_files.py,
+    `_lookup_attr_type`) : accepté, cohérent avec le reste du module qui ne
+    mutualise pas ce genre de lookup entre deux appels."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT data FROM definition WHERE meta_class = %s", (meta_class,))
+        defn = cur.fetchone()
+    if not defn:
+        return set()
+    for c in defn["data"].get("classes", []):
+        if c["class"] == cls:
+            return {a["name"] for a in c.get("attributes", []) if a.get("type") == "secret"}
+    return set()
+
+
 def _build_object_payload(object_id, conn, tenant_filter=None):
     """Construit le dict {id, meta_class, class, tenants, attributes} d'un objet.
 
@@ -230,6 +256,18 @@ def _build_object_payload(object_id, conn, tenant_filter=None):
             column, decoded = _decode_attribute_value_column(row)
             value = {"joint_id": decoded} if column == "joint_id" else decoded
             attributes[attr_key]["values"].append(value)
+
+    # Masquage des attributs `secret` (plan-mark3.md action 8) : AUCUN
+    # déchiffrement ici, jamais le texte chiffré brut non plus - placeholder
+    # fixe si une valeur active existe, liste vide sinon (déjà le cas par
+    # construction ci-dessus). Seule la route dédiée
+    # GET /api/read/object/<id>/secret/<attribute> (réservée global-admin)
+    # déchiffre une valeur.
+    secret_names = _secret_attribute_names(conn, obj["meta_class"], obj["class"])
+    if secret_names:
+        for entry in attributes.values():
+            if entry["name"] in secret_names:
+                entry["values"] = [_SECRET_PLACEHOLDER for _ in entry["values"]]
 
     obj["attributes"] = list(attributes.values())
     return obj
@@ -312,6 +350,86 @@ def get_object_by_id(object_id):
 
     resolve_attributes(obj, depth)
     return jsonify(obj)
+
+
+@read_bp.route("/api/read/object/<int:object_id>/secret/<string:attribute>", methods=["GET"])
+def reveal_object_secret(object_id, attribute):
+    """Révèle en clair la valeur ACTIVE d'un attribut de type `secret`
+    (plan-mark3.md action 8 ; specifications/07-roadmap.md §10.10).
+
+    Placée dans routes_read.py plutôt que dans un module routes_secrets.py
+    dédié : pas de complexité multipart/FileStorage à isoler (contrairement
+    à routes_files.py), et la route réutilise directement
+    `_load_active_attributes_by_name`, déjà défini dans ce module -
+    cohérent avec le choix déjà fait d'y placer `get_object_by_id` et
+    `_build_object_payload`.
+
+    RBAC strict volontairement DIFFÉRENT de toutes les autres routes de
+    lecture : réservée EXCLUSIVEMENT à `ctx.is_global_admin`, jamais le
+    RBAC tenant générique (`_tenant_read_filter`) - un tenant-admin ne doit
+    JAMAIS pouvoir révéler un secret, même dans son propre périmètre
+    tenant (décision utilisateur 2026-11-22). Cette route est en plus
+    explicitement listée dans `auth.py` (`_PROTECTED_REGEXES`) pour exiger
+    un Bearer token valide même si elle est un GET (contrairement aux
+    autres /api/read/*, ouvertes sans authentification obligatoire) :
+    401 sans token/token invalide, 403 si authentifié mais pas
+    global-admin.
+
+    404 : objet inexistant/supprimé, OU attribut non déclaré/pas de type
+    `secret` sur la classe de l'objet, OU aucune valeur active - même
+    sémantique « ne pas distinguer les cas » que les routes de lecture
+    ciblées existantes (cf. read_object_file, routes_files.py).
+
+    500 (jamais un succès trompeur) : SECRET_ENCRYPTION_KEY absente/
+    invalide, ou jeton chiffré corrompu/chiffré avec une autre clé - voir
+    secret_crypto.py pour le choix fail-fast vs runtime documenté.
+    """
+    ctx = app.get_auth_context()
+    if not ctx.is_global_admin:
+        abort(403, description="Réservé à global-admin : révélation d'un attribut secret")
+
+    conn = app.get_db()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, class, meta_class, tenants, deleted_at FROM object WHERE id = %s", (object_id,))
+        obj = cur.fetchone()
+    if not obj or obj[4] is not None:
+        abort(404, description="Objet non trouvé")
+    _, obj_class, obj_meta_class, _, _ = obj
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT data FROM definition WHERE meta_class = %s", (obj_meta_class,))
+        defn = cur.fetchone()
+    class_def = None
+    if defn:
+        for c in defn["data"].get("classes", []):
+            if c["class"] == obj_class:
+                class_def = c
+                break
+
+    attr_def = None
+    if class_def:
+        for a in class_def.get("attributes", []):
+            if a["name"] == attribute:
+                attr_def = a
+                break
+    if attr_def is None or attr_def.get("type") != "secret":
+        abort(404, description=f"Attribut '{attribute}' non déclaré ou pas de type 'secret' sur la classe '{obj_class}'")
+
+    existing_attr = _load_active_attributes_by_name(conn, object_id).get(attribute)
+    ciphertext = None
+    if existing_attr:
+        ciphertext = next((ev["value"] for ev in existing_attr["values"] if ev["column"] == "value_string"), None)
+    if ciphertext is None:
+        abort(404, description=f"Attribut '{attribute}' sans valeur active")
+
+    try:
+        plaintext = decrypt_secret(ciphertext)
+    except SecretEncryptionKeyError as e:
+        abort(500, description=str(e))
+    except ValueError as e:
+        abort(500, description=str(e))
+
+    return jsonify({"object_id": object_id, "attribute": attribute, "value": plaintext})
 
 
 @read_bp.route("/api/class_icon/<string:meta_class>/<string:cls>", methods=["GET"])

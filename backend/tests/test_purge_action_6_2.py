@@ -10,14 +10,14 @@ FakeDB/FakeCursor localement pour app_config et les requêtes WITH
 candidates (non gérées par le FakeCursor existant).
 
 Lancer avec, depuis la racine du dépôt :
-    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/test_purge_action_6_2.py -v
+    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/tests/test_purge_action_6_2.py -v
 """
 import os
 import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app as miami_app  # noqa: E402
 from test_model_driven_typing import make_ctx  # noqa: E402
 

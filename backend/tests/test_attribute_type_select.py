@@ -11,14 +11,14 @@ model/schema.json du dépôt pour les tests de validation de schéma.
 
 Lancer avec, depuis la racine du dépôt :
 
-    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/test_attribute_type_select.py -v
+    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/tests/test_attribute_type_select.py -v
 """
 import os
 import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app as miami_app  # noqa: E402
 from test_model_driven_typing import FakeDB, FakeConn, make_ctx  # noqa: E402
 
@@ -138,14 +138,14 @@ def test_write_attribute_value_select_value_in_list_accepted(client, db_and_ctx)
 
 def test_schema_is_valid_draft7():
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     jsonschema.Draft7Validator.check_schema(load_schema())
 
 
 def test_schema_rejects_select_attribute_without_values():
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(instance={
@@ -159,7 +159,7 @@ def test_schema_rejects_select_attribute_without_values():
 
 def test_schema_accepts_select_attribute_with_values():
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     jsonschema.validate(instance={
         "meta_class": "m",
@@ -174,7 +174,7 @@ def test_schema_still_rejects_joint_1_1_attribute_without_classes():
     """Non-régression de la restructuration if/then -> allOf : la branche
     joint-1-1/joint-1-n reste appliquée telle quelle."""
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(instance={
@@ -188,7 +188,7 @@ def test_schema_still_rejects_joint_1_1_attribute_without_classes():
 
 def test_schema_still_accepts_plain_string_attribute():
     import jsonschema
-    from db import load_schema
+    from data.db import load_schema
 
     jsonschema.validate(instance={
         "meta_class": "m",

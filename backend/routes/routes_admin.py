@@ -5,8 +5,8 @@ import psycopg2.extras
 from flask import Blueprint, jsonify, request, abort
 
 import app
-from file_storage import LocalFileStorage
-from rbac import _check_existing_class_tenant_scope
+from files.file_storage import LocalFileStorage
+from auth.rbac import _check_existing_class_tenant_scope
 
 admin_bp = Blueprint("admin", __name__)
 

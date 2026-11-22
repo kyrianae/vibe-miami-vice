@@ -7,15 +7,15 @@ Racine de stockage isolée par test via `tmp_path` +
 
 Lancer depuis la racine du dépôt :
 
-    .venv/bin/pytest backend/test_file_storage.py -v
+    .venv/bin/pytest backend/tests/test_file_storage.py -v
 """
 import os
 import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
-from file_storage import LocalFileStorage  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from files.file_storage import LocalFileStorage  # noqa: E402
 
 
 @pytest.fixture

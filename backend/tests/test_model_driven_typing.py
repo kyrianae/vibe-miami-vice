@@ -16,7 +16,7 @@ défaut "/model/schema.json" n'existant que dans le conteneur Docker).
 
 Lancer avec, depuis la racine du dépôt :
 
-    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/test_model_driven_typing.py -v
+    SCHEMA_PATH="$(pwd)/model/schema.json" .venv/bin/pytest backend/tests/test_model_driven_typing.py -v
 """
 import json
 import os
@@ -25,7 +25,7 @@ import sys
 import psycopg2.errors
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app as miami_app  # noqa: E402
 
 
@@ -646,7 +646,7 @@ def test_write_metaclass_valid_schema_accepted(client, db_and_ctx):
 # ---------------------------------------------------------------------
 
 def test_init_loads_real_model_files_with_schema_key(client, monkeypatch, db_and_ctx):
-    model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "model")
+    model_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "model")
     monkeypatch.setenv("MODEL_DIR", model_dir)
 
     resp = client.post("/api/init")
