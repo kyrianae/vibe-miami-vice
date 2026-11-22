@@ -139,6 +139,13 @@ class FakeCursor:
             obj = self.db.objects.get(params[0])
             self._result = (obj["deleted_at"],) if obj else None
 
+        elif sql_norm.startswith("SELECT class, tenants, deleted_at FROM object WHERE id"):
+            # Validation de cible datasource (plan-mark3.md action 9),
+            # _apply_attribute_diff - sans FOR SHARE (value_string n'a pas de
+            # contrainte FK, contrairement à joint_id).
+            obj = self.db.objects.get(params[0])
+            self._result = (obj["class"], obj["tenants"], obj["deleted_at"]) if obj else None
+
         elif sql_norm.startswith("SELECT id, deleted_at, tenants FROM object WHERE id"):
             obj = self.db.objects.get(params[0])
             self._result = (obj["id"], obj["deleted_at"], obj["tenants"]) if obj else None

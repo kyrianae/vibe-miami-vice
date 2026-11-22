@@ -752,29 +752,255 @@
 - **Fichiers** : `plan-mark3.md`, `specifications/02-architecture.md`,
   `specifications/03-modele-donnees.md`, `specifications/04-api-backend.md`,
   `specifications/05-frontend.md`, `specifications/07-roadmap.md`.
-- **Statut** : ✅ fait, en 2 itérations suite à revue croisée.
-  **Itération 1** (2026-11-21, `worker`) : Chaque point corrigé relu
-  contre le code source réel cité ci-dessus (pas seulement contre ce plan) :
-  `model/schema.json`/`model/itil_cmdb.json` pour §3.2bis ;
-  `backend/routes_files.py`/`class_icon.py`/`routes_admin.py`/
-  `file_validation.py`/`routes_read.py` pour §4.6 ; `frontend/src/pages/
-  NavigationPage.tsx`/`DiagramPage.tsx`/`ConfigurationPage.tsx`/
-  `classIcons.tsx`/`api.ts` pour §6.8 ; `backend/app.py`/`auth.py`/`rbac.py`
-  et un `ls backend/` réel pour la section 2bis. Aucun comportement de
-  code modifié (contrainte respectée).
-  **Itération 2** (2026-11-21, `worker`), suite revue croisée
-  pessimiste/candide — 1 bloquant + 2 mineurs corrigés : (a) bloquant —
-  `specifications/02-architecture.md` réécrivait EN PLACE 3 phrases de
-  l'audit figé (§0) avec de longs blocs ⚠️, violant la convention
-  « instantané figé » de `specifications/README.md` ; phrases originales
-  restaurées telles quelles, remplacées par un renvoi court en italique
-  vers `07-roadmap.md` §10.2/§10.3 (la section 2bis, additive, non
-  touchée) ; (b) titre de cette action normalisé au gabarit `## 6. [Tag]
-  ...` (était `## Action 6 : [Tag] ...`) ; (c) §4.6 de
-  `04-api-backend.md` sur `sweep_orphan_files` corrigé : contrôle
-  `403`/`ctx.is_global_admin` en handler, pas de pré-filtrage
-  `require_auth` (`401`) comme `/api/purge` — mécanisme différent,
-  résultat final identique.
+- **Statut** : ✅ fait (2026-11-21, `worker`/`pessimiste`/`candide`), en 2
+  itérations suite à revue croisée. Chaque point relu contre le code
+  source réel (pas seulement contre ce plan). Aucun comportement de code
+  modifié.
+
+## 7. [Nouvelle fonctionnalité] Type d'attribut select/enum
+
+> Choix utilisateur du 2026-11-22 parmi les idées de `tocheck.md`, par
+> ordre de priorité explicite (celle-ci en premier). Détail de
+> conception : `specifications/07-roadmap.md` §10.9.
+
+- **Problème** : pas de type d'attribut pour une liste de valeurs fixes
+  (ex. statut, priorité d'un workflow type ticket) — `tocheck.md` #18.
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.9 (pas de
+  duplication du contenu ici) — nouveau type `select` dans l'enum
+  `attributes[].type`, champ `values` sur la définition d'attribut,
+  validation serveur d'appartenance, rendu `<select>` dédié dans
+  `NavigationPage.tsx`.
+- **Effort** : faible (cohérent avec la difficulté 2/5 de `tocheck.md`
+  #18 — nouveau type simple, pas de nouvelle colonne, pas de
+  chiffrement ni de brique d'exécution associée).
+- **Fichiers** : `specifications/07-roadmap.md` (§10.9, conception déjà
+  écrite) ; fichiers d'implémentation réels à déterminer à
+  l'implémentation (rien n'est codé).
+- **Statut** : ✅ fait (2026-11-22, `worker`/`testeur`/`pessimiste`/
+  `candide`/`testeur-global`). Livré en 2 itérations (1 correction suite
+  revue croisée).
+
+  **Itération 1** : implémentation initiale — `model/schema.json` (ajout
+  `"select"` à l'enum `attributes[].type`, nouveau champ `values`,
+  restructuration de l'`if`/`then` unique en `allOf` à 2 branches :
+  branche `joint-1-1`/`joint-1-n` → `classes` inchangée, branche
+  `select` → `values` nouvelle), `backend/routes_write.py`
+  (`_coerce_typed_value` : nouveau bloc de validation d'appartenance à
+  `values`, `abort(400)` sinon, stockage en `value_string`),
+  `frontend/src/types.ts` (type élargi + `values?: string[]`),
+  `frontend/src/pages/NavigationPage.tsx` (branche `<select>` dans le
+  formulaire modal d'édition/création). Nouveau fichier de test
+  `backend/test_attribute_type_select.py`.
+
+  **Itération 2**, suite à revue croisée (pessimiste/candide, gap
+  confirmé indépendamment par les deux, vérifié par l'orchestrateur dans
+  le code avant correction) : l'édition inline de cellule dans
+  `frontend/src/pages/NavigationPage.tsx` tombait dans le champ texte
+  générique au lieu du `<select>` — ajout d'une branche `<select>`
+  dédiée pour l'édition inline de cellule.
+
+  **Tests** : suite backend complète — **202/202 passés**, dont 9
+  nouveaux tests select (valeur autorisée acceptée, valeur hors liste
+  rejetée en 400, `schema.json` valide Draft7, `select` sans `values`
+  rejeté par le schema, `joint-1-1` sans `classes` toujours rejeté —
+  non-régression de la restructuration `allOf`, string simple toujours
+  accepté). `model/schema.json` validé aussi contre les fichiers modèle
+  réels existants (aucune régression). Import backend propre, `docker
+  compose config` OK.
+
+  **Limite connue documentée** : pas de typecheck/build frontend
+  automatisé exécuté (contrainte d'environnement sandbox, pas d'accès à
+  un `node_modules`/conteneur frontend démarré) — relecture manuelle du
+  JSX acceptée à la place, cohérent avec le précédent déjà posé aux
+  actions 3/4 (pas de suite de tests frontend automatisée dans ce
+  projet).
+
+  **Point ouvert non traité, volontairement hors scope** (déjà signalé
+  en conception §10.9 de `specifications/07-roadmap.md`) : valeurs
+  orphelines si `values` est modifié/réduit après coup sur un attribut
+  déjà utilisé — aucune migration automatique.
+
+  **Gap mineur accepté sans correction** (cohérent avec le précédent
+  file/image/csv des actions 3/4) : `ConfigurationPage.tsx` (IHM d'admin
+  du modèle) n'ajoute pas `select` à sa liste de types gérés à la
+  création d'attribut.
+
+## 8. [Nouvelle fonctionnalité] Type d'attribut secret/password
+
+> Choix utilisateur du 2026-11-22 parmi les idées de `tocheck.md`, par
+> ordre de priorité explicite (priorité 2). Détail de conception :
+> `specifications/07-roadmap.md` §10.10.
+
+- **Problème** : pas de type d'attribut pour une valeur sensible
+  (mot de passe, secret) — `tocheck.md` #19.
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.10 (pas de
+  duplication du contenu ici). Rappel : le chiffrement réel (algo, clé,
+  masquage à l'affichage) reste à trancher — ce n'est pas qu'un
+  masquage UI, plusieurs points ⚠️ restent ouverts dans la conception.
+- **Effort** : faible à moyen (difficulté 2/5 affichée dans `tocheck.md`
+  #19, mais incertitude explicite liée au chiffrement réel et à la
+  gestion de clé, non encore tranchés — effort réel potentiellement
+  supérieur à l'estimation initiale).
+- **Fichiers** : `specifications/07-roadmap.md` (§10.10, conception déjà
+  écrite) ; fichiers d'implémentation réels à déterminer à
+  l'implémentation (rien n'est codé).
+- **Statut** : ⬜ à faire — priorité 2, choix utilisateur 2026-11-22.
+
+## 9. [Nouvelle fonctionnalité] Type d'attribut datasource
+
+> Choix utilisateur du 2026-11-22 parmi les idées de `tocheck.md`, par
+> ordre de priorité explicite (priorité 3). Détail de conception :
+> `specifications/07-roadmap.md` §10.11.
+
+- **Problème** : pas de type d'attribut porté par une définition JSON +
+  meta-class (ex. Prometheus, PostgreSQL) — `tocheck.md` #1.
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.11 (pas de
+  duplication du contenu ici). Lien prérequis noté : `tocheck.md` cite
+  cette idée comme prérequis conceptuel des idées ML/ingestion #2/#6/
+  #7/#8 — non engagées, non conçues ici, simple rappel de dépendance
+  future.
+- **Effort** : moyen (difficulté 3/5 dans `tocheck.md` #1, nouveau type
+  + champ structuré de définition de connexion, point ouvert sur
+  meta-class dédiée vs blob JSON).
+- **Fichiers** : `specifications/07-roadmap.md` (§10.11, conception déjà
+  écrite) ; fichiers d'implémentation réels à déterminer à
+  l'implémentation (rien n'est codé).
+- **Statut** : ✅ fait (2026-11-22, `worker`). Décision utilisateur du
+  2026-11-22 tranchant le point ⚠️ ouvert de §10.11 : meta-classe dédiée
+  par type de datasource (ex. `datasource_prometheus`), réutilisant le
+  modèle objet dynamique existant (classes/attributs `model/*.json`,
+  RBAC tenant, historisation `attribute_value`) — jamais un blob JSON
+  opaque dans la définition d'attribut. Livré en 1 itération.
+
+  **Fichiers touchés** : `model/schema.json` (nouveau type `"datasource"`
+  dans l'enum `attributes[].type` ; champ `classes` — déjà requis pour
+  `joint-1-1`/`joint-1-n` — réutilisé tel quel pour lister les classes
+  `datasource_*` autorisées par l'attribut, restructuration `allOf`
+  étendue à 3 branches plutôt qu'une 3e couple if/then séparé) ;
+  `model/datasource.json` (nouveau fichier, meta-classe de démo
+  `datasource` avec une seule classe `datasource_prometheus`, attributs
+  `url`/`query` string, aucun champ credential/secret) ;
+  `backend/routes_write.py` (`_coerce_typed_value` : nouveau bloc
+  `datasource`, format = identifiant entier, stocké en `value_string`
+  jamais `joint_id` ; `_apply_attribute_diff` : nouveau bloc de
+  validation de cible dans la boucle d'insertion — existence + non
+  supprimée, classe cible appartenant à `attr_def["classes"]`, et
+  périmètre tenant de l'acteur courant pour un tenant-admin — `abort(400)`
+  sur cible inexistante/mauvaise classe, `abort(403)` sur dépassement de
+  périmètre tenant) ; `frontend/src/types.ts` (type élargi +
+  commentaire `classes` mis à jour) ; `frontend/src/pages/
+  NavigationPage.tsx` (branche `datasource` dans le formulaire modal
+  création/édition — sélecteur d'objet cible via `getCandidates`/
+  `getCandidateLabel`, valeur gérée comme un attribut scalaire ordinaire
+  dans `newAttrs`, jamais dans `jointValues` — ET dans l'édition inline
+  de cellule, `handleCellClick` + nouvelle branche de rendu dédiée dans
+  le tableau, **en explicitant ce second point dès ce premier passage**
+  pour ne pas reproduire l'oubli de l'action 7 ; affichage en lecture
+  réutilise `formatValue` en ré-enveloppant la chaîne stockée dans
+  `{joint_id}` ; `loadCandidatesForDef` étendu pour précharger les
+  labels des objets `datasource_*` candidats). Nouveau fichier de test
+  `backend/test_attribute_type_datasource.py` ; `backend/
+  test_model_driven_typing.py` (nouvelle branche SQL `FakeCursor` pour
+  `SELECT class, tenants, deleted_at FROM object WHERE id`, infra de
+  test partagée).
+
+  **Choix de conception** : valeur reçue en écriture = identifiant
+  d'objet brut (entier ou chaîne numérique), jamais enveloppée dans
+  `{'joint_id': ...}` comme `joint-1-1` — le stockage physique est
+  `value_string` (jamais la colonne `joint_id`), donc en lecture la
+  valeur ressort telle quelle (chaîne), pas un objet `{joint_id}`. Ce
+  choix garde `datasource` symétrique en écriture/lecture et permet de
+  réutiliser tel quel `write_attribute_value` (édition inline via URL)
+  sans la complication du format dict réservée à la colonne physique
+  `joint_id`.
+
+  **Incertitude signalée** : la consigne initiale supposait que
+  `joint-1-1` empêche déjà l'écriture d'une jointure vers un objet hors
+  du tenant courant ou vers un objet d'une classe non listée dans son
+  champ `classes` — vérifié faux à la lecture du code
+  (`_apply_attribute_diff` ne vérifie pour `joint_id` que l'existence et
+  la non-suppression de la cible, jamais sa classe ni son tenant ;
+  confirmé par `test_delete_object_cascade_scoped_to_tenant_for_tenant_admin`
+  dans `backend/test_model_driven_typing.py`, qui crée sans rejet une
+  jointure `tenant2` → objet `tenant1`). `datasource` va donc plus loin
+  que `joint-1-1` sur ce point (validation classe + tenant ajoutée,
+  demandée explicitement par cette action), au prix d'une incohérence
+  assumée entre les deux types le temps qu'un futur correctif
+  éventuel de `joint-1-1` (hors scope ici) aligne les deux.
+
+  **Tests** : suite backend complète — **214/214 passés**, dont 12
+  nouveaux tests datasource (round-trip création/lecture en
+  `value_string`, rejet 400 cible inexistante, rejet 400 mauvaise classe
+  cible, rejet 403 cible hors périmètre tenant pour un tenant-admin,
+  acceptation pour la même cible en global-admin et en tenant propre,
+  mêmes cas rejoués via `write_attribute_value` (édition inline, URL),
+  rejet 400 valeur non entière, `schema.json` valide Draft7, règle
+  `allOf` `classes` requis/accepté pour `datasource`). `model/schema.json`
+  revalidé aussi contre tous les fichiers modèle réels existants,
+  `model/datasource.json` inclus (aucune régression). Import backend
+  propre, `docker compose config` OK.
+
+  **Limite connue documentée** : pas de typecheck/build frontend
+  automatisé exécuté (même contrainte d'environnement sandbox que les
+  actions 3/4/7) — relecture manuelle du JSX acceptée à la place.
+
+  **Report explicite** (périmètre de cette action, cf. consigne) :
+  aucun champ credential/secret/username/password sur
+  `datasource_prometheus` — l'action 8 (type `secret`/`password`) n'est
+  pas faite ; le jour où une meta-classe `datasource_*` a besoin
+  d'identifiants de connexion, ce champ devra utiliser le type `secret`
+  de l'action 8 une fois livré, en cohérence avec §10.10, jamais un
+  champ texte en clair. Aucun câblage d'exécution de requête (pas de
+  route interrogeant Prometheus) : uniquement le type, la référence, et
+  la meta-classe de démo, comme demandé.
+
+  **Gap mineur accepté sans correction** (cohérent avec le précédent
+  file/image/csv/select des actions 3/4/7) : `ConfigurationPage.tsx`
+  (IHM d'admin du modèle) n'ajoute pas `datasource` à sa liste de types
+  gérés à la création d'attribut (`ATTR_TYPES`).
+
+## 10. [Nouvelle fonctionnalité] Framework de dashboard/affichage configurable
+
+> Choix utilisateur du 2026-11-22 parmi les idées de `tocheck.md`, par
+> ordre de priorité explicite (priorité 4). Détail de conception :
+> `specifications/07-roadmap.md` §10.12.
+
+- **Problème** : pas de framework de dashboard/tabs configurables dans
+  l'IHM — `tocheck.md` #9, qualifié explicitement de « gros chantier
+  frontend, à découper en sous-actions ».
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.12 (pas de
+  duplication du contenu ici — découpage proposé 10a-10e). Cette action
+  10 ne sera **pas** implémentée telle quelle : elle sera probablement
+  scindée en actions 10a/10b/... une fois le découpage §10.12 validé/
+  affiné.
+- **Effort** : élevé (difficulté 5/4 dans `tocheck.md` #9 — gros
+  chantier frontend, portée volontairement non détaillée ici en
+  attendant la validation du découpage).
+- **Fichiers** : `specifications/07-roadmap.md` (§10.12, découpage déjà
+  écrit) ; fichiers d'implémentation réels à déterminer à
+  l'implémentation (rien n'est codé).
+- **Statut** : ⬜ à faire — priorité 4, découpage en sous-actions à
+  valider avant implémentation, choix utilisateur 2026-11-22.
+
+## 11. [Nouvelle fonctionnalité] Outil d'ingestion avec binding
+
+> Choix utilisateur du 2026-11-22 parmi les idées de `tocheck.md`, par
+> ordre de priorité explicite (priorité 5). Détail de conception :
+> `specifications/07-roadmap.md` §10.13.
+
+- **Problème** : pas d'outil générique de mapping champs source →
+  attributs — `tocheck.md` #11.
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.13 (pas de
+  duplication du contenu ici) — définition d'un mapping/binding,
+  réutilisation du type `csv` (§10.8) comme première source possible,
+  pas d'exécution/scheduler dans cette action (reste `tocheck.md` #12,
+  hors scope).
+- **Effort** : élevé (difficulté 4/4 dans `tocheck.md` #11, fondation
+  réutilisable, point ouvert sur le stockage de la config de binding).
+- **Fichiers** : `specifications/07-roadmap.md` (§10.13, conception déjà
+  écrite) ; fichiers d'implémentation réels à déterminer à
+  l'implémentation (rien n'est codé).
+- **Statut** : ⬜ à faire — priorité 5, choix utilisateur 2026-11-22.
 
 ## Récapitulatif d'avancement
 
@@ -789,3 +1015,8 @@
 | 4 | Logo surchargeable par objet et icône par défaut par classe | ✅ fait |
 | 5 | Versionnage des fichiers modèle (préparation migrations) | ✅ fait |
 | 6 | [Dette documentaire] Synchronisation specifications/ avec actions 1-5 | ✅ fait |
+| 7 | Type d'attribut select/enum | ✅ fait |
+| 8 | Type d'attribut secret/password | ⬜ à faire |
+| 9 | Type d'attribut datasource | ✅ fait |
+| 10 | Framework de dashboard/affichage configurable | ⬜ à faire |
+| 11 | Outil d'ingestion avec binding | ⬜ à faire |

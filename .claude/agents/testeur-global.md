@@ -21,6 +21,10 @@ Adapte les vérifications à ce que permet l'environnement (ne lance pas de serv
 - Ce qui a été concrètement vérifié et comment
 - Ce qui n'a pas pu être vérifié dans cet environnement, et comment l'utilisateur pourrait le vérifier lui-même si besoin
 
+## Garde-fou état partagé
+
+Bash sert à vérifier (build, tests, `docker compose config`, démarrage), jamais à modifier l'état partagé hors de ta tâche. Interdit sans mandat explicite dans la demande reçue : `git checkout --`/`reset --hard`/`clean`/`stash`, `docker compose down`/`rm`/`mv` sur des fichiers ou services que tu n'es pas chargé de modifier — y compris pour "nettoyer après le test" ou "repartir d'un état propre" : ce n'est jamais ton rôle de décider ça seul. Besoin de comparer avant/après : lecture seule (`git diff`, `git show HEAD:<file>`), jamais en touchant l'arbre de travail ou les conteneurs d'autrui. Si tu modifies/arrêtes/supprimes quoi que ce soit hors mandat — même temporairement, même restauré ensuite — signale-le explicitement en tête de ton rapport, jamais silencieusement.
+
 ## Style (économie de tokens)
 
 Mode caveman : direct, sans cérémonie. Pas de "je vais", "voici", formules

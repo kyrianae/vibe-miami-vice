@@ -394,3 +394,171 @@ Détail complet et suivi : `plan-mark3.md` actions 3 et 4.
 > classe, fait), 5 (versionnage des fichiers modèle, fait). Action 6
 > (synchronisation de `specifications/` avec les actions 1-5, dette
 > documentaire) ajoutée ce jour — voir `plan-mark3.md`.
+
+## 10.9 Type d'attribut select/enum (`tocheck.md` #18, conçu)
+
+Idée : liste de valeurs fixes (ex. statut, priorité) pour un usage type
+workflow de ticket — l'attribut ne pointe pas vers un autre objet, il ne
+peut prendre qu'une valeur parmi un ensemble déclaré sur sa propre
+définition.
+
+Conception :
+- Nouveau type `"select"` ajouté à l'enum `attributes[].type` de
+  `model/schema.json` (plutôt que `"enum"` : `type` est déjà le mot-clé
+  JSON Schema natif qui porte la liste de types possibles d'un attribut,
+  et `"enum"` comme *valeur* de ce `type` entrerait en collision de sens
+  avec le mot-clé JSON Schema `enum` lui-même, utilisé en interne pour
+  contraindre ce même champ `type` — `"select"` nomme le type sans cette
+  ambiguïté).
+- Nouveau champ `"values"` (tableau de chaînes, ex.
+  `["ouvert", "en_cours", "ferme"]`) au même niveau que `classes` pour
+  `joint-1-1`/`joint-1-n` ou `separator` pour `csv` — propriété de la
+  définition d'attribut dans le schéma, pas de chaque valeur stockée.
+  `required` si `type: select` — même intention que le `required:
+  ["classes"]` déjà posé pour les types jointure, mais pas réemployable
+  tel quel : `model/schema.json` (lignes 91-97) porte aujourd'hui un
+  seul couple `if/then` en sibling dans l'objet attribut, et JSON
+  Schema interdit deux couples `if/then` sœurs dans le même objet.
+  Ajouter cette 2e condition suppose de restructurer en `allOf:
+  [{if,then}, {if,then}]` à deux branches.
+  ⚠️ Point ouvert : forme exacte de cette restructuration (`allOf` à
+  trancher à l'implémentation, pas un simple réemploi du mécanisme
+  existant).
+- Stockage : `value_string` existant suffit (la valeur sélectionnée est
+  une des chaînes de `values`) — aucune nouvelle colonne, contrainte
+  `CHECK` de `attribute_value` inchangée.
+- Validation : à l'écriture, vérifier côté serveur que la valeur soumise
+  appartient à `values` déclaré sur l'attribut, sinon rejet 400 — même
+  esprit que `constraint` (regex, type string only) mais une autre
+  forme de contrôle (appartenance à un ensemble fini plutôt qu'un motif).
+- IHM (`NavigationPage.tsx`) : nouvelle branche de rendu `<select>`/
+  dropdown, au même titre que les branches dédiées déjà prévues pour
+  `file`/`image`/`csv` (§10.8) — sans cette branche, le type tomberait
+  dans le champ texte générique.
+- Différence explicite avec `joint-1-1`/`joint-1-n` : pas de référence à
+  un autre objet ni à une classe cible, les valeurs possibles sont
+  fixes et inlinées dans la définition d'attribut elle-même — deux
+  patterns distincts à ne pas confondre.
+- ⚠️ Point ouvert : renommage ou suppression d'une valeur de `values`
+  déjà utilisée par des `attribute_value` existants — valeurs orphelines
+  possibles (une ligne historisée continue de porter une chaîne qui ne
+  figure plus dans `values`), aucune migration automatique prévue ici.
+
+Détail complet et suivi : `plan-mark3.md` action 7.
+
+## 10.10 Type d'attribut secret/password (`tocheck.md` #19, conçu)
+
+⚠️ Le score de difficulté 2/5 affiché dans `tocheck.md` ne reflète que
+l'effort perçu avant analyse — à ne pas sous-estimer sur cette base :
+cette section demande un chiffrement réel, pas un simple masquage
+d'affichage, et plusieurs points restent explicitement non tranchés
+ci-dessous.
+
+- Nouveau type `"secret"` ajouté à l'enum `attributes[].type`.
+- Stockage : valeur chiffrée dans `value_string` (jamais en clair). La
+  bibliothèque `cryptography` est déjà présente dans
+  `backend/requirements.txt` (utilisée aujourd'hui pour d'autres besoins
+  du projet) — candidate naturelle pour un chiffrement symétrique type
+  Fernet/AES-GCM, à vérifier/confirmer à l'implémentation plutôt qu'une
+  nouvelle dépendance à ajouter.
+- ⚠️ Gestion de clé, non tranchée : où est stockée la clé de
+  chiffrement — une variable d'environnement type
+  `SECRET_ENCRYPTION_KEY` (même pattern que `FILE_STORAGE_ROOT`/
+  `SCHEMA_PATH`) ou un KMS externe (probablement hors scope à ce
+  stade) ? Clé unique globale, ou une clé par tenant (RBAC multi-tenant
+  existant, `backend/rbac.py`) ? Qui peut déchiffrer : est-ce un simple
+  flag « masqué à l'affichage » réversible par quiconque a accès à
+  l'API, ou un chiffrement réellement opaque, y compris pour un
+  administrateur qui n'aurait pas la clé ? Ces questions sont posées
+  ici comme point ouvert, volontairement non tranchées.
+- ⚠️ Masquage à l'affichage, non tranché : `GET` ne doit jamais renvoyer
+  la valeur déchiffrée en clair par défaut (comportement différent de
+  tous les autres types d'attribut) — soit un flag `?reveal=true` avec
+  un contrôle RBAC renforcé par rapport à la lecture générique, soit
+  aucun déchiffrement via l'API de lecture générique et uniquement une
+  route dédiée avec une permission spécifique. Choix à faire à
+  l'implémentation.
+- Historisation (`valid_from`/`valid_to`, §10.4) : une valeur secrète
+  historisée reste chiffrée dans les versions passées aussi — aucune
+  différence de traitement par rapport au reste du modèle.
+- IHM : `<input type="password">` à la saisie, jamais pré-rempli avec la
+  valeur réelle déchiffrée en édition — affichage de points/placeholder
+  uniquement, comme un formulaire classique de changement de mot de
+  passe.
+
+Détail complet et suivi : `plan-mark3.md` action 8.
+
+## 10.11 Type d'attribut datasource (`tocheck.md` #1, conçu)
+
+Idée : type d'attribut porté par une définition JSON et une meta-class
+(ex. Prometheus, PostgreSQL). `tocheck.md` le note explicitement comme
+prérequis conceptuel des idées ML/ingestion (#2, #6, #7, #8) — simple
+rappel de dépendance future, ces idées ne sont ni conçues ni engagées
+ici.
+
+- Nouveau type `"datasource"` ajouté à l'enum `attributes[].type`.
+- Champ complémentaire portant une définition structurée du type de
+  source (ex. `"datasource_kind"`, ou un sous-schéma imbriqué décrivant
+  Prometheus/PostgreSQL/etc. et les paramètres de connexion).
+- ⚠️ Point ouvert, à ne pas trancher ici : faut-il une meta-class
+  dédiée par type de datasource (ex. une classe `datasource_prometheus`
+  portant ses propres attributs de connexion, en réutilisant le modèle
+  objet dynamique existant) plutôt qu'un blob JSON opaque dans la
+  définition d'attribut — cohérence à rechercher avec le principe déjà
+  en place du projet (modèle entièrement dynamique, §1) plutôt que
+  d'introduire un format propriétaire de plus.
+- Stockage de la valeur : probablement `value_string` = pointeur/
+  identifiant vers la config de connexion, pas les identifiants de
+  connexion en clair dans l'attribut lui-même — ⚠️ risque de sécurité du
+  même ordre que §10.10 (secrets de connexion), à traiter en cohérence
+  avec cette section si les deux se font un jour.
+- Pas de câblage d'exécution de requête ici (ça reste #7/#8 de
+  `tocheck.md`, hors scope, non demandé) — uniquement la définition du
+  type et son schéma.
+
+Détail complet et suivi : `plan-mark3.md` action 9.
+
+## 10.12 Framework de dashboard/affichage configurable (`tocheck.md` #9, conçu)
+
+`tocheck.md` qualifie cette idée de « gros chantier frontend, à
+découper en sous-actions ». Ce qui suit n'est donc pas un design détaillé
+d'implémentation mais un **découpage proposé** en sous-actions, à
+affiner/valider avant toute écriture de code — même prudence de portée
+que l'action 2 du plan (brique isolée, pas de câblage prématuré) :
+
+- **10a** : modèle de données d'un « dashboard »/« tab » configurable —
+  où stocker la config (nouvelle classe du modèle dynamique existant, ou
+  table applicative dédiée ?).
+- **10b** : IHM minimale en lecture seule d'un dashboard existant (rendu
+  d'une config statique déjà en base).
+- **10c** : édition des tabs dans l'IHM (CRUD de la config).
+- **10d** : sélection des sous-objets affichés par tab (filtre/requête
+  configurable).
+- **10e** : (si pertinent) lien avec `tocheck.md` #10 — générer des
+  displays en lecture seule à partir des tabs éditées, avec RBAC fin par
+  vue ; idée **suivante**, non incluse ici, dépendante de #9.
+
+⚠️ Ce découpage lui-même reste à valider/affiner avant de devenir des
+actions trackées dans un futur `plan-markN.md` — il n'est pas figé.
+
+Détail complet et suivi : `plan-mark3.md` action 10.
+
+## 10.13 Outil d'ingestion avec binding (`tocheck.md` #11, conçu)
+
+Idée : mapping champs source → attributs, pensé comme fondation
+réutilisable (CSV, API...).
+
+Conception à esquisser :
+- Définition d'un « mapping »/« binding » : format (probablement JSON)
+  décrivant source → champ → attribut cible d'une classe.
+- Réutilisation du type `csv` existant (§10.8) comme première source
+  d'entrée possible, ou upload direct.
+- ⚠️ Point ouvert : où est stockée la config de binding — nouvelle
+  classe du modèle dynamique, comme envisagé pour §10.12 ? Cohérence à
+  rechercher avec §10.12 si les deux se font un jour : les deux ont
+  besoin d'un endroit pour stocker de la config applicative, pas des
+  objets métier.
+- Pas d'exécution ni de scheduler ici (ça reste `tocheck.md` #12, hors
+  scope, non demandé).
+
+Détail complet et suivi : `plan-mark3.md` action 11.

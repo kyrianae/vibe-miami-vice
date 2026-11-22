@@ -1,0 +1,22 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "datasource",
+    "classes": [
+        {
+            "class": "datasource_prometheus",
+            "displayname": "{{url}}",
+            "attributes": [
+                {
+                    "domain": "connexion",
+                    "name": "url",
+                    "type": "string"
+                },
+                {
+                    "domain": "requete",
+                    "name": "query",
+                    "type": "string"
+                }
+            ]
+        }
+    ]
+}

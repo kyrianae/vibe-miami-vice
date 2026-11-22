@@ -64,15 +64,15 @@
                                 },
                                 "type": {
                                     "type": "string",
-                                    "enum": ["string", "integer", "float", "joint-1-1", "joint-1-n", "file", "image", "csv"],
-                                    "description": "Type de la valeur de l'attribut (joint-1-1 pour liaison 1:1, joint-1-n pour liaison 1:N, file/image/csv pour un pointeur vers FileStorage)"
+                                    "enum": ["string", "integer", "float", "joint-1-1", "joint-1-n", "file", "image", "csv", "select", "datasource"],
+                                    "description": "Type de la valeur de l'attribut (joint-1-1 pour liaison 1:1, joint-1-n pour liaison 1:N, file/image/csv pour un pointeur vers FileStorage, select pour une liste de valeurs fixes, datasource pour un pointeur vers un objet d'une meta-classe datasource_* dédiée, ex. datasource_prometheus - plan-mark3.md action 9)"
                                 },
                                 "classes": {
                                     "type": "array",
                                     "items": {
                                         "type": "string"
                                     },
-                                    "description": "Classes cibles autorisées pour une jointure (requis si type = joint)"
+                                    "description": "Classes cibles autorisées (requis si type = joint-1-1/joint-1-n pour une jointure, ou type = datasource pour les classes datasource_* acceptées par ce pointeur - plan-mark3.md action 9, même mécanisme réutilisé)"
                                 },
                                 "constraint": {
                                     "type": "string",
@@ -85,15 +85,34 @@
                                 "separator": {
                                     "type": "string",
                                     "description": "Séparateur de colonnes réservé au type 'csv' (défaut ',' si absent, appliqué côté code, pas dans ce schéma). Sans objet pour les autres types."
+                                },
+                                "values": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "description": "Liste fixe des valeurs autorisées, réservée au type 'select' (requis si type = select). La valeur stockée (value_string) doit appartenir à cette liste. Sans objet pour les autres types."
                                 }
                             },
                             "additionalProperties": false,
-                            "if": {
-                                "properties": { "type": { "enum": ["joint-1-1", "joint-1-n"] } }
-                            },
-                            "then": {
-                                "required": ["classes"]
-                            }
+                            "allOf": [
+                                {
+                                    "if": {
+                                        "properties": { "type": { "enum": ["joint-1-1", "joint-1-n", "datasource"] } }
+                                    },
+                                    "then": {
+                                        "required": ["classes"]
+                                    }
+                                },
+                                {
+                                    "if": {
+                                        "properties": { "type": { "const": "select" } }
+                                    },
+                                    "then": {
+                                        "required": ["values"]
+                                    }
+                                }
+                            ]
                         }
                     }
                 },

@@ -390,6 +390,37 @@ def _coerce_typed_value(attr_def, raw_value):
         except (TypeError, ValueError):
             abort(400, description=f"Valeur invalide pour l'attribut {attr_name!r} (nombre attendu) : {raw_value!r}")
 
+    if attr_type == "datasource":
+        # Pointeur (value_string) vers l'id d'un objet d'une meta-classe
+        # datasource_* dédiée (plan-mark3.md action 9, specifications/
+        # 07-roadmap.md §10.11) - jamais un blob de config inline, jamais de
+        # credential ici (reporté à l'action 8/§10.10, non faite). Même
+        # famille de stockage que select/file/image/csv (value_string), mais
+        # la valeur est un identifiant d'objet entier, pas une forme libre.
+        # Seul le format est vérifié ici (_coerce_typed_value n'a pas de
+        # curseur DB) : existence, classe cible autorisée et périmètre
+        # tenant sont vérifiés plus loin par _apply_attribute_diff, une fois
+        # l'objet cible effectivement lu en base.
+        if isinstance(raw_value, bool):
+            abort(400, description=f"Attribut {attr_name!r} (type datasource) : identifiant d'objet entier attendu : {raw_value!r}")
+        try:
+            target_id = int(raw_value)
+        except (TypeError, ValueError):
+            abort(400, description=f"Attribut {attr_name!r} (type datasource) : identifiant d'objet entier attendu : {raw_value!r}")
+        return "value_string", str(target_id)
+
+    if attr_type == "select":
+        # Appartenance à l'ensemble fini déclaré sur l'attribut (model/schema.json
+        # "values", requis par le schéma si type = select) - plan-mark3.md action 7.
+        # Défensif si "values" absent/vide malgré le required du schéma (modèle
+        # chargé sans validation JSON Schema préalable, par ex.) : allowed_values
+        # vide => aucune valeur n'est jamais valide, rejet propre plutôt que crash.
+        allowed_values = attr_def.get("values") or []
+        str_value = str(raw_value)
+        if str_value not in allowed_values:
+            abort(400, description=f"Valeur invalide pour l'attribut {attr_name!r} (type select) : {raw_value!r}, valeurs autorisées : {allowed_values!r}")
+        return "value_string", str_value
+
     # "string" (et tout type non reconnu, par sécurité) : toujours
     # value_string, jamais de tentative int()/float() même si la valeur a
     # l'air numérique (ex. code postal "007" doit rester "007").
@@ -484,6 +515,30 @@ def _apply_attribute_diff(cur, object_id, attr_name, attr_def, existing_attr, re
             target = cur.fetchone()
             if target is None or target[0] is not None:
                 abort(400, description=f"Objet cible {value} inexistant ou déjà supprimé")
+        elif attr_def.get("type") == "datasource":
+            # Validation de la cible (plan-mark3.md action 9) : existence,
+            # classe autorisée (champ "classes" de l'attribut, même
+            # mécanisme que joint-1-1/joint-1-n) et périmètre tenant de
+            # l'acteur courant. Pas de FOR SHARE ici : value_string n'a pas
+            # de contrainte FK au niveau DB (contrairement à joint_id), le
+            # risque de course résiduel (suppression concurrente de la
+            # cible pendant cette transaction) est le même ordre que celui
+            # déjà accepté pour les pointeurs fichier "ref:..." ailleurs
+            # dans ce module - non bloquant pour cette action.
+            target_id = int(value)
+            cur.execute("SELECT class, tenants, deleted_at FROM object WHERE id = %s", (target_id,))
+            target = cur.fetchone()
+            if target is None or target[2] is not None:
+                abort(400, description=f"Attribut {attr_name!r} (type datasource) : objet cible {target_id} inexistant ou déjà supprimé")
+            target_class, target_tenants_raw, _ = target
+            allowed_classes = attr_def.get("classes") or []
+            if target_class not in allowed_classes:
+                abort(400, description=f"Attribut {attr_name!r} (type datasource) : l'objet cible {target_id} (classe {target_class!r}) n'appartient pas à une classe autorisée {allowed_classes!r}")
+            ctx = app.get_auth_context()
+            if ctx.is_tenant_admin:
+                target_tenants = _tenants_db_to_list(target_tenants_raw)
+                if target_tenants and not (set(target_tenants) & set(ctx.tenants)):
+                    abort(403, description=f"Attribut {attr_name!r} (type datasource) : objet cible hors de votre périmètre tenant")
         cur.execute(
             f"INSERT INTO attribute_value (attribute_id, {column}) VALUES (%s, %s)",
             (attribute_id, value)

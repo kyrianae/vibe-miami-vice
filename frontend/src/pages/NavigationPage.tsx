@@ -470,7 +470,9 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
   }, [showCreate, selectedClassDef]);
 
   const loadCandidatesForDef = (def: ClassInfo) => {
-    const jointAttrs = def.attributes.filter((a) => a.type === 'joint-1-1' || a.type === 'joint-1-n');
+    // datasource (plan-mark3.md action 9) inclus ici : même préchargement de
+    // label d'objet cible que joint-1-1/joint-1-n, réutilisé tel quel.
+    const jointAttrs = def.attributes.filter((a) => a.type === 'joint-1-1' || a.type === 'joint-1-n' || a.type === 'datasource');
     if (jointAttrs.length === 0) return;
     const targetClasses = new Set(jointAttrs.flatMap((a) => a.classes || []));
     const candidates = objects.filter((o) => targetClasses.has(o.class));
@@ -728,6 +730,30 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
         : [];
       setInlineEdit({ objectId: obj.id, attrName, value: currentIds.length > 0 ? String(currentIds[0]) : '' });
       // Load candidates
+      const targetClasses = new Set(attrDef.classes || []);
+      const candidates = objects.filter((o) => targetClasses.has(o.class));
+      const toLoad = candidates.filter((o) => !detailCache[o.id]);
+      if (toLoad.length > 0) {
+        Promise.allSettled(toLoad.map((o) => apiReadObject(o.id))).then((results) => {
+          const labels: Record<number, string> = {};
+          results.forEach((r, i) => {
+            if (r.status === 'fulfilled') {
+              const d = r.value;
+              setDetailCache((prev) => ({ ...prev, [d.id]: d }));
+              labels[d.id] = `${resolveDisplayName(d)} (#${d.id})`;
+            }
+          });
+          setCandidateLabels((prev) => ({ ...prev, ...labels }));
+        });
+      }
+    } else if (attrDef.type === 'datasource') {
+      // Inline select pour datasource (plan-mark3.md action 9) : même
+      // préchargement de labels que joint-1-1 ci-dessus - l'édition inline
+      // de cellule avait été oubliée à l'action 7 (select), pas reproduit
+      // ici.
+      const currentVal = detail?.attributes.find((a) => a.name === attrName);
+      const val = currentVal && currentVal.values.length > 0 ? String(currentVal.values[0]) : '';
+      setInlineEdit({ objectId: obj.id, attrName, value: val });
       const targetClasses = new Set(attrDef.classes || []);
       const candidates = objects.filter((o) => targetClasses.has(o.class));
       const toLoad = candidates.filter((o) => !detailCache[o.id]);
@@ -1188,6 +1214,50 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                   </div>
                 );
               }
+              if (attr.type === 'datasource') {
+                // Pointeur vers un objet d'une meta-classe datasource_*
+                // dédiée (plan-mark3.md action 9) : sélecteur d'objet
+                // cible, même mécanisme que joint-1-1 (getCandidates/
+                // getCandidateLabel), mais stocké dans newAttrs (string)
+                // comme un attribut scalaire ordinaire - pas dans
+                // jointValues, la valeur backend est value_string (un id),
+                // jamais la colonne physique joint_id.
+                const candidates = getCandidates(attr, editingObjectId);
+                const current = newAttrs[attr.name] || '';
+                return (
+                  <div className="form-group" key={attr.name}>
+                    <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>(datasource — {attr.domain})</span></label>
+                    <select
+                      value={current}
+                      onChange={(e) => setNewAttrs({ ...newAttrs, [attr.name]: e.target.value })}
+                    >
+                      <option value="">-- Aucun --</option>
+                      {candidates.map((c) => <option key={c.id} value={c.id}>{getCandidateLabel(c)}</option>)}
+                    </select>
+                  </div>
+                );
+              }
+              if (attr.type === 'select') {
+                // Liste fixe de valeurs (plan-mark3.md action 7) : dropdown
+                // au lieu du champ texte générique, option vide ajoutée si
+                // aucune valeur courante n'est sélectionnée.
+                const options = attr.values || [];
+                const current = newAttrs[attr.name] || '';
+                return (
+                  <div className="form-group" key={attr.name}>
+                    <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span></label>
+                    <select
+                      value={current}
+                      onChange={(e) => setNewAttrs({ ...newAttrs, [attr.name]: e.target.value })}
+                    >
+                      {!current && <option value="">-- Choisir --</option>}
+                      {options.map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              }
               return (
                 <div className="form-group" key={attr.name}>
                   <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span></label>
@@ -1366,6 +1436,53 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                             const attrDef = attrDefs.find((a) => a.name === name);
                             const isJoint11 = attrDef?.type === 'joint-1-1';
                             const isJoint1N = attrDef?.type === 'joint-1-n';
+                            const isSelect = attrDef?.type === 'select';
+                            const isDatasource = attrDef?.type === 'datasource';
+
+                            if (isInlineEditing && isDatasource) {
+                              const candidates = getCandidates({ classes: attrDef?.classes, name: attrDef?.name }, obj.id);
+                              return (
+                                <td key={name} style={{ padding: 2 }}>
+                                  <select
+                                    autoFocus
+                                    value={inlineEdit.value}
+                                    onChange={(e) => {
+                                      setInlineEdit({ ...inlineEdit, value: e.target.value });
+                                    }}
+                                    onBlur={saveInlineEdit}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Escape') setInlineEdit(null);
+                                    }}
+                                    style={{ width: '100%', padding: '4px 6px', fontSize: 13, background: 'var(--color-bg)', color: 'var(--color-text)', border: '2px solid var(--color-accent)', borderRadius: 4, outline: 'none' }}
+                                  >
+                                    <option value="">-- Aucun --</option>
+                                    {candidates.map((c) => <option key={c.id} value={c.id}>{getCandidateLabel(c)}</option>)}
+                                  </select>
+                                </td>
+                              );
+                            }
+
+                            if (isInlineEditing && isSelect) {
+                              return (
+                                <td key={name} style={{ padding: 2 }}>
+                                  <select
+                                    autoFocus
+                                    value={inlineEdit.value}
+                                    onChange={(e) => {
+                                      setInlineEdit({ ...inlineEdit, value: e.target.value });
+                                    }}
+                                    onBlur={saveInlineEdit}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Escape') setInlineEdit(null);
+                                    }}
+                                    style={{ width: '100%', padding: '4px 6px', fontSize: 13, background: 'var(--color-bg)', color: 'var(--color-text)', border: '2px solid var(--color-accent)', borderRadius: 4, outline: 'none' }}
+                                  >
+                                    <option value="">-- Aucun --</option>
+                                    {(attrDef?.values || []).map((v: string) => <option key={v} value={v}>{v}</option>)}
+                                  </select>
+                                </td>
+                              );
+                            }
 
                             if (isInlineEditing && isJoint11) {
                               const candidates = getCandidates({ classes: attrDef?.classes, name: attrDef?.name }, obj.id);
@@ -1390,7 +1507,7 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                               );
                             }
 
-                            if (isInlineEditing && !isJoint11 && !isJoint1N) {
+                            if (isInlineEditing && !isJoint11 && !isJoint1N && !isSelect && !isDatasource) {
                               return (
                                 <td key={name} style={{ padding: 2 }}>
                                   <input
@@ -1430,6 +1547,12 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                                   <span style={{ color: 'var(--color-text-muted)' }}>—</span>
                                 ) : isFileType && attrDef ? (
                                   <FileAttributeValueDisplay objectId={obj.id} attrDef={attrDef} value={String(attr!.values[0])} />
+                                ) : isDatasource ? (
+                                  // Stocké en value_string (un id, jamais la colonne
+                                  // physique joint_id - plan-mark3.md action 9) :
+                                  // ré-enveloppé en {joint_id} pour réutiliser tel
+                                  // quel la résolution de label existante de formatValue.
+                                  attr!.values.map((v, j) => <span key={j} style={{ marginRight: 6 }}>{formatValue({ joint_id: Number(v) })}</span>)
                                 ) : (
                                   attr!.values.map((v, j) => <span key={j} style={{ marginRight: 6 }}>{formatValue(v)}</span>)
                                 )}

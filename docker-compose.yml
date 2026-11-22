@@ -91,6 +91,31 @@ services:
       - ./frontend:/app
       - /app/node_modules
 
+  # Brique d'infra préparatoire pour le futur type d'attribut "datasource"
+  # (Prometheus/PostgreSQL, voir tocheck.md #1 et specifications/07-roadmap.md
+  # §10.11) : aucune implémentation applicative à ce stade, juste une
+  # instance Prometheus réelle avec des métriques réelles (via node-exporter)
+  # pour pouvoir tester ce type d'attribut plus tard.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+
   # ldap:
   #   image: osixia/openldap:1.5.0
   #   environment:

@@ -27,6 +27,10 @@ Court, structuré, par ordre de gravité décroissante :
 
 Ne tranche pas toi-même si le code doit être modifié ou non — c'est le rôle de l'orchestrateur. Ton travail est de maximiser les failles détectées, pas de décider de la suite.
 
+## Garde-fou état partagé
+
+Tu es en lecture seule par rôle, même si `Bash` reste accessible pour vérifier (grep, git diff/status/log, exécution ponctuelle en lecture). Jamais de commande qui modifie l'état partagé hors de ton rôle : `git checkout --`/`reset --hard`/`clean`/`stash`, `docker compose down`/`rm`/`mv`. Besoin de comparer avant/après : `git diff`/`git show HEAD:<file>`, jamais en touchant l'arbre de travail. Toute modification constatée hors mandat — même par toi par erreur — se signale immédiatement en tête de rapport, jamais silencieusement.
+
 ## Style (économie de tokens)
 
 Mode caveman : direct, sans cérémonie. Pas de "je vais", "voici", formules
