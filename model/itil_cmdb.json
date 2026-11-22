@@ -59,7 +59,7 @@
                     "domain": "supervision",
                     "name": "monitoring",
                     "type": "datasource",
-                    "classes": ["datasource_prometheus"]
+                    "classes": ["query"]
                 }
             ]
         },

@@ -959,6 +959,64 @@
   (IHM d'admin du modèle) n'ajoute pas `datasource` à sa liste de types
   gérés à la création d'attribut (`ATTR_TYPES`).
 
+  **Itération 2** (2026-11-22, `worker`), suite revue croisée
+  pessimiste — 2 corrections sur `backend/routes_write.py` :
+  (a) **bloquant** — `delete_object` ne fermait aucune valeur `attribute_value`
+  pointant (en `datasource`) vers l'objet supprimé : cascade ajoutée
+  (recherche `value_string = str(object_id)` sur attributs actifs,
+  filtrée tenant comme pour `joint_id`, revalidée via l'`attr_def` réel —
+  ferme uniquement si type `datasource` et classe source dans
+  `attr_def["classes"]`) ; (b) mineur — garde `isinstance(..., float) and
+  not .is_integer()` → 400 ajoutée, alignée sur `joint-1-1`. 3 tests
+  ajoutés dans `test_attribute_type_datasource.py`. Fix connexe découvert
+  en cours : `test_model_driven_typing.py` (`FakeCursor` partagé)
+  reconnaît désormais aussi la requête SQL de cascade (10 tests cassés
+  par la nouvelle requête, réparés par l'ajout d'une branche, aucun des
+  10 n'avait de rapport avec le comportement testé lui-même).
+
+  **Tests finaux** : suite complète **217/217 passés** (214 + 3), suite
+  rejouée et reconfirmée manuellement a posteriori (2026-11-22, agent
+  top-level, hors cycle orchestrateur — voir note ci-dessous) :
+  `SCHEMA_PATH=.../model/schema.json .venv/bin/pytest backend/ -q` →
+  217/217 ; `docker compose config` OK.
+
+  **Note de suivi** : l'itération 2 a été dispatchée et confirmée
+  fonctionnelle (testeur), mais le cycle orchestrateur ne m'a jamais
+  renvoyé la confirmation finale pessimiste/candide + `testeur-global`
+  sur cette itération précise avant de s'arrêter silencieusement — à
+  l'inverse des actions 1-8 précédentes. Code/tests revérifiés
+  manuellement comme ci-dessus (217/217, config OK), mais pas de second
+  regard croisé formel sur l'itération 2 à ce jour. Cause probable : les
+  garde-fous ajoutés en cours de session aux `.claude/agents/*.md`
+  (clôture du Statut uniquement après `testeur-global` vert) ne
+  s'appliquent qu'aux agents lancés après l'édition des fichiers, pas à
+  une instance déjà en cours d'exécution.
+
+  **Travail additionnel direct (2026-11-22, agent top-level, hors cycle
+  orchestrateur)**, suite à demande utilisateur de peupler la DB réelle
+  et d'affiner le modèle :
+  - `model/datasource.json` scindé : `datasource_prometheus` (`url`
+    seul) et nouvelle classe `query` (`name`/`expression` +
+    `joint-1-1` vers `datasource_prometheus`) — une datasource et une
+    requête sont deux concepts distincts, la requête référence sa
+    datasource (demande utilisateur explicite).
+  - `model/itil_cmdb.json` : `serveur.monitoring` (type `datasource`)
+    retargeté de `datasource_prometheus` vers `query` (pointer vers la
+    requête à afficher, pas la connexion brute).
+  - Objets réels créés dans la DB (volontairement conservés, pas de
+    cleanup — cf. garde-fou `testeur`/`testeur-global` mis à jour) :
+    `datasource_prometheus` #129 (`url=http://prometheus:9090`), `query`
+    #134 (`expression=rate(node_cpu_seconds_total{...}[1m])`,
+    `datasource→129`), `serveur` #130 (`monitoring→134`), `ticket` #131
+    (`statut=ouvert`, `priorite=haute`, démontre le type `select` de
+    l'action 7).
+  - Validé : `jsonschema` sur les 2 fichiers modifiés, round-trip
+    `/api/init` + `/api/write/object` + `/api/read/object` réel via
+    token Keycloak (`testuser`/global-admin), lecture confirmant la
+    chaîne serveur→query→datasource.
+  - **Pas encore passé par pessimiste/candide** (changement de modèle
+    direct, hors cycle orchestrateur) — à challenger si besoin.
+
 ## 10. [Nouvelle fonctionnalité] Framework de dashboard/affichage configurable
 
 > Choix utilisateur du 2026-11-22 parmi les idées de `tocheck.md`, par

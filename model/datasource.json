@@ -10,11 +10,30 @@
                     "domain": "connexion",
                     "name": "url",
                     "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "query",
+            "displayname": "{{name}}",
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "name",
+                    "type": "string"
                 },
                 {
                     "domain": "requete",
-                    "name": "query",
+                    "name": "expression",
                     "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "datasource",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "datasource_prometheus"
+                    ]
                 }
             ]
         }
