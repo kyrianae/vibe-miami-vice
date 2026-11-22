@@ -1557,6 +1557,86 @@
   désync, 3 erreurs TS pré-existantes dans `DiagramPage.tsx` confirmées
   sans rapport (identique à HEAD, hors de ce diff).
 
+## 14. [Nouvelle fonctionnalité] Layers sur les classes et filtre IHM/diagramme
+
+> Demande utilisateur (2026-11-22) : « analyser l'ajout d'une info layers
+> au classe et metaclasse, chaque classe fait partie d'un ou plusieurs
+> layers, dans l'ihm on sélectionne les layers avec lesquels on travaille
+> pour filtrer, idem pour les diagrammes ». 3 points de conception tranchés
+> par l'utilisateur après analyse :
+> 1. Classe sans layer (champ absent/vide) = **toujours visible**, quel
+>    que soit le filtre actif (même convention que `tenants` — non
+>    régressif, aucune classe existante ne disparaît tant que son champ
+>    `layers` n'est pas édité).
+> 2. Sélection des layers actifs = **persistée en localStorage** (survit
+>    à un reload), cohérent avec l'idée de « contexte de travail ».
+> 3. Registre des layers = **tag texte libre par classe** (comme
+>    `tenants`), **pas** de nouvelle meta-classe dédiée — mais la liste
+>    des layers connus (union/déduplication des `layers` de toutes les
+>    classes) doit être **visible dans `ConfigurationPage.tsx`**, pas
+>    seulement déduite silencieusement côté Sidebar.
+
+- **Problème** : aucune notion de « layer » (calque thématique) sur une
+  classe aujourd'hui — pas de moyen de grouper des classes transverses à
+  plusieurs meta-classes pour les activer/désactiver ensemble à l'affichage
+  (ex. layer « physique », « réseau », « sécurité » dans un CMDB). Le seul
+  filtre existant (`Sidebar.tsx`) est mono-sélection `meta_class`/`class`
+  (un seul actif à la fois) ; `DiagramPage.tsx` a un filtre par classe
+  individuelle (`hiddenClasses`, non persisté, non partagé avec
+  `NavigationPage.tsx`).
+- **Correctif** :
+  1. `model/schema.json` : nouveau champ optionnel `"layers"` (array de
+     string) sur une classe, même emplacement/pattern que `tenants`/
+     `icon`. Absent/vide = visible quel que soit le filtre layer actif
+     (point 1 ci-dessus).
+  2. `frontend/src/types.ts` : `ClassDefinition`/`ClassInfo` étendus avec
+     `layers?: string[]`.
+  3. `frontend/src/pages/ConfigurationPage.tsx` : input texte
+     comma-separated pour `layers` sur la classe (même pattern que
+     `tenants`, ligne ~447-449) ; **et** affichage de la liste des layers
+     connus (union dédupliquée de tous les `layers` de toutes les classes
+     du modèle chargé) — en lecture au minimum, pour que l'utilisateur
+     voie/réutilise les noms de layers déjà existants au lieu de les
+     retaper/fauter.
+  4. Nouvel état `selectedLayers` (Set de strings, **multi-sélection** —
+     contrairement à `selectedMetaClass`/`selectedClass` qui restent
+     mono-sélection), remonté dans `frontend/src/App.tsx`, persisté en
+     `localStorage` (lecture au montage, écriture à chaque changement).
+     Vide/absent = pas de filtre actif (tous les layers visibles, défaut
+     non régressif).
+  5. `frontend/src/components/Sidebar.tsx` : nouvelle section de
+     sélection des layers (checkboxes ou chips togglables, multi), liste
+     déduite dynamiquement des classes chargées (`apiReadClasses()`),
+     au-dessus ou en dessous de l'arbre `meta_class`/`class` existant.
+  6. `frontend/src/pages/NavigationPage.tsx` : filtre supplémentaire sur
+     `selectedLayers` (classe visible si `layers` vide/absent **ou**
+     intersection non vide avec `selectedLayers`), appliqué là où la
+     liste d'objets est déjà filtrée par meta_class/class.
+  7. `frontend/src/pages/DiagramPage.tsx` : même predicate layer ajouté
+     dans `filteredObjects` (`useMemo`, à côté de `selectedMetaClass`/
+     `selectedClass`/`hiddenClasses` existants).
+  8. Aucun changement backend — filtre 100% frontend, pas un mécanisme de
+     sécurité/RBAC (contrairement à `tenants`), cohérent avec le filtre
+     `meta_class`/`class`/`hiddenClasses` déjà 100% côté client.
+  9. Tests : classe sans layer toujours visible quel que soit le filtre ;
+     classe avec layer visible seulement si son layer fait partie de
+     `selectedLayers` (ou si `selectedLayers` vide) ; persistance
+     localStorage (filtre retrouvé après reload) ; non-régression du
+     filtre `meta_class`/`class`/`hiddenClasses` existant (orthogonal,
+     pas de remplacement) ; `ConfigurationPage.tsx` affiche bien l'union
+     dédupliquée des layers de toutes les classes.
+- **Effort** : faible à moyen (1 champ de schéma + types + éditeur
+  `ConfigurationPage` + nouvel état multi-sélection persisté + 1 section
+  Sidebar + 1 predicate dans 2 pages) — aucune nouvelle route backend,
+  pattern texte libre déjà éprouvé (`tenants`).
+- **Fichiers** : `model/schema.json`, `frontend/src/types.ts`,
+  `frontend/src/App.tsx`, `frontend/src/components/Sidebar.tsx`,
+  `frontend/src/pages/ConfigurationPage.tsx`,
+  `frontend/src/pages/NavigationPage.tsx`,
+  `frontend/src/pages/DiagramPage.tsx`.
+- **Statut** : ⬜ à faire — conception tranchée (2026-11-22), pas encore
+  implémentée.
+
 ## Récapitulatif d'avancement
 
 > Tableau à tenir à jour en même temps que le champ **Statut** de chaque
@@ -1581,3 +1661,4 @@
 | 11 | Outil d'ingestion avec binding | ⬜ à faire |
 | 12 | Réorganisation de backend/ en packages (auth, data, files, routes, tests) | ✅ fait |
 | 13 | IHM de configuration : types d'attribut manquants (file/image/csv/select/secret/datasource) | ✅ fait |
+| 14 | Layers sur les classes et filtre IHM/diagramme | ⬜ à faire |
