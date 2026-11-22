@@ -1254,6 +1254,73 @@
   anciens chemins plats des modules backend déplacés — à traiter dans
   une future action de synchronisation documentaire si jugé utile.
 
+## 13. [Dette technique] IHM de configuration : types d'attribut manquants (file/image/csv/select/secret/datasource)
+
+- **Problème** : `frontend/src/pages/ConfigurationPage.tsx` (IHM admin
+  de création/édition de classe) limitait `ATTR_TYPES` à 5 types
+  (string/integer/float/joint-1-1/joint-1-n) alors que le
+  backend/schema supportaient déjà 11 types depuis les actions 3
+  (file/image/csv), 7 (select), 8 (secret), 9 (datasource) — gap signalé
+  et accepté comme dette mineure à chaque action concernée (cf. notes
+  « Gap mineur accepté sans correction » des actions 7 et 9 ci-dessus),
+  désormais signalé par l'utilisateur comme un vrai manque à corriger.
+- **Correctif** (seul fichier modifié : `ConfigurationPage.tsx`) :
+  `ATTR_TYPES` étendu aux 11 types. Colonne « Options » : `datasource`
+  réutilise le bloc JSX de sélection de classes cibles déjà utilisé par
+  `joint-1-1`/`joint-1-n` (même `attr.classes`, même
+  `toggleJointClass`, pas de duplication) ; `select` reçoit un nouvel
+  éditeur de chips (`attr.values`, input + bouton Ajouter + suppression
+  par chip) ; `csv` reçoit un input pour `attr.separator` (placeholder
+  `,`) ; `file`/`image`/`secret` affichent « Aucune option ».
+  Initialisation propre des champs au changement de type
+  (`patch.classes` pour joint/datasource, `patch.values` pour select).
+  `handleSave` nettoie/sérialise `classes` (joint+datasource), `values`
+  (select), `separator` (csv si renseigné). Validation front bloquante
+  ajoutée (extension jugée légitime en cours de revue) : empêche la
+  sauvegarde si joint/datasource a `classes` vide, ou select a `values`
+  vide, avec toast d'erreur nommant l'attribut et la classe — comble un
+  vrai trou (`model/schema.json` n'impose que la présence de la clé via
+  `required`, pas `minItems`, donc un tableau vide passerait la
+  validation JSON Schema et planterait plus tard, de façon confuse, à
+  la première écriture de valeur).
+- **Effort** : faible à moyen (un seul fichier frontend, aucun
+  changement backend/schema, réutilisation de JSX existant +
+  validation front).
+- **Fichiers** : `frontend/src/pages/ConfigurationPage.tsx` (seul
+  fichier modifié).
+- **Statut** : ✅ fait (2026-11-22, `worker`/`testeur`/`pessimiste`/
+  `candide`/`testeur-global`). Livré en 2 itérations (1 correction
+  suite revue croisée).
+
+  **Itération 1** : implémentation initiale — `ATTR_TYPES` + colonne
+  Options + initialisation des champs + `handleSave` + validation
+  front.
+
+  **Itération 2**, suite à revue croisée (bug réel trouvé par
+  pessimiste) : le state `selectValueDrafts` (saisie en cours de valeur
+  select, indexé par position `classIdx-attrIdx`) se désynchronisait
+  silencieusement quand `moveAttribute`/`removeAttribute`/`removeClass`
+  changeaient les indices (texte tapé pouvait atterrir sur le mauvais
+  attribut après un réordonnancement). Fix : reset de
+  `selectValueDrafts` dans ces 3 fonctions. + 2 améliorations mineures :
+  toast d'erreur si ajout d'une valeur select déjà présente (au lieu
+  d'un no-op silencieux), clé React composite `${v}-${i}` sur les chips
+  (robustesse si doublons existants importés via `apiInit`).
+
+  **Validation** : `testeur` (itération 1) — payload des 6 nouveaux
+  types testé contre `POST /api/write/metaclass`, tous PASS, confirme
+  que la validation front comble un vrai trou backend (schema accepte
+  classes/values vides, `write_object` échouerait sinon en 400
+  systématique) ; `tsc -b` réel dans le conteneur frontend, zéro erreur
+  sur ce fichier. `pessimiste`/`candide` (itération 1) : candide
+  converge (diff jugé meilleur que sa propre tentative indépendante) ;
+  pessimiste trouve le bug réel ci-dessus + 2 mineurs, tous traités en
+  itération 2. `testeur-global` (après itération 2) : OK — stack up,
+  backend 25 routes, endpoints 200, HMR propre sur
+  `ConfigurationPage.tsx`, diff confirmé couvrir les 3 points de
+  désync, 3 erreurs TS pré-existantes dans `DiagramPage.tsx` confirmées
+  sans rapport (identique à HEAD, hors de ce diff).
+
 ## Récapitulatif d'avancement
 
 > Tableau à tenir à jour en même temps que le champ **Statut** de chaque
@@ -1277,3 +1344,4 @@
 | 10d | Sélection des sous-objets affichés par tab | ⬜ à faire |
 | 11 | Outil d'ingestion avec binding | ⬜ à faire |
 | 12 | Réorganisation de backend/ en packages (auth, data, files, routes, tests) | ✅ fait |
+| 13 | IHM de configuration : types d'attribut manquants (file/image/csv/select/secret/datasource) | ✅ fait |

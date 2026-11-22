@@ -23,7 +23,10 @@ function isClassVisibleForTenant(cls: { tenants?: string[] }, authInfo: AuthInfo
   return tenants.length === 0 || tenants.some((t) => authInfo.tenants.includes(t));
 }
 
-const ATTR_TYPES: AttributeDefinition['type'][] = ['string', 'integer', 'float', 'joint-1-1', 'joint-1-n'];
+const ATTR_TYPES: AttributeDefinition['type'][] = [
+  'string', 'integer', 'float', 'joint-1-1', 'joint-1-n',
+  'file', 'image', 'csv', 'select', 'secret', 'datasource',
+];
 
 function emptyAttribute(): AttributeDefinition {
   return { domain: 'details', name: '', type: 'string' };
@@ -146,6 +149,8 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
       prev.forEach((v) => { if (v < idx) n.add(v); else if (v > idx) n.add(v - 1); });
       return n;
     });
+    // Indices classes/attributs décalés : purge brouillons select pour éviter désync.
+    setSelectValueDrafts({});
   };
 
   const toggleClass = (idx: number) => {
@@ -177,6 +182,8 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
       if (c.attributes.length <= 1) return c;
       return { ...c, attributes: c.attributes.filter((_, ai) => ai !== attrIdx) };
     }));
+    // Indices attributs décalés : purge brouillons select pour éviter désync.
+    setSelectValueDrafts({});
   };
 
   const moveAttribute = (classIdx: number, attrIdx: number, dir: -1 | 1) => {
@@ -188,9 +195,12 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
       [attrs[attrIdx], attrs[newIdx]] = [attrs[newIdx], attrs[attrIdx]];
       return { ...c, attributes: attrs };
     }));
+    // Indices attributs permutés : purge brouillons select pour éviter désync.
+    setSelectValueDrafts({});
   };
 
-  // --- Joint classes management ---
+  // --- Joint classes management (aussi utilisé par 'datasource', même
+  // mécanisme de ciblage de classes, cf. AttributeDefinition.classes) ---
   const toggleJointClass = (classIdx: number, attrIdx: number, cls: string) => {
     setClassDefs((prev) => prev.map((c, ci) => {
       if (ci !== classIdx) return c;
@@ -202,6 +212,26 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
       });
       return { ...c, attributes: attrs };
     }));
+  };
+
+  // --- Select values management (type 'select') ---
+  // Saisie en cours par ligne d'attribut, tant que non validée par "Ajouter"
+  // (clé "classIdx-attrIdx" -> texte du champ, purement local à l'IHM).
+  const [selectValueDrafts, setSelectValueDrafts] = useState<Record<string, string>>({});
+  const selectDraftKey = (classIdx: number, attrIdx: number) => `${classIdx}-${attrIdx}`;
+
+  const addSelectValue = (classIdx: number, attrIdx: number, attr: AttributeDefinition) => {
+    const key = selectDraftKey(classIdx, attrIdx);
+    const val = (selectValueDrafts[key] || '').trim();
+    setSelectValueDrafts((prev) => ({ ...prev, [key]: '' }));
+    if (!val) return;
+    const current = attr.values || [];
+    if (current.includes(val)) { addToast('error', `Valeur "${val}" déjà présente`); return; }
+    updateAttribute(classIdx, attrIdx, { values: [...current, val] });
+  };
+
+  const removeSelectValue = (classIdx: number, attrIdx: number, attr: AttributeDefinition, val: string) => {
+    updateAttribute(classIdx, attrIdx, { values: (attr.values || []).filter((v) => v !== val) });
   };
 
   // --- Save ---
@@ -218,8 +248,14 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
           .filter((a) => a.name.trim())
           .map((a) => {
             const clean: AttributeDefinition = { domain: a.domain, name: a.name, type: a.type };
-            if (a.type === 'joint-1-1' || a.type === 'joint-1-n') {
+            if (a.type === 'joint-1-1' || a.type === 'joint-1-n' || a.type === 'datasource') {
               clean.classes = a.classes || [];
+            }
+            if (a.type === 'select') {
+              clean.values = a.values || [];
+            }
+            if (a.type === 'csv' && a.separator) {
+              clean.separator = a.separator;
             }
             if (a.constraint) clean.constraint = a.constraint;
             if (a.sql_constraint) clean.sql_constraint = a.sql_constraint;
@@ -231,6 +267,27 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
         if (c.icon) def.icon = c.icon;
         return def;
       });
+
+    // Validation front légère : le schéma JSON backend exige juste la
+    // présence des clés 'classes'/'values' (required), pas qu'elles soient
+    // non vides - un tableau vide passerait donc la validation silencieusement
+    // et ne casserait qu'au moment, bien plus tard et bien moins clair, d'une
+    // tentative de saisie de valeur sur l'objet (cf. backend/routes/
+    // routes_write.py, _coerce_typed_value / _apply_attribute_diff). On
+    // bloque donc ici, tant que l'utilisateur n'a pas renseigné de cible.
+    for (const c of cleanClasses) {
+      for (const a of c.attributes) {
+        if ((a.type === 'joint-1-1' || a.type === 'joint-1-n' || a.type === 'datasource')
+          && (!a.classes || a.classes.length === 0)) {
+          addToast('error', `Attribut "${a.name}" de la classe "${c.class}" : au moins une classe cible requise (type ${a.type})`);
+          return;
+        }
+        if (a.type === 'select' && (!a.values || a.values.length === 0)) {
+          addToast('error', `Attribut "${a.name}" de la classe "${c.class}" : au moins une valeur requise (type select)`);
+          return;
+        }
+      }
+    }
 
     const data: MetaClassDefinition = { meta_class: metaClassName, classes: cleanClasses };
 
@@ -456,8 +513,10 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
                           onChange={(e) => {
                             const newType = e.target.value as AttributeDefinition['type'];
                             const patch: Partial<AttributeDefinition> = { type: newType };
-                            if (newType === 'joint-1-1' || newType === 'joint-1-n') {
+                            if (newType === 'joint-1-1' || newType === 'joint-1-n' || newType === 'datasource') {
                               patch.classes = attr.classes || [];
+                            } else if (newType === 'select') {
+                              patch.values = attr.values || [];
                             }
                             updateAttribute(classIdx, attrIdx, patch);
                           }}
@@ -466,7 +525,9 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
                           {ATTR_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                         </select>
                         <div>
-                          {(attr.type === 'joint-1-1' || attr.type === 'joint-1-n') ? (
+                          {(attr.type === 'joint-1-1' || attr.type === 'joint-1-n' || attr.type === 'datasource') ? (
+                            // Classes cibles : bloc partagé par joint-1-1/joint-1-n/datasource
+                            // (même champ attr.classes, même toggle - cf. types.ts).
                             <div>
                               <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>Classes cibles :</div>
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -484,7 +545,54 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
                                 ))}
                               </div>
                             </div>
+                          ) : attr.type === 'select' ? (
+                            // Liste fixe de valeurs autorisées (attr.values).
+                            <div>
+                              <div style={{ display: 'flex', gap: 4 }}>
+                                <input type="text"
+                                  value={selectValueDrafts[selectDraftKey(classIdx, attrIdx)] || ''}
+                                  onChange={(e) => {
+                                    const key = selectDraftKey(classIdx, attrIdx);
+                                    const val = e.target.value;
+                                    setSelectValueDrafts((prev) => ({ ...prev, [key]: val }));
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') { e.preventDefault(); addSelectValue(classIdx, attrIdx, attr); }
+                                  }}
+                                  placeholder="Nouvelle valeur" style={{ ...smallInput, fontSize: 11 }} />
+                                <button type="button" onClick={() => addSelectValue(classIdx, attrIdx, attr)}
+                                  style={{
+                                    ...iconBtn, fontSize: 11, padding: '4px 8px',
+                                    border: '1px solid var(--color-border)', borderRadius: 4, whiteSpace: 'nowrap',
+                                  }}
+                                >Ajouter</button>
+                              </div>
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                                {(attr.values || []).map((v, i: number) => (
+                                  <span key={`${v}-${i}`}
+                                    style={{
+                                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                                      fontSize: 11, padding: '2px 6px', borderRadius: 4,
+                                      border: '1px solid var(--color-border)', background: 'var(--color-bg)',
+                                    }}
+                                  >
+                                    {v}
+                                    <button type="button" onClick={() => removeSelectValue(classIdx, attrIdx, attr, v)}
+                                      style={{ ...iconBtn, fontSize: 10, padding: 0 }} title="Retirer"
+                                    >✕</button>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ) : attr.type === 'csv' ? (
+                            // Séparateur optionnel (défaut ',' affiché en placeholder, pas forcé en state).
+                            <input type="text" value={attr.separator || ''}
+                              onChange={(e) => updateAttribute(classIdx, attrIdx, { separator: e.target.value || undefined })}
+                              placeholder="," style={{ ...smallInput, fontSize: 11 }} />
+                          ) : (attr.type === 'file' || attr.type === 'image' || attr.type === 'secret') ? (
+                            <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Aucune option</span>
                           ) : (
+                            // Fallback string/integer/float.
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                               <input type="text" value={attr.constraint || ''}
                                 onChange={(e) => updateAttribute(classIdx, attrIdx, { constraint: e.target.value || undefined })}
