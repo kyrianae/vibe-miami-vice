@@ -403,6 +403,8 @@ def _coerce_typed_value(attr_def, raw_value):
         # l'objet cible effectivement lu en base.
         if isinstance(raw_value, bool):
             abort(400, description=f"Attribut {attr_name!r} (type datasource) : identifiant d'objet entier attendu : {raw_value!r}")
+        if isinstance(raw_value, float) and not raw_value.is_integer():
+            abort(400, description=f"Attribut {attr_name!r} (type datasource) : identifiant d'objet entier attendu : {raw_value!r}")
         try:
             target_id = int(raw_value)
         except (TypeError, ValueError):
@@ -662,6 +664,13 @@ def delete_object(object_id):
     périmètre tenant de l'acteur pour un tenant-admin, sans restriction pour
     un global-admin.
 
+    Cascade équivalente (plan-mark3.md action 9, itération 2) sur les
+    pointeurs datasource (value_string = id de cet objet) : même scoping
+    tenant, mais candidats revérifiés un à un contre le modèle (classe de
+    l'objet porteur + nom de l'attribut) avant fermeture, pour ne jamais
+    fermer par erreur un attribut select/string dont la valeur texte
+    coïnciderait avec le même id.
+
     Limite connue assumée (plan-mark3.md action 4, point 3 - réutilisation
     d'un logo par référence croisée, routes_files.py) : aucun avertissement
     n'est émis ici si l'objet supprimé porte un fichier (ex. logo)
@@ -693,6 +702,14 @@ def delete_object(object_id):
             if ctx.is_tenant_admin and existing_tenants and not (set(existing_tenants) & set(ctx.tenants)):
                 abort(403, description="Objet hors de votre périmètre tenant")
 
+            # Classe de l'objet supprimé, nécessaire plus bas pour la cascade
+            # datasource (comparaison à attr_def["classes"]) - requête
+            # distincte du SELECT ... FOR UPDATE ci-dessus (verrou déjà pris
+            # sur cette ligne), même forme que la validation de cible
+            # datasource dans _apply_attribute_diff.
+            cur.execute("SELECT class, tenants, deleted_at FROM object WHERE id = %s", (object_id,))
+            obj_class, _, _ = cur.fetchone()
+
             cur.execute("UPDATE object SET deleted_at = now() WHERE id = %s RETURNING deleted_at", (object_id,))
             (deleted_at,) = cur.fetchone()
 
@@ -718,6 +735,63 @@ def delete_object(object_id):
                          AND (o.tenants IS NULL OR o.tenants = '' OR string_to_array(o.tenants, ',') && %s::text[])""",
                     (object_id, ctx.tenants)
                 )
+
+            # Cascade sur les pointeurs datasource (plan-mark3.md action 9,
+            # itération 2) : value_string n'a pas de contrainte FK (voir
+            # commentaire de _apply_attribute_diff), donc contrairement à
+            # joint_id ci-dessus un filtre SQL seul ne suffit pas - une
+            # chaîne de value_string identique à cet id pourrait appartenir à
+            # un attribut select/string sans rapport. Candidats restreints au
+            # même périmètre tenant que joint_id, puis chaque candidat est
+            # revérifié contre le modèle (classe de l'objet porteur + nom de
+            # l'attribut) : fermé seulement si l'attribut résolu est bien de
+            # type datasource et autorise la classe de l'objet supprimé.
+            definition_cache = {}
+
+            def _resolve_datasource_attr_def(meta_class, cls, attr_name):
+                if meta_class not in definition_cache:
+                    cur.execute("SELECT data FROM definition WHERE meta_class = %s", (meta_class,))
+                    row = cur.fetchone()
+                    definition_cache[meta_class] = row[0] if row else None
+                data = definition_cache[meta_class]
+                if not data:
+                    return None
+                for c in data.get("classes", []):
+                    if c["class"] == cls:
+                        for a in c.get("attributes", []):
+                            if a["name"] == attr_name:
+                                return a
+                        return None
+                return None
+
+            if ctx.is_global_admin:
+                cur.execute(
+                    """SELECT av.id, a.name, o.meta_class, o.class
+                       FROM attribute_value av
+                       JOIN attribute a ON av.attribute_id = a.id
+                       JOIN object o ON a.object_id = o.id
+                       WHERE av.value_string = %s AND av.valid_to IS NULL""",
+                    (str(object_id),)
+                )
+            else:
+                cur.execute(
+                    """SELECT av.id, a.name, o.meta_class, o.class
+                       FROM attribute_value av
+                       JOIN attribute a ON av.attribute_id = a.id
+                       JOIN object o ON a.object_id = o.id
+                       WHERE av.value_string = %s AND av.valid_to IS NULL
+                         AND (o.tenants IS NULL OR o.tenants = '' OR string_to_array(o.tenants, ',') && %s::text[])""",
+                    (str(object_id), ctx.tenants)
+                )
+
+            to_close_ids = []
+            for av_id, attr_name, owner_meta_class, owner_class in cur.fetchall():
+                attr_def = _resolve_datasource_attr_def(owner_meta_class, owner_class, attr_name)
+                if attr_def and attr_def.get("type") == "datasource" and obj_class in (attr_def.get("classes") or []):
+                    to_close_ids.append(av_id)
+
+            for av_id in to_close_ids:
+                cur.execute("UPDATE attribute_value SET valid_to = now() WHERE id = %s", (av_id,))
 
         conn.commit()
         return jsonify({"status": "ok", "id": object_id, "deleted_at": deleted_at.isoformat()}), 200

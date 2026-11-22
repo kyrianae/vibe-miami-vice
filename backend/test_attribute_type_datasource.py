@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 import app as miami_app  # noqa: E402
-from test_model_driven_typing import FakeDB, FakeConn, make_ctx  # noqa: E402
+from test_model_driven_typing import FakeDB, FakeConn, FakeCursor, FakeRealDictCursor, make_ctx  # noqa: E402
 
 
 @pytest.fixture
@@ -35,6 +35,56 @@ def client(monkeypatch):
 def db_and_ctx(monkeypatch):
     db = FakeDB()
     monkeypatch.setattr(miami_app, "get_db", lambda: FakeConn(db))
+    monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_global_admin=True))
+    return db
+
+
+class _CascadeCursor(FakeCursor):
+    """FakeCursor étendu localement à CE fichier (jamais test_model_driven_
+    typing.py, hors périmètre) : ajoute la seule requête que le socle commun
+    ne connaît pas encore, la jointure attribute_value/attribute/object sur
+    value_string utilisée par la cascade de suppression datasource
+    (delete_object, plan-mark3.md action 9 itération 2). Tout le reste est
+    délégué à FakeCursor via super()."""
+
+    def execute(self, sql, params=None):
+        sql_norm = " ".join(sql.split())
+        if sql_norm.startswith("SELECT av.id, a.name, o.meta_class, o.class"):
+            self._result = None
+            self._results = None
+            self.rowcount = 0
+            value_string = params[0]
+            actor_tenants = set(params[1]) if len(params) > 1 else None
+            rows = []
+            for av in self.db.attribute_values.values():
+                if av["value_string"] != value_string or av["valid_to"] is not None:
+                    continue
+                attr = self.db.attributes.get(av["attribute_id"])
+                if attr is None:
+                    continue
+                owner = self.db.objects.get(attr["object_id"])
+                if owner is None:
+                    continue
+                owner_tenants = owner.get("tenants")
+                if actor_tenants is not None and owner_tenants and not (set(owner_tenants.split(",")) & actor_tenants):
+                    continue
+                rows.append((av["id"], attr["name"], owner["meta_class"], owner["class"]))
+            self._results = rows
+        else:
+            super().execute(sql, params)
+
+
+class _CascadeConn(FakeConn):
+    def cursor(self, cursor_factory=None):
+        if cursor_factory is not None:
+            return FakeRealDictCursor(self.db)
+        return _CascadeCursor(self.db)
+
+
+@pytest.fixture
+def cascade_db_and_ctx(monkeypatch):
+    db = FakeDB()
+    monkeypatch.setattr(miami_app, "get_db", lambda: _CascadeConn(db))
     monkeypatch.setattr(miami_app, "get_auth_context", lambda: make_ctx(is_global_admin=True))
     return db
 
@@ -270,3 +320,76 @@ def test_schema_is_valid_draft7_with_datasource_enum_entry():
     from db import load_schema
 
     jsonschema.Draft7Validator.check_schema(load_schema())
+
+
+# ---------------------------------------------------------------------
+# 7. delete_object (plan-mark3.md action 9, itération 2, correction 1) :
+#    cascade de fermeture sur les attribute_value de type datasource dont
+#    value_string pointe vers l'objet supprimé - symétrique à la cascade déjà
+#    existante sur joint_id, mais revérifiée contre le modèle (classe de
+#    l'objet porteur + attr_def["classes"]) avant fermeture, jamais par
+#    simple coïncidence de valeur texte.
+# ---------------------------------------------------------------------
+
+def test_delete_object_datasource_cascade_closes_pointer_value(client, cascade_db_and_ctx):
+    db = cascade_db_and_ctx
+    _seed(db)
+    source_id = _create_prometheus_source(client)
+    object_id = client.post("/api/write/object", json={
+        "meta_class": "cmdb_test", "class": "serveur",
+        "attributes": {"nom": "web01", "metriques": source_id},
+    }).get_json()["id"]
+
+    resp = client.delete(f"/api/delete/object/{source_id}")
+    assert resp.status_code == 200, resp.get_json()
+
+    rows = _value_rows(db, object_id, "metriques")
+    assert rows and all(r["valid_to"] is not None for r in rows)
+
+    read = client.get(f"/api/read/object/{object_id}")
+    values = next(a["values"] for a in read.get_json()["attributes"] if a["name"] == "metriques")
+    assert values == []
+
+
+def test_delete_object_datasource_cascade_does_not_affect_unrelated_attribute_with_coincidental_value(client, cascade_db_and_ctx):
+    db = cascade_db_and_ctx
+    _seed(db)
+    source_id = _create_prometheus_source(client)
+
+    # "nom" est de type string, jamais datasource : sa valeur coïncide par
+    # hasard avec l'id numérique de la source supprimée plus bas, et ne doit
+    # jamais être fermée par la cascade datasource.
+    object_id = client.post("/api/write/object", json={
+        "meta_class": "cmdb_test", "class": "serveur",
+        "attributes": {"nom": str(source_id)},
+    }).get_json()["id"]
+
+    resp = client.delete(f"/api/delete/object/{source_id}")
+    assert resp.status_code == 200, resp.get_json()
+
+    rows = _value_rows(db, object_id, "nom")
+    assert rows and all(r["valid_to"] is None for r in rows)
+    assert rows[-1]["value_string"] == str(source_id)
+
+    read = client.get(f"/api/read/object/{object_id}")
+    values = next(a["values"] for a in read.get_json()["attributes"] if a["name"] == "nom")
+    assert values == [str(source_id)]
+
+
+# ---------------------------------------------------------------------
+# 8. _coerce_typed_value, branche datasource (correction 2) : un float non
+#    entier doit être rejeté en 400, jamais tronqué silencieusement en int -
+#    même garde que joint-1-1. Couvre le chemin write_object (POST, JSON,
+#    vrai float), distinct du test existant côté write_attribute_value (PUT,
+#    valeur toujours string dans l'URL).
+# ---------------------------------------------------------------------
+
+def test_write_object_datasource_non_integer_float_rejected_400(client, db_and_ctx):
+    db = db_and_ctx
+    _seed(db)
+
+    resp = client.post("/api/write/object", json={
+        "meta_class": "cmdb_test", "class": "serveur",
+        "attributes": {"nom": "web01", "metriques": 5.9},
+    })
+    assert resp.status_code == 400

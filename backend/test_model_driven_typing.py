@@ -195,6 +195,26 @@ class FakeCursor:
                 if not src_tenants or set(src_tenants.split(",")) & actor_tenants:
                     v["valid_to"] = "now"
 
+        elif sql_norm.startswith("SELECT av.id, a.name, o.meta_class, o.class"):
+            target = params[0]
+            actor_tenants = set(params[1] or []) if len(params) > 1 else None
+            rows = []
+            for v in self.db.attribute_values.values():
+                if v.get("value_string") != target or v["valid_to"] is not None:
+                    continue
+                attr = self.db.attributes.get(v["attribute_id"])
+                if attr is None:
+                    continue
+                owner_obj = self.db.objects.get(attr["object_id"])
+                if owner_obj is None:
+                    continue
+                if actor_tenants is not None:
+                    owner_tenants = owner_obj.get("tenants")
+                    if owner_tenants and not (set(owner_tenants.split(",")) & actor_tenants):
+                        continue
+                rows.append((v["id"], attr["name"], owner_obj["meta_class"], owner_obj["class"]))
+            self._results = rows
+
         # Aucune branche DELETE FROM attribute / attribute_value, volontairement :
         # l'historisation (plan-mark2.md action 6.0) interdit toute suppression
         # physique par les routes d'écriture. Une régression vers un DELETE
