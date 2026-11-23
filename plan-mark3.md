@@ -1878,6 +1878,152 @@
     scope, dette documentaire plus large déjà notée hors scope à
     l'action 12.
 
+## 17. [Nouvelle fonctionnalité] Extension du modèle CMDB embarqué
+
+> Demande utilisateur (2026-11-23) : enrichir le catalogue de
+> classes/meta-classes embarquées avant d'attaquer les dashboards —
+> compute (baies/clusters/hyperviseurs/OS), applicatif (modules,
+> interfaces, flux de données, versioning), réseau (VIP, zones,
+> équipements), organisation (société/département/contact unifiés),
+> localisation (bâtiment/étage/salle), hardware, et une classe `besoin`
+> transverse. Détail de conception complet, classe par classe, déjà
+> écrit (pas à dupliquer ici) : `specifications/07-roadmap.md` §10.14.
+
+- **Problème** : le modèle CMDB actuel (`model/itil_cmdb.json` 7
+  classes, `model/organigramme.json`/`personnes.json`/`reseau.json`
+  épars) ne couvre pas : la hiérarchie physique serveur (baie/
+  hyperviseur/VM), les clusters (Kubernetes et applicatif/VIP), les
+  modules/interfaces/flux de données entre applications, le versioning
+  applicatif, les équipements réseau (routeur/switch/firewall/DNS), une
+  organisation unifiée avec société/département/contact, la
+  localisation physique (bâtiment/étage/salle), l'inventaire matériel
+  générique, et aucune notion de besoin métier reliant les objets.
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.14 (pas
+  de duplication du contenu ici) — nouvelle meta-classe `cluster`
+  (classes `kube`/`hyperviseur`/`cluster_applicatif`), nouvelle
+  meta-classe `organisation` (remplace `organigramme.json`+
+  `personnes.json`), nouvelle meta-classe `localisation`, extensions
+  de `cmdb` (`baie_serveur`, `os`, `module`, `container`,
+  `namespace_kubernetes`, `interface`, `flux_donnee`,
+  `application_versionnee`, `module_versionne`, `materiel`, `besoin`),
+  extensions de `reseau` (`zone_reseau`, `equipement_reseau`,
+  `entree_dns`, `addresse_ip.vlan`), retouches `ticketing.json`
+  (`ci_concerne.classes` réétendu) et `planning.json`
+  (`tache.assigne_a.classes` élargi à personne+groupe). Chaque classe
+  porte un `layers` (action 14) choisi dans la taxonomie
+  `applicatif`/`infra`/`organisationnel`/`fonctionnel`/`metier`,
+  cumulable avec les tags existants `physique`/`reseau`/`securite`.
+  **Dépend de l'action 19** (`os.active` a besoin du type `boolean`) et
+  **profite de l'action 20** (autosuggest sur les champs version) sans
+  en dépendre strictement (peut être livré sans, champs texte simples
+  en attendant).
+- **Points ouverts, non tranchés par l'utilisateur** (listés en détail
+  avec recommandation dans `specifications/07-roadmap.md` §10.14, à
+  trancher à l'implémentation, pas bloquants pour écrire le modèle) :
+  `equipement_reseau` classe unique+type vs 3 classes séparées ;
+  `materiel` classe générique+type vs une classe par type ; périmètre
+  exact des classes cibles de `besoin.emerge_par`/`couvert_par` ;
+  chevauchement `application_versionnee` / `ansible_inventory.
+  version_logicielle` non résolu.
+- **Effort** : élevé (catalogue large, ~20 nouvelles classes/
+  extensions réparties sur 3 nouvelles meta-classes + 4 fichiers
+  modèle existants retouchés — aucun changement backend/frontend
+  attendu en soi, le modèle dynamique existant absorbe tout ça sans
+  code nouveau, sauf pour les dépendances sur les actions 19/20).
+- **Fichiers** : `model/itil_cmdb.json`, `model/reseau.json`,
+  `model/ticketing.json`, `model/planning.json`, nouveaux
+  `model/cluster.json`, `model/organisation.json`,
+  `model/localisation.json` (remplace `model/organigramme.json` et
+  `model/personnes.json`, à supprimer si la fusion est confirmée à
+  l'implémentation).
+- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
+  implémentée.
+
+## 18. [Nouvelle fonctionnalité] Layer dynamique piloté par un attribut select
+
+> Demande utilisateur (2026-11-23), née du constat qu'un `serveur` ne
+> peut pas porter un layer `physique` statique si son `type` (nouveau
+> champ, action 17) vaut `vm`. Détail de conception :
+> `specifications/07-roadmap.md` §10.15.
+
+- **Problème** : le champ `layers` de l'action 14 est statique par
+  classe — ne peut pas refléter un layer qui dépend de la valeur d'un
+  attribut de l'objet (ex. `serveur.type` physique/vm).
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.15 (pas
+  de duplication du contenu ici) — nouveau champ optionnel `layer_map`
+  sur une définition d'attribut `select` (`{valeur: [layers]}`), layer
+  effectif d'un objet = union du `layers` statique de sa classe et des
+  `layer_map` de ses attributs `select` concernés. Portée limitée à
+  `NavigationPage.tsx`/`DiagramPage.tsx` (objets réels) — la Sidebar
+  (action 15, arbre de classes) reste sur le `layers` statique, elle ne
+  manipule que des définitions de classe, pas des objets. Aucun
+  changement backend attendu (calcul 100% frontend, cohérent avec le
+  principe déjà posé à l'action 14).
+- **Effort** : moyen (schéma + predicate de résolution de layer
+  étendu + UI d'édition `layer_map` dans `ConfigurationPage.tsx`,
+  réutilise le pattern chips déjà construit à l'action 14 — portée
+  circonscrite mais touche à nouveau les 3 pages déjà modifiées par les
+  actions 14/15).
+- **Fichiers** : `model/schema.json`, `frontend/src/pages/
+  ConfigurationPage.tsx`, `frontend/src/pages/NavigationPage.tsx`,
+  `frontend/src/pages/DiagramPage.tsx`.
+- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
+  implémentée.
+
+## 19. [Nouvelle fonctionnalité] Type d'attribut boolean
+
+> Demande utilisateur (2026-11-23), née du besoin `os.active` (action
+> 17). Détail de conception : `specifications/07-roadmap.md` §10.16.
+
+- **Problème** : aucun type booléen dans le schéma actuel (11 types
+  existants, aucun n'est une case à cocher simple).
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.16 (pas
+  de duplication du contenu ici) — nouveau type `boolean` dans l'enum
+  `attributes[].type`, stockage texte (`"true"`/`"false"`) dans
+  `value_string` comme les autres types scalaires, rendu case à cocher
+  dans `NavigationPage.tsx` (formulaire **et** édition inline de
+  cellule — rappel explicite de l'oubli déjà fait une fois à l'action
+  7, à ne pas reproduire), `ATTR_TYPES` de `ConfigurationPage.tsx`
+  étendu à 12 types.
+- **Effort** : faible (type scalaire le plus simple du jeu actuel,
+  aucune nouvelle colonne SQL, pas de validation complexe).
+- **Fichiers** : `model/schema.json`, `backend/routes/
+  routes_write.py`, `frontend/src/pages/NavigationPage.tsx`,
+  `frontend/src/pages/ConfigurationPage.tsx`, `frontend/src/types.ts`.
+- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
+  implémentée.
+
+## 20. [Nouvelle fonctionnalité] Autosuggest : suggestions de valeurs apprises sur un attribut texte
+
+> Demande utilisateur (2026-11-23), née des champs texte répétitifs
+> (ville/pays de `batiment`, versions applicatives — action 17). 3
+> points tranchés par l'utilisateur : nom du flag `autosuggest`,
+> valeurs actives seulement (pas tout l'historique), tri par distance
+> d'édition via `rapidfuzz`. Détail de conception complet :
+> `specifications/07-roadmap.md` §10.17.
+- **Problème** : pas de mécanisme d'auto-complétion pour un champ texte
+  libre répétitif (ex. ville, version) — seule alternative actuelle est
+  `select` (liste figée par l'admin, pas adaptée à des valeurs qui
+  grandissent au fil de la saisie utilisateur).
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.17 (pas
+  de duplication du contenu ici) — nouveau champ optionnel
+  `"autosuggest": true` sur un attribut `string`, nouvelle route
+  `GET /api/suggest/<meta_class>/<class>/<attribute>?q=...` (valeurs
+  actives uniquement, RBAC tenant identique aux autres lectures, tri
+  par distance d'édition via la nouvelle dépendance `rapidfuzz`),
+  dropdown de suggestions dans `NavigationPage.tsx` (formulaire **et**
+  édition inline — même rappel que l'action 19), case à cocher dans
+  `ConfigurationPage.tsx`.
+- **Effort** : moyen (nouvelle route + nouvelle dépendance Python +
+  UI d'autocomplétion débouncée des deux côtés édition de
+  `NavigationPage.tsx`).
+- **Fichiers** : `model/schema.json`, `backend/requirements.txt`,
+  nouveau endpoint dans `backend/routes/routes_read.py` (ou nouveau
+  module dédié), `frontend/src/pages/NavigationPage.tsx`,
+  `frontend/src/pages/ConfigurationPage.tsx`, `frontend/src/api.ts`.
+- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
+  implémentée.
+
 ## Récapitulatif d'avancement
 
 > Tableau à tenir à jour en même temps que le champ **Statut** de chaque
@@ -1905,3 +2051,7 @@
 | 14 | Layers sur les classes et filtre IHM/diagramme | ✅ fait |
 | 15 | Restructuration IHM : menu, Sidebar par layer, filtres texte, combo layers Diagramme | ✅ fait |
 | 16 | [Dette documentaire] Synchronisation specifications/ avec actions 7-14 | ✅ fait |
+| 17 | Extension du modèle CMDB embarqué | ⬜ à faire |
+| 18 | Layer dynamique piloté par un attribut select | ⬜ à faire |
+| 19 | Type d'attribut boolean | ⬜ à faire |
+| 20 | Autosuggest : suggestions de valeurs apprises sur un attribut texte | ⬜ à faire |

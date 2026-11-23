@@ -402,12 +402,19 @@ Détail complet et suivi : `plan-mark3.md` actions 3 et 4.
 > `auth`/`data`/`files`/`routes`/`tests`, fait, §2bis de
 > [02-architecture.md](02-architecture.md)), 13 (IHM Configuration : les 11
 > types d'attribut, fait, §10.12bis), 14 (champ `layers` et filtre IHM/
-> diagramme, fait, §6.12 de [05-frontend.md](05-frontend.md)). Action 11
-> (outil d'ingestion avec binding, §10.13) et action 15 (restructuration
-> IHM menu/Sidebar/filtres texte) restent **à faire**. Action 16
+> diagramme, fait, §6.12 de [05-frontend.md](05-frontend.md)), 15
+> (restructuration IHM menu/Sidebar/filtres texte, fait), 16
 > (synchronisation de `specifications/` avec les actions 7-14, dette
-> documentaire — cette mise à jour) ajoutée le 2026-11-23 — voir
-> `plan-mark3.md`.
+> documentaire, fait). Action 11 (outil d'ingestion avec binding,
+> §10.13) reste **à faire**.
+>
+> **Mise à jour (2026-11-23bis)** : 4 nouvelles actions **conçues,
+> aucune implémentée** — 17 (extension du modèle CMDB embarqué :
+> compute/cluster/applicatif/réseau/organisation/localisation/hardware/
+> besoin, §10.14), 18 (layer dynamique piloté par un attribut `select`,
+> §10.15), 19 (type d'attribut `boolean`, §10.16), 20 (autosuggest —
+> suggestions de valeurs apprises sur un attribut texte, §10.17). Voir
+> `plan-mark3.md` pour le détail et le statut de chacune.
 
 ## 10.9 Type d'attribut select/enum (`tocheck.md` #18, fait — `plan-mark3.md` action 7)
 
@@ -669,3 +676,298 @@ Conception à esquisser :
   scope, non demandé).
 
 Détail complet et suivi : `plan-mark3.md` action 11.
+
+## 10.14 Extension du modèle CMDB embarqué (conçu, pas implémenté — `plan-mark3.md` action 17)
+
+> Demande utilisateur (2026-11-23) : enrichir le modèle `model/*.json`
+> embarqué (compute, applicatif, réseau, organisation, localisation,
+> société, hardware, besoin) avant d'attaquer les dashboards (action
+> 10b-10d), pour avoir un jeu de données/classes représentatif. Décisions
+> prises au fil de l'échange, consolidées ici — pure conception, **rien
+> n'est codé**, c'est le rôle de `plan-mark3.md` action 17.
+
+Chaque classe ci-dessous porte un champ `layers` (action 14) choisi
+parmi la taxonomie retenue : `applicatif` / `infra` / `organisationnel`
+/ `fonctionnel` / `metier`, cumulable avec les tags déjà en usage
+`physique` / `reseau` / `securite` (ex. `serveur` = `infra`+`physique`+
+`reseau`).
+
+### Compute (`model/itil_cmdb.json`, meta-classe `cmdb`, extension)
+
+- `baie_serveur` 🆕 : `nom`, `datacenter` (joint-1-1 → `datacenter`),
+  `position_rack`. Layers : `infra`, `physique`.
+- `serveur` (existant) : ajout `type` (`select`, `physique`/`vm`),
+  `hyperviseur` (joint-1-1 → `hyperviseur`, uniquement pertinent si
+  `type=vm`), `os` (joint-1-1 → `os`, nouvelle classe ci-dessous). Le
+  tag `layers` statique actuel (`physique`+`reseau`) est **faux** pour
+  un serveur VM — résolu par §10.15 (layer dynamique piloté par
+  `type`), pas ici.
+- `os` 🆕 : `nom` (`string`, autosuggest §10.17 envisageable, non
+  tranché), `type` (`select`, `linux`/`windows`), `architecture`
+  (`select`, `32`/`64`/`arm`), `version` (`string`), `code_version`
+  (`string`), `active` (`boolean`, nouveau type §10.16 — bloquant tant
+  que §10.16 n'est pas livré). Layers : `infra`.
+
+### Cluster (nouvelle meta-classe `model/cluster.json`)
+
+> Décision explicite : 2 classes distinctes `kube`/`hyperviseur` plutôt
+> qu'une classe générique `cluster`+`type` — pour pouvoir rattacher des
+> VMs à un hyperviseur et des déploiements à un cluster Kubernetes sans
+> confondre les deux modèles de rattachement.
+
+- `kube` 🆕 : `nom`, `version`, `namespace_defaut`. Layers : `infra`.
+- `hyperviseur` 🆕 : `nom`, `type` (ex. vmware/proxmox), `capacite_cpu`,
+  `capacite_ram`. Layers : `infra`.
+- `cluster_applicatif` 🆕 : `nom`, `vip` (joint-1-1 → `addresse_ip`,
+  réutilise la classe réseau existante plutôt qu'un string brut),
+  `application` (joint-1-1 → `application`), `serveurs` (joint-1-n →
+  `serveur`). Regroupe plusieurs serveurs hébergeant la même
+  application derrière une VIP commune (HA/LB) — distinct de
+  `hyperviseur` (hébergement VM) et `kube` (déploiements conteneurs).
+  Layers : `applicatif`, `infra`.
+
+### Applicatif, modules et versioning (`cmdb`, extension)
+
+- `application` (existant) : ajout `modules` (joint-1-n → `module`).
+- `module` 🆕 : `nom`, `application` (joint-1-1 → `application`).
+  Layers : `applicatif`.
+- `container` 🆕 : `nom`, `image`, `namespace_kubernetes` (joint-1-1).
+  Layers : `applicatif`, `infra`.
+- `namespace_kubernetes` 🆕 : `nom`, `kube` (joint-1-1 → `kube`).
+  Layers : `applicatif`, `infra`.
+- `interface` 🆕 : `nom`, `type` (`select`, ex.
+  REST/SOAP/file/queue/db), `application` (joint-1-1, propriétaire du
+  contrat exposé). Layers : `applicatif`, `fonctionnel`.
+- `flux_donnee` 🆕 : `nom`, `type_donnee` (`string`), `interface_source`
+  (joint-1-1 → `interface`), `interface_cible` (joint-1-1 →
+  `interface`) — passe par le contrat exposé (`interface`) plutôt que
+  par un lien direct `application`→`application`, pour garder la
+  notion de contrat/format échangé. Layers : `fonctionnel`, `metier`.
+- `application_versionnee` 🆕 : `application` (joint-1-1), `version`
+  (`string`, **autosuggest**, §10.17), `modules_versionnes` (joint-1-n
+  → `module_versionne`). Layers : `applicatif`.
+- `module_versionne` 🆕 : `module` (joint-1-1), `version` (`string`,
+  **autosuggest**, §10.17). Layers : `applicatif`.
+- Chaîne de résolution : `application` →1-n→ `application_versionnee`
+  →1-n→ `module_versionne` →1-1→ `module` →1-1→ `application` — une
+  version d'application donne directement les versions de modules qui
+  la composent.
+- ⚠️ Chevauchement repéré, non résolu : `model/ansible_inventory.json`
+  porte déjà `version_logicielle` (`version`, `environnement`,
+  `date_deploiement`, `application` joint-1-1) — rôle proche de
+  `application_versionnee`. À clarifier/fusionner à l'implémentation,
+  pas tranché ici.
+
+### Réseau (`model/reseau.json`, extension)
+
+- `addresse_ip` (existant) : ajout `vlan` (joint-1-1 → `vlan`, sens
+  inverse du `membres` existant sur `vlan`, pour naviguer depuis une IP
+  vers son VLAN).
+- `vlan` (existant) : **pas de classe `subnet` séparée** —
+  `vlan.definition` porte déjà le CIDR, un `vlan` **est** déjà le
+  subnet dans ce modèle. Point explicitement vérifié avant d'écrire
+  cette section (évite un doublon qui avait été proposé puis écarté en
+  cours d'échange).
+- `zone_reseau` 🆕 (area/DMZ) : `nom`, `niveau_securite`. Layers :
+  `infra`, `reseau`, `securite`.
+- `equipement_reseau` 🆕 : `nom`, `type` (`select`,
+  routeur/switch/firewall), `zone` (joint-1-1 → `zone_reseau`). ⚠️ Point
+  ouvert, jamais tranché explicitement par l'utilisateur : classe
+  unique `equipement_reseau`+`type` (recommandé ici, cohérent avec le
+  pattern déjà retenu pour `serveur.type`) vs 3 classes séparées
+  `routeur`/`switch`/`firewall` (plus de champs spécifiques possibles
+  par type, mais plus de duplication). À confirmer à l'implémentation.
+  Layers : `infra`, `reseau`.
+- `entree_dns` 🆕 : `nom`, `type` (`select`, A/CNAME/MX/...), `cible`
+  (`string`), `zone_dns` (`string`). Layers : `infra`, `reseau`.
+
+### Organisation (nouvelle meta-classe `model/organisation.json`, remplace `organigramme.json`+`personnes.json`)
+
+> Décision explicite : unifier `service_organisation`/`poste` (actuel
+> `organigramme.json`) et `personne_physique`/`role`/`groupe` (actuel
+> `personnes.json`) en **une seule** meta-classe.
+
+- `societe` 🆕 : `nom`, `holding` (joint-1-1, auto-référence — même
+  pattern que `service_parent` existant sur `service_organisation`).
+- `departement` 🆕 : `nom`, `societe` (joint-1-1 → `societe`).
+- `service_organisation` (repris tel quel) : `nom`, `responsable`
+  (joint-1-1), `service_parent` (joint-1-1).
+- `poste` (repris tel quel).
+- `personne_physique` (repris tel quel).
+- `role` (repris tel quel).
+- `groupe` (repris tel quel).
+- `contact` 🆕 : `type` (`select`, tel/mail), `valeur` (`string`),
+  `cible` (joint-1-1, `classes: ["personne_physique", "societe",
+  "service_organisation", "departement"]` — un joint-1-1 ciblant
+  plusieurs classes à la fois est déjà nativement supporté par le
+  schéma, rien de nouveau à construire ici).
+- Layers : `organisationnel` (+ `metier` pour `societe`).
+
+### Localisation (nouvelle meta-classe `model/localisation.json`)
+
+- `batiment` 🆕 : adresse structurée en 7 champs `string` plutôt qu'un
+  champ libre — `numero`, `type_voie` (ex. rue/avenue/boulevard),
+  `nom_voie`, `pays`, `code_postal`, `ville`, `suffixe_ville` (optionnel,
+  ex. « cedex »).
+- `etage` 🆕 : `nom`, `batiment` (joint-1-1).
+- `salle` 🆕 : `nom`, `etage` (joint-1-1).
+- Layers : `infra`.
+- `datacenter`/`baie_serveur` (`cmdb`) pourraient pointer `salle`
+  (joint-1-1) plutôt que le `localisation: string` libre actuel sur
+  `datacenter` — changement à faire sur `datacenter` en même temps que
+  cette section si retenu.
+
+### Hardware (`cmdb`, extension)
+
+- `materiel` 🆕 : `nom`, `type` (`select`, ex.
+  poste/imprimante/peripherique), `numero_serie`, `personne_affectee`
+  (joint-1-1 → `personne_physique`), `salle` (joint-1-1 → `salle`).
+  Layers : `infra`, `physique`. ⚠️ Point ouvert, jamais tranché :
+  classe générique `materiel`+`type` (recommandé, cohérent avec
+  `serveur.type`/`equipement_reseau.type`) vs une classe par type de
+  matériel.
+
+### Besoin (nouvelle classe, meta-classe à déterminer à l'implémentation)
+
+- `besoin` 🆕 : `nom`, `description`, `emerge_par` (joint-1-n, objets
+  qui font émerger ce besoin), `couvert_par` (joint-1-n, objets qui
+  répondent à ce besoin) — les deux dans le domaine d'attribut
+  `requirement` (groupage visuel gratuit dans l'IHM, le champ `domain`
+  existe déjà sur tout attribut, aucune nouvelle brique nécessaire pour
+  ça). Layers : `fonctionnel`, `metier`. ⚠️ Point ouvert, jamais
+  tranché : `emerge_par`/`couvert_par` doivent cibler quelles classes ?
+  Recommandé ici : les CI techniques (`serveur`, `application`,
+  `cluster_applicatif`, `kube`, `hyperviseur`, `materiel`, `interface`,
+  `module`), pas la totalité des ~20+ classes du modèle (personne/
+  société/tâche n'ont a priori pas besoin de ce lien) — à confirmer à
+  l'implémentation.
+
+### Retouches sur les meta-classes existantes
+
+- `model/ticketing.json` : `ticket.ci_concerne.classes` à réétendre
+  pour couvrir les nouvelles classes CMDB/hardware ajoutées ci-dessus
+  (actuellement limité aux 7 classes d'origine de `cmdb`).
+- `model/planning.json` : `tache.assigne_a.classes` élargi à
+  `["personne_physique", "groupe"]` (`groupe` existe déjà) — une tâche
+  assignable à une personne **ou** une équipe.
+
+Détail complet et suivi : `plan-mark3.md` action 17.
+
+## 10.15 Layer dynamique piloté par un attribut `select` (conçu, pas implémenté — `plan-mark3.md` action 18)
+
+> Demande utilisateur (2026-11-23) : un `serveur` ne peut pas porter le
+> layer `physique` de façon statique si son `type` est `vm` — le champ
+> `layers` de l'action 14 (statique par classe) ne suffit plus dès
+> qu'un attribut de l'objet (ex. `type`) doit influencer le layer
+> effectif. Demande explicite : configurer, sur un attribut `select`,
+> une correspondance valeur → layer(s), éditable dans
+> `ConfigurationPage.tsx`.
+
+⚠️ Changement d'architecture par rapport à l'action 14 (pas un simple
+ajout de champ) : les layers deviennent **par objet** (dépendants de la
+valeur choisie sur un attribut `select` donné), pas uniquement par
+classe. Le filtre (`Sidebar.tsx`/`NavigationPage.tsx`/`DiagramPage.tsx`)
+devra, pour un attribut `select` marqué comme pilotant le layer,
+résoudre le layer effectif à partir de la valeur réellement stockée sur
+chaque objet — pas uniquement lire `classDef.layers` comme aujourd'hui.
+
+Conception à esquisser (aucune implémentation) :
+- `model/schema.json` : sur une définition d'attribut `type: select`,
+  nouveau champ optionnel `layer_map` (objet `{valeur: [layers]}`,
+  sous-ensemble de `values`). La seule présence de `layer_map` marque
+  cet attribut comme pilotant le layer — pas de flag booléen séparé
+  redondant (cohérent avec le pattern déjà en place : `values` requis
+  sur `select` sans flag "a des valeurs" à côté).
+- Layer effectif d'un objet = union(`classDef.layers` statique,
+  `layer_map[valeur_actuelle]` pour chaque attribut `select` qui porte
+  un `layer_map`).
+- Portée du changement : la Sidebar (arbre meta_class/layer, action 15)
+  reste basée sur `classDef.layers` statique uniquement — elle liste
+  des **classes**, pas des objets, un layer dynamique par objet n'a pas
+  de sens à ce niveau. Seuls `NavigationPage.tsx`/`DiagramPage.tsx`
+  (qui manipulent des objets réels, pas juste des définitions de
+  classe) ont besoin de résoudre le layer effectif par objet.
+- `backend/routes/routes_read.py` : aucun changement a priori — le
+  calcul reste 100% frontend à partir des `values` déjà renvoyées par
+  la lecture d'objet standard, cohérent avec le principe déjà posé à
+  l'action 14 (filtre layers = pas un mécanisme RBAC/sécurité).
+- `ConfigurationPage.tsx` : UI d'édition de `layer_map` sur un attribut
+  `select` — pour chaque valeur de `values[]`, un sélecteur de layers
+  (réutilisation du pattern chips déjà construit pour l'éditeur `layers`
+  de classe, action 14).
+- ⚠️ Point ouvert : objets dont le détail n'est pas encore chargé au
+  moment du filtre (concerne surtout `NavigationPage.tsx`, chargement
+  lazy par groupe) — repli recommandé sur `classDef.layers` statique
+  seul tant que le détail n'est pas disponible, pas de blocage/attente.
+
+Détail complet et suivi : `plan-mark3.md` action 18.
+
+## 10.16 Type d'attribut `boolean` (conçu, pas implémenté — `plan-mark3.md` action 19)
+
+> Demande utilisateur (2026-11-23), née du besoin `os.active` (§10.14) :
+> aucun type booléen n'existe dans le schéma actuel (`string`/
+> `integer`/`float`/`joint-1-1`/`joint-1-n`/`file`/`image`/`csv`/
+> `select`/`datasource`/`secret`, 11 types).
+
+Conception à esquisser :
+- `model/schema.json` : ajout `"boolean"` à l'enum `attributes[].type`
+  — pas de champ requis supplémentaire (contrairement à
+  `select`/`joint-*`/`datasource`), le type le plus simple du jeu
+  actuel avec `string`/`integer`/`float`.
+- Stockage : réutilisation de `value_string` (`"true"`/`"false"`),
+  aucune nouvelle colonne SQL — même principe que tous les types
+  scalaires existants.
+- `backend/routes/routes_write.py` (`_coerce_typed_value`) : accepte un
+  booléen JSON (`true`/`false`), `abort(400)` sinon ; stocke en texte.
+- `frontend/src/pages/NavigationPage.tsx` : rendu/édition en case à
+  cocher — **dans le formulaire modal ET dans l'édition inline de
+  cellule** (rappel explicite : l'action 7 avait oublié l'édition
+  inline au premier passage, corrigé en itération 2 — ne pas reproduire
+  l'oubli dès ce premier passage, cf. actions 9/13).
+- `frontend/src/pages/ConfigurationPage.tsx` : `ATTR_TYPES` étendu à 12
+  types, `boolean` affiche « Aucune option » (comme `file`/`image`/
+  `secret`).
+
+Détail complet et suivi : `plan-mark3.md` action 19.
+
+## 10.17 Autosuggest : suggestions de valeurs apprises sur un attribut texte (conçu, pas implémenté — `plan-mark3.md` action 20)
+
+> Demande utilisateur (2026-11-23), née du besoin de champs texte
+> répétitifs (ex. `ville`/`pays` de `batiment` §10.14,
+> `application_versionnee.version`/`module_versionne.version`) :
+> suggestions auto-apprises à partir des valeurs déjà saisies par les
+> utilisateurs (pas une liste figée comme `select`), classées par
+> proximité textuelle avec la saisie en cours. 3 points tranchés par
+> l'utilisateur : nom du flag **`autosuggest`**, suggestions basées sur
+> les **valeurs actives seulement** (pas tout l'historique, pour ne pas
+> proposer une faute de frappe corrigée depuis), tri par distance
+> d'édition via la librairie **`rapidfuzz`** (pas de réimplémentation
+> maison).
+
+Conception à esquisser :
+- `model/schema.json` : nouveau champ optionnel `"autosuggest": true`
+  sur une définition d'attribut `type: string` uniquement. Sans objet
+  pour les autres types (même convention documentaire que `separator`/
+  `values`/`classes`).
+- `backend/requirements.txt` : ajout de la dépendance `rapidfuzz`.
+- Nouvelle route `GET /api/suggest/<meta_class>/<class>/<attribute>
+  ?q=<saisie>` : `SELECT DISTINCT value_string FROM attribute_value
+  WHERE ... AND valid_to IS NULL` (valeurs actives seulement, décision
+  utilisateur) pour le triplet (meta_class, class, attribute), RBAC
+  tenant identique aux autres routes de lecture, tri par distance
+  d'édition (`rapidfuzz.fuzz`/`process.extract`) entre `q` et chaque
+  valeur candidate, top N (ex. 10) renvoyé.
+- `frontend/src/pages/NavigationPage.tsx` : champ texte + dropdown de
+  suggestions (fetch débouncé sur la nouvelle route) pour tout attribut
+  `autosuggest` — **dans le formulaire modal ET dans l'édition inline
+  de cellule** (même rappel explicite qu'au §10.16 : ne pas oublier
+  l'inline dès ce premier passage).
+- `frontend/src/pages/ConfigurationPage.tsx` : case à cocher
+  « Suggestion auto (valeurs déjà saisies) » sur un attribut `string`.
+- ⚠️ Non tranché par l'utilisateur, à décider à l'implémentation :
+  activer `autosuggest` sur `os.nom`/`os.version` (§10.14) en plus de
+  `application_versionnee.version`/`module_versionne.version`
+  (explicitement demandés) — cohérent avec le pattern mais pas demandé
+  nommément.
+
+Détail complet et suivi : `plan-mark3.md` action 20.
