@@ -248,6 +248,23 @@ export const apiSetPurgeGracePeriod = (value: number) =>
     }
   );
 
+// Config - layers par défaut (plan-mark3.md action 18). GET ouvert (pure
+// métadonnée d'affichage UI, pas un mécanisme RBAC/sécurité - cf.
+// types.ts, commentaire sur ClassDef.layers) : fetchJson suffit, pas
+// besoin de fetchJsonAuth. PUT réservé global-admin côté backend.
+export const apiGetDefaultLayers = () =>
+  fetchJson<{ value: string[] }>(`${BASE}/config/default_layers`);
+
+export const apiSetDefaultLayers = (layers: string[]) =>
+  fetchJsonAuth<{ status: string; value: string[] }>(
+    `${BASE}/config/default_layers`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: layers }),
+    }
+  );
+
 // Auth - login direct Keycloak (Resource Owner Password Credentials)
 // Appel direct au navigateur vers Keycloak (port 8080 publié sur l'hôte),
 // pas via le proxy Vite /api : ce n'est pas une route de ce backend, et

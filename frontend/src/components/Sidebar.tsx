@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiReadClasses } from '../api';
+import { apiReadClasses, apiGetDefaultLayers } from '../api';
 import type { ClassInfo } from '../types';
 
 interface SidebarProps {
@@ -42,17 +42,27 @@ export default function Sidebar({
   // arbres ont chacun leur propre Set de clés dépliées.
   const [expandedMeta, setExpandedMeta] = useState<Set<string>>(new Set());
   const [expandedLayerGroups, setExpandedLayerGroups] = useState<Set<string>>(new Set());
+  // Layers par défaut persistés en base (plan-mark3.md action 18), fetch
+  // ouvert (aucune notion d'authInfo/admin dans ce composant) : toujours
+  // proposés même si aucune classe chargée ne les référence encore.
+  const [defaultLayers, setDefaultLayers] = useState<string[]>([]);
 
   useEffect(() => {
     apiReadClasses().then(setClasses).catch(() => {});
   }, [page]);
 
-  // Liste des layers connus (plan-mark3.md action 14, point 5) : déduite
-  // dynamiquement de toutes les classes chargées (jamais affectée par le
-  // filtre texte), même source que ConfigurationPage.
-  const availableLayers = [...new Set(
-    classes.flatMap((c) => (c.layers || []).map((l) => l.trim()).filter(Boolean))
-  )].sort();
+  useEffect(() => {
+    apiGetDefaultLayers().then((r) => setDefaultLayers(r.value)).catch(() => {});
+  }, []);
+
+  // Liste des layers connus (plan-mark3.md action 14, point 5 ; union avec
+  // default_layers ajoutée action 18) : déduite dynamiquement de toutes les
+  // classes chargées, jamais affectée par le filtre texte, même source que
+  // ConfigurationPage, union avec la liste persistée des layers par défaut.
+  const availableLayers = [...new Set([
+    ...classes.flatMap((c) => (c.layers || []).map((l) => l.trim()).filter(Boolean)),
+    ...defaultLayers,
+  ])].sort();
 
   // Filtre texte (point 3c) : sous-chaîne insensible à la casse, sur le nom
   // de classe et/ou de meta_class, appliqué aux deux arbres ci-dessous.

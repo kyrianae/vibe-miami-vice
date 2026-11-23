@@ -78,3 +78,9 @@ CREATE TABLE app_config (
 -- via GET/PUT /api/config/purge_grace_period_days, sans redémarrage du
 -- backend.
 INSERT INTO app_config (key, value) VALUES ('purge_grace_period_days', '30');
+
+-- Layers par défaut toujours sélectionnables dans l'UI (plan-mark3.md
+-- action 18), même si aucune classe du modèle ne les référence encore ;
+-- liste JSON (array de strings) encodée en TEXT ; configurable à chaud via
+-- GET/PUT /api/config/default_layers, sans redémarrage du backend.
+INSERT INTO app_config (key, value) VALUES ('default_layers', '["applicatif","infra","organisationnel","fonctionnel","metier"]');

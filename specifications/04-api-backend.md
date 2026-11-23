@@ -446,3 +446,63 @@ arbitraire.
   Prometheus ou une autre source réelle) : uniquement le type, la
   référence, et la meta-classe de démo `model/datasource.json` (§3.2ter de
   [03-modele-donnees.md](03-modele-donnees.md)).
+
+## 4.8 Type `boolean` (ajout 2026-11-23, `plan-mark3.md` action 19)
+
+**`boolean`** (action 19, conception détaillée : §10.16 de
+[07-roadmap.md](07-roadmap.md)) — type scalaire le plus simple du jeu
+actuel, transite lui aussi par le JSON classique de `POST
+/api/write/object` (coercition dans `_coerce_typed_value`,
+`backend/routes/routes_write.py`), comme `select`/`secret`/`datasource`
+ci-dessus : aucune route binaire dédiée.
+
+- **Écriture** — `_coerce_typed_value` accepte **deux** formes de
+  `raw_value`, strictement, rien d'autre :
+  - un bool Python natif (`True`/`False`) — cas nominal, reçu via `POST
+    /api/write/object` après parsing JSON du corps de la requête (un
+    `true`/`false` JSON devient un bool Python) ;
+  - la chaîne **exactement** `"true"` ou `"false"` — reçue via `PUT
+    /api/write/attribute/<cls>/<id>/<attribute>/<value>` (édition
+    inline de cellule), où la valeur transite par le chemin d'URL Flask
+    (`<string:value>`) : un bool JSON ne peut physiquement pas être
+    porté par un segment d'URL, cette route ne voit donc jamais rien
+    d'autre qu'une chaîne. Ce type n'est **pas** bloqué sur cette route
+    (contrairement à `file`/`image`/`csv`/`secret`, §4.6/ci-dessus) —
+    contrairement à `joint-1-1`, qui contourne cette même contrainte en
+    routant son édition inline par l'objet complet plutôt que par cette
+    route URL (`NavigationPage.tsx`, `saveInlineEdit`), `boolean` reste
+    ici sur la route URL : la valeur transite déjà en texte canonique
+    identique au stockage (`value_string`), donc l'accepter directement
+    sous cette forme n'introduit aucune ambiguïté et évite de
+    complexifier `saveInlineEdit` pour un seul type.
+  - Toute autre valeur (chaînes `"1"`/`"yes"`/`"0"`/`"True"`, entiers
+    `0`/`1`, flottants, `null`, listes, objets...) est rejetée
+    `abort(400)` avec message explicite — pas de parsing permissif.
+  Dans les deux cas, stockage normalisé dans `value_string` en texte
+  **exactement** `"true"`/`"false"` (jamais `"True"`/`"1"`/autre) :
+  une valeur reçue sous l'une ou l'autre forme produit donc le même
+  texte stocké, garantissant que l'historisation (`_apply_attribute_diff`)
+  déduplique correctement une valeur inchangée quel que soit le chemin
+  d'écriture emprunté.
+- **Lecture générique** — aucun traitement spécial dans
+  `_build_object_payload` (`backend/routes/routes_read.py`) : le texte
+  `"true"`/`"false"` ressort tel quel dans `values`, comme n'importe quel
+  autre attribut `value_string` ordinaire (`string`/`select`/`datasource`)
+  — contrairement à `secret` (masqué par un placeholder) ou
+  `file`/`image`/`csv` (pointeur `<version>:<nom>` à résoudre). Aucune
+  route dédiée.
+- **IHM** (`frontend/src/pages/NavigationPage.tsx`) — case à cocher aux
+  **deux** endroits attendus pour toute édition d'attribut de ce module
+  (rappel de la conception, déjà manqué une fois à l'action 7 pour
+  `select`) : le formulaire modal de création/édition (`newAttrs`, state
+  local `Record<string, string>`, porte `"true"`/`"false"` comme tout
+  autre type scalaire et n'est reconverti en bool JSON natif qu'à
+  l'envoi, `handleSave`) et l'édition inline de cellule du tableau
+  (branche `isInlineEditing && isBoolean`, même route `PUT
+  /api/write/attribute/...` que `select`/`string`). Rendu en lecture
+  (cellule non éditée) : case à cocher désactivée plutôt que le texte
+  brut, pour la cohérence visuelle avec le rendu édition.
+- `frontend/src/pages/ConfigurationPage.tsx` : `ATTR_TYPES` étendu à 12
+  types ; colonne « Options » affiche « Aucune option » (même branche que
+  `file`/`image`/`secret`, aucun champ requis supplémentaire pour ce
+  type).

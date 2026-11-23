@@ -3,7 +3,7 @@
 export interface AttributeDefinition {
   domain: string;
   name: string;
-  type: 'string' | 'integer' | 'float' | 'joint-1-1' | 'joint-1-n' | 'file' | 'image' | 'csv' | 'select' | 'datasource' | 'secret';
+  type: 'string' | 'integer' | 'float' | 'joint-1-1' | 'joint-1-n' | 'file' | 'image' | 'csv' | 'select' | 'datasource' | 'secret' | 'boolean';
   // Classes cibles autorisées : requis pour joint-1-1/joint-1-n (jointure)
   // ET pour datasource (classes datasource_* acceptées par ce pointeur,
   // plan-mark3.md action 9 - même champ réutilisé).
@@ -16,6 +16,13 @@ export interface AttributeDefinition {
   // Liste fixe des valeurs autorisées, réservée au type 'select'
   // (plan-mark3.md action 7). Requis côté model/schema.json si type = select.
   values?: string[];
+  // Layer dynamique piloté par un attribut 'select' (plan-mark3.md action 18) :
+  // {valeur: [layers]}, censé être un sous-ensemble de `values` (non vérifié
+  // côté frontend). La seule présence de ce champ marque l'attribut comme
+  // pilotant le layer effectif de l'objet - pas de flag booléen séparé.
+  // Sans objet pour les autres types. Voir getObjectEffectiveLayers dans
+  // NavigationPage.tsx/DiagramPage.tsx pour le calcul du layer effectif.
+  layer_map?: Record<string, string[]>;
 }
 
 export interface ClassDefinition {

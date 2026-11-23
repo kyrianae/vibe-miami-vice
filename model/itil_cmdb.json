@@ -26,12 +26,21 @@
             "class": "serveur",
             "displayname": "{{nom}}",
             "icon": "server",
-            "layers": ["physique", "reseau"],
+            "layers": ["reseau"],
             "attributes": [
                 {
                     "domain": "details",
                     "name": "nom",
                     "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "type",
+                    "type": "select",
+                    "values": ["physique", "vm"],
+                    "layer_map": {
+                        "physique": ["physique"]
+                    }
                 },
                 {
                     "domain": "adresse",
@@ -62,6 +71,11 @@
                     "name": "monitoring",
                     "type": "datasource",
                     "classes": ["query"]
+                },
+                {
+                    "domain": "logique",
+                    "name": "actif",
+                    "type": "boolean"
                 }
             ]
         },

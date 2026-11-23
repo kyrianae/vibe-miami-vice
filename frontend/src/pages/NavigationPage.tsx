@@ -209,6 +209,33 @@ function isClassVisibleForLayers(def: { layers?: string[] } | undefined, selecte
   return layers.some((l) => selectedLayers.has(l));
 }
 
+// Layer effectif d'un objet (plan-mark3.md action 18, specifications/
+// 07-roadmap.md §10.15) : union du `layers` statique de sa classe et, pour
+// chaque attribut 'select' de la classe portant un `layer_map`, des layers
+// mappés à la valeur courante de l'objet sur cet attribut (si connue).
+// Repli sur `classDef.layers` statique seul si le détail de l'objet n'est
+// pas encore chargé (chargement lazy par groupe, cf. toggleGroup/auto-load
+// ci-dessous) - point ouvert tranché par l'utilisateur (§10.15) : pas de
+// blocage/attente du détail pour filtrer.
+function getObjectEffectiveLayers(
+  classDef: { layers?: string[]; attributes: AttributeDefinition[] } | undefined,
+  detail: ObjectDetail | undefined,
+): string[] {
+  const base = classDef?.layers || [];
+  if (!classDef || !detail) return base;
+  const extra: string[] = [];
+  for (const attrDef of classDef.attributes) {
+    if (attrDef.type !== 'select' || !attrDef.layer_map) continue;
+    const attrVal = detail.attributes.find((a) => a.name === attrDef.name);
+    if (!attrVal || attrVal.values.length === 0) continue;
+    const current = attrVal.values[0];
+    if (typeof current !== 'string') continue;
+    const mapped = attrDef.layer_map[current];
+    if (mapped) extra.push(...mapped);
+  }
+  return extra.length > 0 ? [...new Set([...base, ...extra])] : base;
+}
+
 // État d'édition inline d'une cellule
 interface InlineEdit {
   objectId: number;
@@ -343,10 +370,14 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
         if (selectedMetaClass && visibleClasses.size > 0 && !visibleClasses.has(o.class)) return false;
         if (!selectedMetaClass && selectedClass && o.class !== selectedClass) return false;
         const def = classes.find((c) => c.meta_class === o.meta_class && c.class === o.class);
-        if (!isClassVisibleForLayers(def, selectedLayers)) return false;
+        // Layer effectif par objet (action 18) : remplace classDef.layers
+        // statique seul par le calcul union, repli automatique si le détail
+        // n'est pas encore en cache (voir getObjectEffectiveLayers).
+        const effectiveLayers = getObjectEffectiveLayers(def, detailCache[o.id]);
+        if (!isClassVisibleForLayers({ layers: effectiveLayers }, selectedLayers)) return false;
         return true;
       }),
-    [objects, selectedMetaClass, selectedClass, visibleClasses, classes, selectedLayers],
+    [objects, selectedMetaClass, selectedClass, visibleClasses, classes, selectedLayers, detailCache],
   );
 
   const grouped: Record<string, { meta_class: string; class: string; objects: ObjectSummary[] }> = {};
@@ -649,6 +680,14 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
       const def = classes.find((c) => c.meta_class === newMetaClass && c.class === newClass);
       if (def) {
         for (const attr of def.attributes) {
+          // boolean (plan-mark3.md action 19) : newAttrs ne porte jamais
+          // qu'une chaîne "true"/"false" (comme tout autre type scalaire,
+          // cf. handleEditObject/handleSelectNewClass) - reconverti ici en
+          // booléen JSON natif juste avant l'envoi, seul format accepté par
+          // _coerce_typed_value côté backend pour ce chemin JSON (write_object).
+          if (attr.type === 'boolean' && attributes[attr.name] !== undefined) {
+            attributes[attr.name] = attributes[attr.name] === 'true';
+          }
           const ids = jointValues[attr.name];
           if (!ids || ids.length === 0) continue;
           if (attr.type === 'joint-1-1') attributes[attr.name] = { joint_id: ids[0] };
@@ -836,6 +875,14 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
           setCandidateLabels((prev) => ({ ...prev, ...labels }));
         });
       }
+    } else if (attrDef.type === 'boolean') {
+      // Case à cocher (plan-mark3.md action 19) : valeur par défaut 'false'
+      // (jamais '' comme le texte libre) - une cellule vide pour un booléen
+      // n'a pas de sens, le checkbox doit toujours démarrer dans un état
+      // déterminé coché/décoché.
+      const currentVal = detail?.attributes.find((a) => a.name === attrName);
+      const val = currentVal && currentVal.values.length > 0 ? String(currentVal.values[0]) : 'false';
+      setInlineEdit({ objectId: obj.id, attrName, value: val });
     } else {
       // Inline text/number edit
       const currentVal = detail?.attributes.find((a) => a.name === attrName);
@@ -1344,6 +1391,27 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                   </div>
                 );
               }
+              if (attr.type === 'boolean') {
+                // Case à cocher (plan-mark3.md action 19) : état local
+                // newAttrs toujours une chaîne "true"/"false" comme les
+                // autres types scalaires (newAttrs: Record<string, string>,
+                // cohérent avec handleEditObject/handleSelectNewClass) -
+                // reconverti en booléen JSON natif uniquement à l'envoi
+                // (handleSave), jamais stocké comme bool dans ce state local.
+                const checked = newAttrs[attr.name] === 'true';
+                return (
+                  <div className="form-group" key={attr.name}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => setNewAttrs({ ...newAttrs, [attr.name]: e.target.checked ? 'true' : 'false' })}
+                      />
+                      {attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span>
+                    </label>
+                  </div>
+                );
+              }
               return (
                 <div className="form-group" key={attr.name}>
                   <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span></label>
@@ -1536,6 +1604,7 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                             const isJoint1N = attrDef?.type === 'joint-1-n';
                             const isSelect = attrDef?.type === 'select';
                             const isDatasource = attrDef?.type === 'datasource';
+                            const isBoolean = attrDef?.type === 'boolean';
 
                             if (isInlineEditing && isDatasource) {
                               const candidates = getCandidates({ classes: attrDef?.classes, name: attrDef?.name }, obj.id);
@@ -1605,7 +1674,35 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                               );
                             }
 
-                            if (isInlineEditing && !isJoint11 && !isJoint1N && !isSelect && !isDatasource) {
+                            if (isInlineEditing && isBoolean) {
+                              // Case à cocher (plan-mark3.md action 19) : édition
+                              // inline de cellule - rappel explicite de la
+                              // conception, oubliée une première fois à l'action 7
+                              // (select) sur ce même emplacement, corrigée en
+                              // itération 2. onChange met juste à jour inlineEdit
+                              // (comme select/joint-1-1 ci-dessus), onBlur commet
+                              // via saveInlineEdit -> apiWriteAttribute (chemin
+                              // URL, valeur "true"/"false" en texte, acceptée par
+                              // _coerce_typed_value au même titre qu'un bool JSON
+                              // natif - backend/routes/routes_write.py).
+                              return (
+                                <td key={name} style={{ padding: 2 }}>
+                                  <input
+                                    type="checkbox"
+                                    autoFocus
+                                    checked={inlineEdit.value === 'true'}
+                                    onChange={(e) => setInlineEdit({ ...inlineEdit, value: e.target.checked ? 'true' : 'false' })}
+                                    onBlur={saveInlineEdit}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Escape') setInlineEdit(null);
+                                      if (e.key === 'Enter') saveInlineEdit();
+                                    }}
+                                  />
+                                </td>
+                              );
+                            }
+
+                            if (isInlineEditing && !isJoint11 && !isJoint1N && !isSelect && !isDatasource && !isBoolean) {
                               return (
                                 <td key={name} style={{ padding: 2 }}>
                                   <input
@@ -1654,6 +1751,12 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                                   // ré-enveloppé en {joint_id} pour réutiliser tel
                                   // quel la résolution de label existante de formatValue.
                                   attr!.values.map((v, j) => <span key={j} style={{ marginRight: 6 }}>{formatValue({ joint_id: Number(v) })}</span>)
+                                ) : isBoolean ? (
+                                  // Rendu lecture (plan-mark3.md action 19) : case à
+                                  // cocher désactivée plutôt que le texte brut
+                                  // "true"/"false" - cohérent avec le rendu édition
+                                  // (modal et inline) du même type juste au-dessus.
+                                  <input type="checkbox" checked={attr!.values[0] === 'true'} disabled />
                                 ) : (
                                   attr!.values.map((v, j) => <span key={j} style={{ marginRight: 6 }}>{formatValue(v)}</span>)
                                 )}

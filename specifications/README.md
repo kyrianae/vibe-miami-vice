@@ -28,6 +28,7 @@
 | [05-frontend.md](05-frontend.md) | §6 | Frontend (pages, thèmes, client API, anomalies) |
 | [06-dependances-anomalies.md](06-dependances-anomalies.md) | §8, §9 | Dépendances non exploitées, récapitulatif des anomalies (par gravité) |
 | [07-roadmap.md](07-roadmap.md) | §10 | Pistes d'évolution et décisions (multi-tenant, authentification, historisation, partitionnement, liens transitifs) |
+| [use case.md](use%20case.md) | — | Cas d'usage métier déblocables par le modèle dynamique (GED, CMDB, inventaire, ticketing...), référencés depuis `plan-mark3.md` |
 
 §0-§9 restent un **instantané figé** de l'audit du 2026-11-07 (bugs depuis
 corrigés par `plan-mark1.md`/`plan-mark2.md`, non remis à jour dans ces

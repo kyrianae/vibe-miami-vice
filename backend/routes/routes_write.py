@@ -409,6 +409,29 @@ def _coerce_typed_value(attr_def, raw_value):
         except (TypeError, ValueError):
             abort(400, description=f"Valeur invalide pour l'attribut {attr_name!r} (nombre attendu) : {raw_value!r}")
 
+    if attr_type == "boolean":
+        # Stockage texte "true"/"false" dans value_string (aucune nouvelle
+        # colonne SQL), même famille que select/datasource/string -
+        # plan-mark3.md action 19, specifications/07-roadmap.md §10.16.
+        # Deux chemins d'écriture mènent ici avec des types Python
+        # différents : write_object (POST, corps JSON - raw_value est un
+        # bool Python natif après parsing JSON, cas nominal visé par la
+        # conception) ET write_attribute_value (PUT, édition inline de
+        # cellule - raw_value est TOUJOURS une chaîne, la valeur transitant
+        # par le chemin d'URL Flask <string:value>, qui ne peut physiquement
+        # pas porter un bool JSON). Les deux formes sont acceptées ici,
+        # strictement : bool Python, ou chaîne EXACTEMENT "true"/"false"
+        # (pas de parsing permissif type "1"/"yes"/"0") - tout le reste est
+        # rejeté. isinstance(raw_value, bool) doit être vérifié avant tout
+        # cast numérique éventuel ailleurs dans cette fonction (bool est une
+        # sous-classe d'int en Python), mais ce bloc est autonome et ne
+        # retombe jamais dans un autre cas.
+        if isinstance(raw_value, bool):
+            return "value_string", "true" if raw_value else "false"
+        if isinstance(raw_value, str) and raw_value in ("true", "false"):
+            return "value_string", raw_value
+        abort(400, description=f"Valeur invalide pour l'attribut {attr_name!r} (type boolean) : {raw_value!r}, attendu true/false")
+
     if attr_type == "datasource":
         # Pointeur (value_string) vers l'id d'un objet d'une meta-classe
         # datasource_* dédiée (plan-mark3.md action 9, specifications/

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   apiReadMetaClass, apiWriteMetaClass, apiInit, apiReadClasses,
   apiGetPurgeGracePeriod, apiSetPurgeGracePeriod,
+  apiGetDefaultLayers, apiSetDefaultLayers,
 } from '../api';
 import type { MetaClassDefinition, ClassDefinition, AttributeDefinition, ClassInfo } from '../types';
 import type { AuthInfo } from '../auth';
@@ -25,7 +26,7 @@ function isClassVisibleForTenant(cls: { tenants?: string[] }, authInfo: AuthInfo
 
 const ATTR_TYPES: AttributeDefinition['type'][] = [
   'string', 'integer', 'float', 'joint-1-1', 'joint-1-n',
-  'file', 'image', 'csv', 'select', 'secret', 'datasource',
+  'file', 'image', 'csv', 'select', 'secret', 'datasource', 'boolean',
 ];
 
 function emptyAttribute(): AttributeDefinition {
@@ -46,6 +47,13 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
   const [expandedClasses, setExpandedClasses] = useState<Set<number>>(new Set());
   const [purgeGraceDays, setPurgeGraceDays] = useState<string>('');
   const [purgeGraceSaving, setPurgeGraceSaving] = useState(false);
+  // Layers par défaut (plan-mark3.md action 18) : fetch ouvert (pas de
+  // gating admin sur le GET, cf. routes_admin.py), utilisé à la fois pour
+  // l'union dans knownLayers ci-dessous et comme valeur initiale du champ
+  // d'édition réservé global-admin plus bas.
+  const [defaultLayersStored, setDefaultLayersStored] = useState<string[]>([]);
+  const [defaultLayersDraft, setDefaultLayersDraft] = useState<string>('');
+  const [defaultLayersSaving, setDefaultLayersSaving] = useState(false);
 
   const addToast = useCallback((type: 'success' | 'error', text: string) => {
     const id = ++toastIdRef.current;
@@ -92,19 +100,56 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
     }
   };
 
+  // Layers par défaut (plan-mark3.md action 18) : lecture ouverte, aucune
+  // condition authInfo.isGlobalAdmin ici (contrairement à purgeGraceDays
+  // ci-dessus) - cf. commentaire de apiGetDefaultLayers, nécessaire pour que
+  // knownLayers (lecture seule, tous utilisateurs) voie l'union aussi.
+  useEffect(() => {
+    apiGetDefaultLayers()
+      .then((res) => {
+        setDefaultLayersStored(res.value);
+        setDefaultLayersDraft(res.value.join(', '));
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSaveDefaultLayers = async () => {
+    const deduped = [...new Set(
+      defaultLayersDraft.split(',').map((t) => t.trim()).filter(Boolean)
+    )];
+    if (deduped.length === 0) {
+      addToast('error', 'La liste des layers par défaut ne peut pas être vide');
+      return;
+    }
+    setDefaultLayersSaving(true);
+    try {
+      const res = await apiSetDefaultLayers(deduped);
+      setDefaultLayersStored(res.value);
+      setDefaultLayersDraft(res.value.join(', '));
+      addToast('success', `Layers par défaut mis à jour : ${res.value.join(', ')}`);
+    } catch (e: unknown) {
+      addToast('error', e instanceof Error ? e.message : 'Erreur');
+    } finally {
+      setDefaultLayersSaving(false);
+    }
+  };
+
   const allClassNames = [...new Set([
     ...allClasses.map((c) => c.class),
     ...classDefs.map((c) => c.class).filter(Boolean),
   ])];
 
-  // Registre des layers (plan-mark3.md action 14, point 3) : pas de
-  // meta-classe dédiée - union dédupliquée (trim) des `layers` de toutes
-  // les classes du modèle chargé (allClasses, déjà filtré par tenant),
+  // Registre des layers (plan-mark3.md action 14, point 3 ; union avec
+  // default_layers ajoutée action 18) : pas de meta-classe dédiée - union
+  // dédupliquée (trim) des `layers` de toutes les classes du modèle chargé
+  // (allClasses, déjà filtré par tenant) ET des layers par défaut persistés
+  // en base (defaultLayersStored, toujours proposés même sans classe),
   // affichée en lecture pour que l'utilisateur réutilise un nom de layer
   // existant au lieu de le retaper/fauter dans le champ texte libre.
-  const knownLayers = [...new Set(
-    allClasses.flatMap((c) => (c.layers || []).map((l) => l.trim()).filter(Boolean))
-  )].sort();
+  const knownLayers = [...new Set([
+    ...allClasses.flatMap((c) => (c.layers || []).map((l) => l.trim()).filter(Boolean)),
+    ...defaultLayersStored,
+  ])].sort();
 
   // Load definition when selecting a meta_class
   useEffect(() => {
@@ -239,8 +284,34 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
     updateAttribute(classIdx, attrIdx, { values: [...current, val] });
   };
 
+  // Limite connue assumée : re-saisir ensuite la même valeur à l'identique (avant
+  // sauvegarde) ne restaure pas son layer_map purgé ci-dessous - edge case rare, pas
+  // traité pour éviter de complexifier le state tracking.
   const removeSelectValue = (classIdx: number, attrIdx: number, attr: AttributeDefinition, val: string) => {
-    updateAttribute(classIdx, attrIdx, { values: (attr.values || []).filter((v) => v !== val) });
+    const patch: Partial<AttributeDefinition> = { values: (attr.values || []).filter((v) => v !== val) };
+    // Purge la clé layer_map correspondante (plan-mark3.md action 18) : une
+    // valeur retirée de `values` ne doit pas laisser un layer_map[val]
+    // orphelin (censé rester un sous-ensemble de `values`).
+    if (attr.layer_map && val in attr.layer_map) {
+      const nextMap = { ...attr.layer_map };
+      delete nextMap[val];
+      patch.layer_map = Object.keys(nextMap).length > 0 ? nextMap : undefined;
+    }
+    updateAttribute(classIdx, attrIdx, patch);
+  };
+
+  // --- Layer map management (plan-mark3.md action 18, specifications/
+  // 07-roadmap.md §10.15) : un sélecteur de layers par valeur de `values`,
+  // réutilisation telle quelle du pattern déjà en place pour `cls.layers`
+  // (action 14) - texte libre comma-séparé, pas de nouveau composant de
+  // sélection de layers. Liste vide (layersText vide) = pas de layer pour
+  // cette valeur, retire la clé plutôt que de garder un tableau vide.
+  const updateValueLayerMap = (classIdx: number, attrIdx: number, attr: AttributeDefinition, value: string, layersText: string) => {
+    const layers = layersText.split(',').map((t) => t.trim()).filter(Boolean);
+    const nextMap = { ...(attr.layer_map || {}) };
+    if (layers.length > 0) nextMap[value] = layers;
+    else delete nextMap[value];
+    updateAttribute(classIdx, attrIdx, { layer_map: Object.keys(nextMap).length > 0 ? nextMap : undefined });
   };
 
   // --- Save ---
@@ -261,7 +332,18 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
               clean.classes = a.classes || [];
             }
             if (a.type === 'select') {
-              clean.values = a.values || [];
+              const cleanValues = a.values || [];
+              clean.values = cleanValues;
+              // layer_map (plan-mark3.md action 18) : persiste uniquement les
+              // clés encore présentes dans `values` au moment de la sauvegarde
+              // (garde-fou front, le schéma ne l'impose pas strictement -
+              // cf. model/schema.json) et seulement si non vide.
+              if (a.layer_map) {
+                const filteredMap = Object.fromEntries(
+                  Object.entries(a.layer_map).filter(([k]) => cleanValues.includes(k))
+                );
+                if (Object.keys(filteredMap).length > 0) clean.layer_map = filteredMap;
+              }
             }
             if (a.type === 'csv' && a.separator) {
               clean.separator = a.separator;
@@ -384,6 +466,33 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
               />
               <button className="btn btn-secondary" style={{ fontSize: 12 }}
                 onClick={handleSavePurgeGraceDays} disabled={purgeGraceSaving}
+              >
+                Enregistrer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Layers par défaut (plan-mark3.md action 18) - global-admin
+          uniquement, même structure que le bloc purge grace period
+          ci-dessus. Champ texte comma-separated : réutilise tel quel le
+          pattern déjà en place pour éditer le champ "Layers" d'une classe
+          (ligne ~519 plus bas, action 14) - pas de nouveau composant. */}
+      {authInfo.isGlobalAdmin && (
+        <div className="card">
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>Layers par défaut <span style={{ color: 'var(--color-text-muted)' }}>(toujours sélectionnables, même sans classe qui les utilise)</span></label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="text"
+                value={defaultLayersDraft}
+                onChange={(e) => setDefaultLayersDraft(e.target.value)}
+                placeholder="ex: applicatif, infra, organisationnel"
+                style={{ flex: 1 }}
+              />
+              <button className="btn btn-secondary" style={{ fontSize: 12 }}
+                onClick={handleSaveDefaultLayers} disabled={defaultLayersSaving}
               >
                 Enregistrer
               </button>
@@ -621,13 +730,39 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
                                   </span>
                                 ))}
                               </div>
+                              {/* Layer dynamique par valeur (plan-mark3.md action 18,
+                                  specifications/07-roadmap.md §10.15) : même pattern
+                                  texte comma-séparé que "Layers" de classe (action 14,
+                                  ci-dessus) - un champ par valeur de `values`. Présence
+                                  de layer_map (même vide côté UI tant qu'aucune ligne
+                                  n'est remplie) marque l'attribut comme pilotant le
+                                  layer effectif, pas de case à cocher séparée. */}
+                              {(attr.values || []).length > 0 && (
+                                <div style={{ marginTop: 8 }}>
+                                  <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                                    Layer(s) par valeur <span>(optionnel - vide = pas de layer dynamique pour cette valeur)</span> :
+                                  </div>
+                                  {(attr.values || []).map((v, i: number) => (
+                                    <div key={`lm-${v}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                                      <span style={{ fontSize: 11, minWidth: 70, color: 'var(--color-text-muted)' }}>{v}</span>
+                                      <input type="text"
+                                        value={(attr.layer_map?.[v] || []).join(', ')}
+                                        onChange={(e) => updateValueLayerMap(classIdx, attrIdx, attr, v, e.target.value)}
+                                        placeholder="ex: physique" style={{ ...smallInput, fontSize: 11 }} />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ) : attr.type === 'csv' ? (
                             // Séparateur optionnel (défaut ',' affiché en placeholder, pas forcé en state).
                             <input type="text" value={attr.separator || ''}
                               onChange={(e) => updateAttribute(classIdx, attrIdx, { separator: e.target.value || undefined })}
                               placeholder="," style={{ ...smallInput, fontSize: 11 }} />
-                          ) : (attr.type === 'file' || attr.type === 'image' || attr.type === 'secret') ? (
+                          ) : (attr.type === 'file' || attr.type === 'image' || attr.type === 'secret' || attr.type === 'boolean') ? (
+                            // boolean (plan-mark3.md action 19) : type le plus simple du jeu,
+                            // aucun champ requis supplémentaire (pas de values/classes/separator) -
+                            // même traitement "Aucune option" que file/image/secret.
                             <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Aucune option</span>
                           ) : (
                             // Fallback string/integer/float.

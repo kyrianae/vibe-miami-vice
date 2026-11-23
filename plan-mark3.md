@@ -291,7 +291,7 @@
        trois types (remplace la valeur = nouvelle version).
      - Tests frontend : rendu des trois branches + cohérence du choix
        d'aperçu SVG avec le backend.
-- **Cas d'usage débloqués** (`use case.md`) : coffre-fort documentaire/GED
+- **Cas d'usage débloqués** (`specifications/use case.md`) : coffre-fort documentaire/GED
   — versions de fichiers par classe/id/attribut (ligne 15) ; inventaire
   physique avec photos — parc matériel, immobilier, flotte véhicules
   (ligne 19) ; bibliothèque/vinothèque — image de couverture/étiquette et
@@ -463,7 +463,7 @@
      l'objet source (fichier conservé, toujours lisible depuis l'objet
      référent) ; référence cassée simulée → affichage retombe sur le
      fallback et la valeur de l'attribut est nettoyée côté serveur.
-- **Cas d'usage débloqués** (`use case.md`) : CMDB avec supervision
+- **Cas d'usage débloqués** (`specifications/use case.md`) : CMDB avec supervision
   intégrée — icône de classe + logo par objet pour les diagrammes
   (ligne 11) ; outil de ticket — icône par type de ticket (ligne 21, le
   volet pièce jointe de ce cas dépend de l'action 3 ci-dessus).
@@ -1967,8 +1967,135 @@
 - **Fichiers** : `model/schema.json`, `frontend/src/pages/
   ConfigurationPage.tsx`, `frontend/src/pages/NavigationPage.tsx`,
   `frontend/src/pages/DiagramPage.tsx`.
-- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
-  implémentée.
+- **Statut** : ✅ fait (2026-11-23, `worker`/`testeur`/`pessimiste`/
+  `candide`/`testeur-global`). Conception tranchée par l'utilisateur le
+  2026-11-23, détail complet `specifications/07-roadmap.md` §10.15
+  (déjà à jour, synchronisée en fin de cycle).
+  - **Itération 1 — implémentation initiale** (2 workers successifs, le
+    même jour) :
+    - Volet A (`layer_map`, worker 1) : `model/schema.json` (nouveau
+      champ optionnel `layer_map`, objet `{valeur: [layers]}`, sur une
+      définition d'attribut `type: select`, sibling de `values`) ;
+      `frontend/src/types.ts` (`AttributeDefinition.layer_map?:
+      Record<string, string[]>`) ; `NavigationPage.tsx` et
+      `DiagramPage.tsx` (nouvelle fonction
+      `getObjectEffectiveLayers(classDef, detail)` dans chaque fichier
+      — dette de duplication déjà acceptée au même titre que
+      `isClassVisibleForLayers` depuis l'action 14 — appelée juste
+      avant le predicate existant, au point du filtre qui porte sur une
+      liste d'objets réels [pas sur des classes] : union du `layers`
+      statique de la classe et des `layer_map[valeur_actuelle]` de
+      chaque attribut select concerné, repli sur `classDef.layers`
+      statique seul si le détail de l'objet n'est pas encore chargé
+      [lazy loading `NavigationPage.tsx`], sans blocage) ;
+      `ConfigurationPage.tsx` (UI d'édition `layer_map`, champ texte
+      comma-séparé par valeur de `values[]`, purge des clés orphelines
+      si une valeur select est retirée — limite connue documentée plus
+      bas) ; `model/itil_cmdb.json` (cas de test concret : attribut
+      `select` `serveur.type` physique/vm avec `layer_map:
+      {"physique": ["physique"]}`, `serveur.layers` statique réduit de
+      `["physique","reseau"]` à `["reseau"]` pour rendre le mécanisme
+      dynamique démontrable — a entraîné une régression de donnée
+      corrigée en itération 2, voir plus bas) ;
+      `specifications/07-roadmap.md` §10.15 passée de « conçu, pas
+      implémenté » à implémentée. Sidebar.tsx confirmée hors scope
+      (reste sur `classDef.layers` statique, ne manipule que des
+      définitions de classe) — vérifié par l'orchestrateur avant
+      dispatch, confirmé par la revue croisée.
+    - Volet B (`default_layers`, worker 2, ajout demandé par
+      l'utilisateur en cours de cycle, absent de la conception §10.15
+      écrite à l'origine, documenté a posteriori) : `sql/init.sql`
+      (seed `app_config` clé `default_layers` =
+      `["applicatif","infra","organisationnel","fonctionnel","metier"]`,
+      JSON en TEXT) ; `backend/routes/routes_admin.py` (nouvelles
+      routes GET/PUT `/api/config/default_layers`, même pattern que
+      `purge_grace_period_days` avec une différence volontaire : GET
+      ouvert sans aucune vérification d'auth — métadonnée d'affichage
+      UI, pas RBAC, principe déjà posé à l'action 14, nécessaire car
+      `Sidebar.tsx` est consommé par tous les utilisateurs — PUT
+      réservé `global-admin` [`is_global_admin`, 403 sinon] mais chemin
+      volontairement pas ajouté à `_PROTECTED_EXACT_PATHS`
+      [`backend/auth/auth.py`] car cette liste gate par chemin seul,
+      pas par méthode HTTP, et aurait forcé un 401 systématique aussi
+      sur le GET, cassant la lecture anonyme requise) ;
+      `frontend/src/api.ts` (`apiGetDefaultLayers`/
+      `apiSetDefaultLayers`), `Sidebar.tsx` (`availableLayers` = union
+      scan classes + fetch persisté), `ConfigurationPage.tsx` (union
+      carte « Layers connus » + nouvelle carte admin-only d'édition
+      `default_layers` près de la carte retention/purge).
+  - **Revue croisée itération 1** : testeur (8/8 PASS côté
+    logique/schema/tsc, mais E2E réel du mécanisme `layer_map` bloqué —
+    DB dev périmée, `/api/init` pas rejoué depuis le changement de
+    modèle) ; candide (convergence sur l'essentiel : point d'intégration
+    du predicate, flag par simple présence de `layer_map`, RBAC
+    `default_layers` ; 4 écarts dont 2 de traçabilité —
+    `default_layers` absent de `_PROTECTED_EXACT_PATHS` non justifié en
+    commentaire à l'époque, `default_layers` absent des specs) ;
+    pessimiste (confirme les écarts de traçabilité + trouve un vrai gap
+    de données vérifié en base réelle : l'unique objet `serveur`
+    existant, id 130 `web-prod-01`, n'avait aucune valeur sur
+    l'attribut `type` → perdait le layer `physique` qu'il avait
+    implicitement avant ce changement, régression réelle ; + limite
+    mineure sur `removeSelectValue` qui purge immédiatement `layer_map`
+    en state local sans restauration si la valeur est retapée avant
+    sauvegarde).
+  - **Itération 2 — correctifs** (arbitrage orchestrateur, 1 worker) :
+    (1) resynchronisation — `POST /api/init` (token admin réel,
+    Keycloak) rejoué pour mettre à jour la DB dev avec le modèle
+    `itil_cmdb.json` à jour (confirmé non destructif, UPSERT par
+    meta-classe), régression corrigée en réel via `PUT
+    /api/write/attribute/serveur/130/type/physique` sur l'objet
+    existant, restaure son layer `physique` effectif ; (2)
+    `backend/auth/auth.py` et `backend/routes/routes_admin.py` :
+    commentaires explicatifs ajoutés (pas de changement de
+    comportement) justifiant l'absence volontaire de
+    `/api/config/default_layers` dans `_PROTECTED_EXACT_PATHS` ; (3)
+    `ConfigurationPage.tsx` : commentaire « limite connue » ajouté
+    au-dessus de `removeSelectValue` (pas de changement de
+    comportement — décision explicite de ne pas complexifier le state
+    tracking pour un edge case rare) ; (4) `specifications/07-
+    roadmap.md` §10.15 : paragraphe ajouté documentant le registre
+    `default_layers` (absent de la conception écrite initialement).
+  - **Revalidation ciblée** : testeur (14/14 PASS, E2E réel confirmé —
+    objet #130 type=physique → layer effectif `{reseau,physique}`, 2e
+    objet de démo créé #170 type=vm → layer effectif `{reseau}` seul
+    correctement filtré ; RBAC `default_layers` GET 200 anonyme / PUT
+    403 sans token confirmés, route sœur `purge_grace_period_days` PUT
+    401 inchangée ; diffs itération 2 sanity-checkés = commentaires
+    purs) ; pessimiste (4/4 points confirmés OK : pas d'autre objet
+    serveur orphelin en base, `/api/init` confirmé non destructif,
+    commentaires exacts, doc §10.15 exacte contre code+DB live).
+  - **Testeur-global final : OK.** Build backend (py_compile) OK, suite
+    pytest existante 235/235 (0 échec), stack docker-compose 6 services
+    up sans crash, endpoints réels confirmés (`layer_map` bien
+    sérialisé par la lecture objet, `default_layers` GET 200 anonyme),
+    9/9 fichiers `model/*.json` valides contre le schema étendu,
+    navigation IHM de base non cassée. Seul point noté (non bloquant,
+    dette pré-existante hors scope) : build prod frontend `tsc -b`
+    cassé par une dette echarts déjà présente avant cette action dans
+    `DiagramPage.tsx`, confirmé identique avant/après via `git stash` —
+    déploiement réel en mode dev server, pas de build prod utilisé.
+  - **Limites connues acceptées** (non bloquantes) : (a)
+    `removeSelectValue` purge immédiatement la clé `layer_map`
+    correspondante en state local sans restauration si la même valeur
+    est retapée avant sauvegarde ; (b) asymétrie RBAC volontaire sur
+    `default_layers` (GET ouvert/PUT global-admin, documentée en
+    commentaire, différente du pattern `purge_grace_period_days` qui
+    est global-admin sur GET et PUT) ; (c) validation JSON Schema de
+    `layer_map` non stricte (n'impose pas que ses clés soient un
+    sous-ensemble de `values[]`, cohérent avec le niveau de validation
+    déjà accepté ailleurs dans `schema.json`) ; (d) predicate
+    `getObjectEffectiveLayers` dupliqué verbatim dans
+    `NavigationPage.tsx`/`DiagramPage.tsx`, même dette déjà acceptée
+    pour `isClassVisibleForLayers` depuis l'action 14.
+  - **Fichiers finaux touchés** : `model/schema.json`,
+    `model/itil_cmdb.json`, `frontend/src/types.ts`,
+    `frontend/src/pages/NavigationPage.tsx`,
+    `frontend/src/pages/DiagramPage.tsx`,
+    `frontend/src/pages/ConfigurationPage.tsx`,
+    `frontend/src/components/Sidebar.tsx`, `frontend/src/api.ts`,
+    `sql/init.sql`, `backend/routes/routes_admin.py`,
+    `backend/auth/auth.py`, `specifications/07-roadmap.md`.
 
 ## 19. [Nouvelle fonctionnalité] Type d'attribut boolean
 
@@ -2024,6 +2151,89 @@
 - **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
   implémentée.
 
+## 21. [Nouvelle fonctionnalité] Recherche globale
+
+> Demande utilisateur (2026-11-23) : nouvel onglet « Recherche » — champ
+> texte + 2 switches (`fuzzy`, `history`, désactivés par défaut),
+> cherche dans les attributs de tous les objets toutes classes/
+> meta-classes confondues, résultat = facettes layers/classes/attributs
+> qui filtrent la liste d'objets en dessous. Détail de conception
+> complet, déjà écrit (pas à dupliquer ici) :
+> `specifications/07-roadmap.md` §10.18.
+
+- **Problème** : aucun moyen de chercher un objet par le contenu de ses
+  attributs à travers tout le modèle — seule navigation possible
+  aujourd'hui est par classe (Sidebar) ou par layer (action 14/15),
+  jamais par valeur.
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.18 (pas
+  de duplication du contenu ici) — nouvelle route
+  `GET /api/search?q=...&fuzzy=...&history=...`, nouvelle page
+  `frontend/src/pages/RecherchePage.tsx` + entrée Navbar. Par défaut :
+  attributs actifs seulement (`history=false`), correspondance
+  substring directe (`fuzzy=false`). `history=true` étend la recherche
+  à l'historique complet (y compris valeurs fermées). `fuzzy=true`
+  propose des valeurs proches sélectionnables (réutilise la dépendance
+  `rapidfuzz` de l'action 20). Exclusion explicite du type `secret`
+  (sécurité, pas juste une optimisation). Facettes layers (statique,
+  action 14 — pas le layer effectif par objet de l'action 18, trop
+  coûteux à calculer sur un résultat de recherche large), classes,
+  attributs, filtrage en ET progressif par sélection de facette.
+- **Dépend de l'action 20** (réutilise `rapidfuzz`, déjà ajouté comme
+  dépendance Python à cette occasion) pour le mode `fuzzy` — peut être
+  livré sans si l'action 20 n'est pas encore faite (mode fuzzy
+  simplement non disponible/grisé en attendant).
+- **Points ouverts, non tranchés par l'utilisateur** (listés en détail
+  avec recommandation dans `specifications/07-roadmap.md` §10.18, à
+  trancher à l'implémentation) : limite de résultats/pagination (pas de
+  `LIMIT` = requête potentiellement énorme) ; comportement de recherche
+  sur les pointeurs `file`/`image`/`csv` (matche le nom de fichier
+  intégré au pointeur, pas le contenu — accepté par défaut).
+- **Effort** : moyen à élevé (nouvelle route backend avec requête
+  cross-table + RBAC tenant, nouvelle page frontend avec facettes et
+  filtrage progressif, intégration `rapidfuzz` pour le mode fuzzy).
+- **Fichiers** : nouveau endpoint dans `backend/routes/
+  routes_read.py` (ou nouveau module dédié `backend/routes/
+  routes_search.py`), nouveau `frontend/src/pages/RecherchePage.tsx`,
+  `frontend/src/components/Navbar.tsx`, `frontend/src/App.tsx`,
+  `frontend/src/api.ts`.
+- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
+  implémentée.
+
+## 22. [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique
+
+> Demande utilisateur (2026-11-23) : dans `ConfigurationPage.tsx`, si
+> `meta_class` est vide à la création, le prendre égal au nom de la
+> classe plutôt que de bloquer la sauvegarde ; vérifier que la classe
+> n'existe pas déjà ; le nom de classe doit être unique. Détail de
+> conception complet : `specifications/07-roadmap.md` §10.19.
+
+- **Problème** : `handleSave` (`ConfigurationPage.tsx:315-319`) bloque
+  aujourd'hui toute sauvegarde si `metaClassName` est vide, sans défaut
+  automatique. Aucune vérification d'unicité du nom de classe (ni
+  frontend ni backend) — deux meta-classes différentes pourraient
+  porter une classe du même nom sans avertissement.
+- **Correctif** : renvoi à `specifications/07-roadmap.md` §10.19 (pas
+  de duplication du contenu ici) — `meta_class` vide auto-déduit du nom
+  de classe si une seule classe dans le formulaire (sinon blocage
+  explicite conservé, cas ambigu avec 2+ classes) ; vérification
+  d'existence/unicité du nom de classe contre `allClassNames` avant
+  sauvegarde (une classe déjà présente dans la meta-classe en cours
+  d'édition n'est pas un conflit).
+- **Points ouverts, non tranchés par l'utilisateur** (détaillés avec
+  recommandation dans `specifications/07-roadmap.md` §10.19) : défaut
+  meta_class=class uniquement si une seule classe dans le formulaire
+  (recommandé) ; vérification unicité frontend seule (garde UX) vs
+  aussi backend (garantie réelle, recommandé mais pas fait
+  aujourd'hui — aucun contrôle d'unicité de classe visible côté
+  `write_class`/`write_metaclass`).
+- **Effort** : faible à moyen (validation frontend bornée +
+  éventuellement un contrôle backend symétrique si retenu).
+- **Fichiers** : `frontend/src/pages/ConfigurationPage.tsx`,
+  potentiellement `backend/routes/routes_write.py` si le contrôle
+  backend est retenu.
+- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
+  implémentée.
+
 ## Récapitulatif d'avancement
 
 > Tableau à tenir à jour en même temps que le champ **Statut** de chaque
@@ -2052,6 +2262,10 @@
 | 15 | Restructuration IHM : menu, Sidebar par layer, filtres texte, combo layers Diagramme | ✅ fait |
 | 16 | [Dette documentaire] Synchronisation specifications/ avec actions 7-14 | ✅ fait |
 | 17 | Extension du modèle CMDB embarqué | ⬜ à faire |
-| 18 | Layer dynamique piloté par un attribut select | ⬜ à faire |
+| 18 | Layer dynamique piloté par un attribut select | ✅ fait |
 | 19 | Type d'attribut boolean | ⬜ à faire |
 | 20 | Autosuggest : suggestions de valeurs apprises sur un attribut texte | ⬜ à faire |
+| 21 | Recherche globale | ⬜ à faire |
+| 22 | ajouter les use case mieux que ca | a faire|
+| 22 | enlever ou deplacer ce aui est implementé de la roadmap et le deplacer dasn fonctionnel ou autre (emplacement adequat) | a faire|
+| 23 | tout faire sauf 11 fermer ce plan et passer au mark4 | a faire |

@@ -175,6 +175,33 @@ extensions de `schema.json`) :
 `model/schema.json` — si la validation était un jour activée, ces fichiers
 d'exemple échoueraient eux-mêmes à cause de `additionalProperties: false`.
 
+## 3.2quater Extensions Mark 3 (suite) : type `boolean` (ajout 2026-11-23, action 19)
+
+**`attributes[].type` étendu à `"boolean"`** (action 19, conception
+détaillée : §10.16 de [07-roadmap.md](07-roadmap.md)) — case à cocher
+simple, type le plus simple du jeu actuel aux côtés de
+`string`/`integer`/`float` : aucun champ requis supplémentaire sur la
+définition d'attribut (contrairement à `select`/`joint-*`/`datasource`),
+donc aucune nouvelle branche `allOf` dans le schéma. Stockage inchangé :
+`value_string` existant, valeur stockée en texte **exactement**
+`"true"`/`"false"` — aucune nouvelle colonne SQL.
+
+`_coerce_typed_value` (`backend/routes/routes_write.py`) accepte deux
+formes en entrée (pas une seule) : un bool Python natif — cas nominal,
+reçu via `POST /api/write/object` (corps JSON, après parsing) — **et** la
+chaîne exacte `"true"`/`"false"` — reçue via `PUT /api/write/attribute/
+<cls>/<id>/<attribute>/<value>` (édition inline de cellule), dont la
+valeur transite par le chemin d'URL Flask (`<string:value>`) et ne peut
+donc physiquement jamais porter un bool JSON. Tout le reste (chaînes
+`"1"`/`"yes"`/`"0"`, entiers, `null`, etc.) est rejeté `abort(400)` — pas
+de parsing permissif. Détail complet (les deux routes d'écriture, IHM) :
+§4.8 de [04-api-backend.md](04-api-backend.md).
+
+Aucun traitement spécial en lecture (`_build_object_payload`,
+`backend/routes/routes_read.py`) : le texte `"true"`/`"false"` ressort tel
+quel, comme n'importe quel autre attribut `value_string` — contrairement à
+`secret` (masqué) ou `file`/`image`/`csv` (pointeur).
+
 ## 3.3 Fichiers de modèle fournis
 
 **`model/personnes.json`** — meta-classe `personne` :

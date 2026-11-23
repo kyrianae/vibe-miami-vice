@@ -853,7 +853,7 @@ parmi la taxonomie retenue : `applicatif` / `infra` / `organisationnel`
 
 Détail complet et suivi : `plan-mark3.md` action 17.
 
-## 10.15 Layer dynamique piloté par un attribut `select` (conçu, pas implémenté — `plan-mark3.md` action 18)
+## 10.15 Layer dynamique piloté par un attribut `select` (implémenté — `plan-mark3.md` action 18)
 
 > Demande utilisateur (2026-11-23) : un `serveur` ne peut pas porter le
 > layer `physique` de façon statique si son `type` est `vm` — le champ
@@ -895,14 +895,67 @@ Conception à esquisser (aucune implémentation) :
   `select` — pour chaque valeur de `values[]`, un sélecteur de layers
   (réutilisation du pattern chips déjà construit pour l'éditeur `layers`
   de classe, action 14).
-- ⚠️ Point ouvert : objets dont le détail n'est pas encore chargé au
-  moment du filtre (concerne surtout `NavigationPage.tsx`, chargement
-  lazy par groupe) — repli recommandé sur `classDef.layers` statique
-  seul tant que le détail n'est pas disponible, pas de blocage/attente.
+- Point ouvert tranché à l'implémentation : objets dont le détail n'est
+  pas encore chargé au moment du filtre (concerne surtout
+  `NavigationPage.tsx`, chargement lazy par groupe) — repli appliqué
+  sur `classDef.layers` statique seul tant que le détail n'est pas
+  disponible (`getObjectEffectiveLayers(classDef, undefined)` renvoie
+  `classDef.layers`), pas de blocage/attente. `filtered`/`filteredObjects`
+  dépendent désormais de `detailCache`/`details` : le résultat se
+  recalcule automatiquement dès que le détail arrive en cache, sans
+  action utilisateur.
+
+Choix pris à l'implémentation (non tranchés plus finement par la
+conception ci-dessus) :
+- Point d'intégration du predicate : `getObjectEffectiveLayers(classDef,
+  detail)` est une nouvelle fonction (dupliquée dans
+  `NavigationPage.tsx` et `DiagramPage.tsx`, même dette assumée que
+  `isClassVisibleForLayers`), appelée juste avant `isClassVisibleForLayers`
+  aux deux points de filtre objets identifiés (`NavigationPage.tsx`
+  ~ligne 346, `DiagramPage.tsx` ~ligne 175) — le résultat (`string[]`)
+  est passé à `isClassVisibleForLayers({ layers: effectiveLayers },
+  selectedLayers)`, qui reste inchangée et continue de servir telle
+  quelle pour les filtres de classes (aucun autre appel objets trouvé
+  dans ces deux fichiers).
+- Structure de valeur courante d'un objet : `ObjectDetail.attributes`
+  (`AttributeValue[]`, `types.ts`) — valeur courante d'un `select`
+  = `detail.attributes.find(a => a.name === attrDef.name)?.values[0]`
+  (premier élément, cohérent avec le reste du code existant pour les
+  attributs mono-valués).
+- `ConfigurationPage.tsx` : le « pattern chips » de l'action 14 pour
+  `layers` de classe est en réalité un champ texte libre comma-séparé
+  (pas un composant de sélection à puces) — réutilisé à l'identique,
+  un champ par valeur de `values[]` de l'attribut `select` en cours
+  d'édition, visible uniquement si `type === 'select'` et `values`
+  non vide.
+- `model/itil_cmdb.json` (cas de test) : `serveur.type` (select,
+  `["physique", "vm"]`, `layer_map: {"physique": ["physique"]}`) —
+  l'exemple même cité en introduction de cette section. Le `layers`
+  statique de `serveur` passe de `["physique", "reseau"]` à
+  `["reseau"]` : le tag `physique` devient entièrement piloté par
+  `type` (sinon l'union avec le `layers` statique aurait rendu tous
+  les serveurs, y compris les `vm`, visibles sous le filtre `physique`
+  — ce qui aurait annulé la démonstration et contredit le besoin
+  motivant cette section).
+
+Registre `default_layers` (ajouté en cours de cycle, pas dans la
+conception écrite ci-dessus) : liste de layers toujours proposés dans
+l'UI, indépendamment des classes/`layer_map` effectivement en base à un
+instant donné (évite une Sidebar vide/instable tant qu'aucune classe ne
+référence encore un layer donné). Même mécanisme technique que
+`purge_grace_period_days` (action 6.2) : table `app_config`, clé
+`default_layers`, valeur JSON = liste de strings, seedée à 5 layers
+(`applicatif`, `infra`, `organisationnel`, `fonctionnel`, `metier`).
+Routes `GET /api/config/default_layers` (lecture ouverte, même principe
+que les layers de classe de l'action 14 — pure métadonnée d'affichage
+UI, pas un mécanisme RBAC) et `PUT /api/config/default_layers` (réservé
+global-admin, `backend/routes/routes_admin.py`). Consommé par
+`Sidebar.tsx` (arbre meta_class/layer) et par la carte « Layers connus »
+de `ConfigurationPage.tsx`.
 
 Détail complet et suivi : `plan-mark3.md` action 18.
 
-## 10.16 Type d'attribut `boolean` (conçu, pas implémenté — `plan-mark3.md` action 19)
+## 10.16 Type d'attribut `boolean` (fait — `plan-mark3.md` action 19)
 
 > Demande utilisateur (2026-11-23), née du besoin `os.active` (§10.14) :
 > aucun type booléen n'existe dans le schéma actuel (`string`/
@@ -927,6 +980,56 @@ Conception à esquisser :
 - `frontend/src/pages/ConfigurationPage.tsx` : `ATTR_TYPES` étendu à 12
   types, `boolean` affiche « Aucune option » (comme `file`/`image`/
   `secret`).
+
+> **Mise à jour (2026-11-23, fait)** : conception ci-dessus implémentée
+> sans écart sur le schéma/stockage (`"boolean"` ajouté à l'enum, aucune
+> branche `allOf` supplémentaire — pas de champ requis, comme
+> `string`/`integer`/`float`), avec un point tranché à l'implémentation
+> (non précisé par la conception ci-dessus) sur `_coerce_typed_value`
+> (`backend/routes/routes_write.py`) :
+> - **Deux formes acceptées en entrée, pas une seule** : un bool Python
+>   natif (`POST /api/write/object`, corps JSON — cas nominal visé par
+>   la conception), **et** la chaîne exacte `"true"`/`"false"` (`PUT
+>   /api/write/attribute/<cls>/<id>/<attribute>/<value>`, édition inline
+>   de cellule). Nécessaire : ce 2e chemin porte la valeur dans le
+>   chemin d'URL Flask (`<string:value>`), qui ne peut physiquement pas
+>   transporter un bool JSON — contrainte structurelle déjà rencontrée
+>   pour `joint-1-1` (qui la contourne en routant son édition inline par
+>   l'objet complet plutôt que cette route), mais ici la valeur
+>   transitant déjà en texte canonique (`value_string`), l'accepter
+>   directement sur cette route reste cohérent et évite de complexifier
+>   `saveInlineEdit` (`NavigationPage.tsx`) pour un unique type. Tout le
+>   reste (chaînes `"1"`/`"yes"`/`"0"`, entiers, `null`, etc.) reste
+>   rejeté `400` — pas de parsing permissif.
+> - Formulaire modal (création/édition) : `newAttrs` (state local,
+>   `Record<string, string>`) porte `"true"`/`"false"` comme tout autre
+>   type scalaire (cohérent avec `handleEditObject`/
+>   `handleSelectNewClass`, aucune modification nécessaire là), et n'est
+>   reconverti en booléen JSON natif qu'au moment de l'envoi
+>   (`handleSave`) — seul format strictement attendu côté serveur sur ce
+>   chemin JSON, conforme à la conception initiale.
+> - Édition inline de cellule : case à cocher ajoutée aux **deux**
+>   endroits de `NavigationPage.tsx` identifiés par la conception
+>   (formulaire modal **et** tableau, branche `isInlineEditing &&
+>   isBoolean` dédiée avant le fallback texte générique) — même
+>   `apiWriteAttribute` (route URL) que `select`/`string`, pas de
+>   détour par l'objet complet.
+> - Rendu lecture (cellule non éditée) : case à cocher désactivée plutôt
+>   que le texte brut `"true"`/`"false"` — choix non tranché par la
+>   conception, retenu pour la cohérence visuelle avec le rendu édition
+>   du même type.
+> - Démonstration manuelle : attribut `actif` (domaine `logique`) ajouté
+>   à `serveur` dans `model/itil_cmdb.json` (persisté), round-trip
+>   complet vérifié en conditions réelles via `docker-compose` (création
+>   JSON avec bool natif, lecture, édition inline par URL, deux cas
+>   d'erreur 400) — objet de démonstration supprimé après coup (`DELETE
+>   /api/delete/object`), seul l'ajout de modèle reste.
+> - Backend : 16 tests dédiés
+>   (`backend/tests/test_attribute_type_boolean.py`), 251 tests backend
+>   au total toujours au vert (aucune régression).
+>
+> Détail complet : §4.8 de [04-api-backend.md](04-api-backend.md),
+> §3.2quater de [03-modele-donnees.md](03-modele-donnees.md).
 
 Détail complet et suivi : `plan-mark3.md` action 19.
 
@@ -971,3 +1074,128 @@ Conception à esquisser :
   nommément.
 
 Détail complet et suivi : `plan-mark3.md` action 20.
+
+## 10.18 Recherche globale (nouvel onglet, conçu, pas implémenté — `plan-mark3.md` action 21)
+
+> Demande utilisateur (2026-11-23) : nouvel onglet « Recherche » — champ
+> texte + 2 switches (`fuzzy`, `history`, désactivés par défaut) qui
+> cherche le texte saisi dans les attributs de tous les objets, toutes
+> classes/meta-classes confondues. Résultat = facettes (layers,
+> classes, attributs) permettant de filtrer la liste d'objets affichée
+> en dessous ; une sélection de facette filtre progressivement.
+
+Grounding DB (`sql/init.sql`) pour la requête de recherche :
+`attribute_value.attribute_id` → `attribute.id`, `attribute.object_id`
+→ `object.id`. `attribute_value.value_string`/`valid_from`/`valid_to`
+porte l'historisation (action 6.0 de `plan-mark2.md`) ;
+`object.deleted_at`/`object.tenants` portent la suppression
+logique/RBAC tenant déjà filtrés par tout le reste de l'API.
+
+Conception à esquisser :
+- Nouvelle route `GET /api/search?q=<texte>&fuzzy=<bool>&history=<bool>`
+  (RBAC tenant identique à `_tenant_read_filter`, objets non supprimés
+  uniquement). Requête de base :
+  `SELECT o.id, o.meta_class, o.class, a.name, av.value_string FROM
+  attribute_value av JOIN attribute a ON a.id=av.attribute_id JOIN
+  object o ON o.id=a.object_id WHERE av.value_string ILIKE %q% AND
+  o.deleted_at IS NULL [AND av.valid_to IS NULL si history=false]` +
+  filtre tenant.
+- **`history=false` (défaut)** : `valid_to IS NULL` — seuls les
+  attributs actifs (décision déjà actée dans la demande : « par défaut
+  que les attributs actifs »). **`history=true`** : la contrainte
+  `valid_to IS NULL` saute, l'historique complet (lignes fermées
+  incluses) est cherché aussi.
+- **`fuzzy=false` (défaut)** : correspondance substring directe
+  (`ILIKE '%q%'`). **`fuzzy=true`** : propose en plus des valeurs
+  proches sélectionnables — réutilise la même dépendance `rapidfuzz`
+  déjà prévue à l'action 20 (autosuggest), même principe (distance
+  d'édition sur les valeurs candidates), l'utilisateur sélectionne une
+  proposition pour relancer la recherche dessus plutôt que de modifier
+  le filtrage des résultats déjà affichés.
+- ⚠️ **Exclusion explicite du type `secret`** : un attribut `secret`
+  ne doit jamais être recherché — la valeur stockée est chiffrée
+  (`backend/secret_crypto.py`, action 8), une correspondance sur le
+  texte chiffré serait de toute façon fonctionnellement inutile, mais
+  l'exclure explicitement (plutôt que compter sur ce hasard) évite
+  toute fuite d'information du type « cet objet a un attribut secret
+  qui matche votre recherche ». Résolution du type (`string` vs
+  `secret` etc.) par consultation du modèle chargé (même mécanisme que
+  `_coerce_typed_value`/`_build_object_payload`), pas une colonne DB —
+  la table `attribute`/`attribute_value` ne porte pas le type.
+- Facettes renvoyées avec les résultats : **layers** (`classDef.layers`
+  statique, action 14 — **pas** le layer effectif par objet de l'action
+  18, volontairement, pour éviter un calcul par objet coûteux sur un
+  résultat de recherche potentiellement large ; le layer dynamique
+  reste scopé à `NavigationPage.tsx`/`DiagramPage.tsx` comme déjà
+  précisé à l'action 18), **classes** (`meta_class`/`class`),
+  **attributs** (`name`) — chacune avec un compte d'objets. Sélection
+  d'une ou plusieurs facettes = filtrage **en ET** progressif de la
+  liste d'objets déjà remontée (logique de facette standard, pas un
+  nouveau round-trip serveur par clic si le jeu de résultats initial
+  reste raisonnable).
+- ⚠️ Point ouvert : limite de résultats (pas de `LIMIT` = requête
+  potentiellement énorme sur un gros CMDB) — recommandé : `LIMIT`
+  serveur (ex. 500) + message « trop de résultats, affinez la
+  recherche » si atteint, à trancher précisément à l'implémentation.
+- ⚠️ Point ouvert : les attributs `file`/`image`/`csv` stockent un
+  pointeur (`"<version>:<nom_fichier>"` ou `"ref:..."`) dans
+  `value_string` — une recherche matche donc le nom de fichier intégré
+  au pointeur, pas le contenu du fichier. Comportement accepté par
+  défaut (recherche par nom de fichier reste utile), pas un contenu à
+  indexer.
+- Frontend : nouvelle page `frontend/src/pages/RecherchePage.tsx`,
+  nouvelle entrée `Navbar.tsx` (pas de restriction RBAC particulière
+  envisagée, cohérent avec Diagramme/Dashboard). Champ texte + 2
+  switches (réutilise le style `rw-switch` déjà existant pour RO/RW
+  dans `Navbar.tsx`). 3 blocs de facettes + liste d'objets filtrée en
+  dessous, réutilisation du rendu de ligne/cellule déjà existant dans
+  `NavigationPage.tsx` si extractible sans trop de travail (sinon rendu
+  simplifié dédié, lecture seule).
+
+Détail complet et suivi : `plan-mark3.md` action 21.
+
+## 10.19 Validation création de classe : meta_class auto, nom de classe unique (conçu, pas implémenté — `plan-mark3.md` action 22)
+
+> Demande utilisateur (2026-11-23) : dans `ConfigurationPage.tsx`, si
+> `meta_class` est laissé vide à la création, le prendre égal au nom de
+> la classe plutôt que de bloquer la sauvegarde (comportement actuel,
+> `handleSave`, ligne ~316-319) ; vérifier que la classe n'existe pas
+> déjà ; le nom de classe doit être unique.
+
+Grounding code : `handleSave` (`ConfigurationPage.tsx:315-389`) bloque
+aujourd'hui si `metaClassName.trim()` est vide (toast d'erreur, pas de
+sauvegarde) — aucun défaut automatique. `allClassNames` (ligne ~137,
+déjà calculé à partir de `allClasses` + `classDefs` courants) donne
+déjà la liste de tous les noms de classe existants, réutilisable pour
+la vérification d'unicité sans nouvel appel réseau. Aucun contrôle
+d'unicité de nom de classe visible côté backend
+(`backend/routes/routes_write.py` `write_class`/`write_metaclass`) à
+ce jour — la table `object` porte `meta_class`+`class` séparément, pas
+de contrainte d'unicité sur `class` seul.
+
+Conception à esquisser :
+- **meta_class auto** : si `metaClassName` vide, le défaut = nom de la
+  classe. ⚠️ Point ouvert, pas tranché par l'utilisateur : un
+  formulaire peut porter **plusieurs** classes (`classDefs`, tableau) —
+  quel nom de classe sert de défaut si `metaClassName` est vide et
+  qu'il y a 2+ classes dans le formulaire ? Recommandé : n'autoriser le
+  défaut automatique que si **une seule** classe est présente dans le
+  formulaire, sinon garder le blocage actuel (nom de meta-classe requis
+  explicitement dès qu'il y a ambiguïté).
+- **Vérification d'existence / unicité du nom de classe** : comparer
+  chaque nom de `cleanClasses` à `allClassNames` (classes d'**autres**
+  meta-classes déjà chargées) avant sauvegarde — bloquant avec message
+  explicite si collision détectée hors du périmètre de la meta-classe
+  en cours d'édition (une classe déjà présente **dans** la meta-classe
+  actuellement éditée n'est pas un conflit, c'est une mise à jour
+  légitime).
+- ⚠️ Point ouvert, à trancher à l'implémentation : cette vérification
+  reste-t-elle **uniquement frontend** (simple garde UX, contournable
+  par un appel direct à `/api/write/metaclass`) ou doit-elle aussi être
+  appliquée côté backend (`write_class`/`write_metaclass`) pour être
+  une vraie garantie ? Recommandé : les deux — frontend pour l'UX
+  immédiate (cohérent avec le pattern déjà établi à l'action 13 pour
+  `classes`/`values` vides), backend pour la garantie réelle (sinon
+  « doit être unique » reste une simple convention non appliquée).
+
+Détail complet et suivi : `plan-mark3.md` action 22.

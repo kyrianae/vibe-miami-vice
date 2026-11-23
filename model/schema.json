@@ -71,8 +71,8 @@
                                 },
                                 "type": {
                                     "type": "string",
-                                    "enum": ["string", "integer", "float", "joint-1-1", "joint-1-n", "file", "image", "csv", "select", "datasource", "secret"],
-                                    "description": "Type de la valeur de l'attribut (joint-1-1 pour liaison 1:1, joint-1-n pour liaison 1:N, file/image/csv pour un pointeur vers FileStorage, select pour une liste de valeurs fixes, datasource pour un pointeur vers un objet d'une meta-classe datasource_* dédiée, ex. datasource_prometheus - plan-mark3.md action 9, secret pour une valeur sensible chiffrée en base, jamais renvoyée en clair par la lecture générique - plan-mark3.md action 8)"
+                                    "enum": ["string", "integer", "float", "joint-1-1", "joint-1-n", "file", "image", "csv", "select", "datasource", "secret", "boolean"],
+                                    "description": "Type de la valeur de l'attribut (joint-1-1 pour liaison 1:1, joint-1-n pour liaison 1:N, file/image/csv pour un pointeur vers FileStorage, select pour une liste de valeurs fixes, datasource pour un pointeur vers un objet d'une meta-classe datasource_* dédiée, ex. datasource_prometheus - plan-mark3.md action 9, secret pour une valeur sensible chiffrée en base, jamais renvoyée en clair par la lecture générique - plan-mark3.md action 8, boolean pour une case à cocher simple, stockée en texte 'true'/'false' dans value_string comme les autres types scalaires - plan-mark3.md action 19)"
                                 },
                                 "classes": {
                                     "type": "array",
@@ -99,6 +99,16 @@
                                         "type": "string"
                                     },
                                     "description": "Liste fixe des valeurs autorisées, réservée au type 'select' (requis si type = select). La valeur stockée (value_string) doit appartenir à cette liste. Sans objet pour les autres types."
+                                },
+                                "layer_map": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "description": "Layer dynamique piloté par un attribut 'select' (plan-mark3.md action 18, specifications/07-roadmap.md §10.15), optionnel. Clés censées être un sous-ensemble de 'values' (non vérifié strictement par ce schéma) ; chaque clé associe la valeur select correspondante à une liste de layers (même taxonomie que ClassDefinition.layers, action 14). La seule présence de ce champ marque l'attribut comme pilotant le layer effectif de l'objet - pas de flag booléen séparé. Layer effectif d'un objet = union du 'layers' statique de sa classe et des layer_map[valeur_courante] de ses attributs select concernés (calcul 100% frontend, NavigationPage.tsx/DiagramPage.tsx). Sans objet pour les autres types."
                                 }
                             },
                             "additionalProperties": false,

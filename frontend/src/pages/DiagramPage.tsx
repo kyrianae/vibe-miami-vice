@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import * as echarts from 'echarts';
 import { apiReadObjects, apiReadObject, apiReadClasses, apiReadObjectFileBlob, apiClassIconUrl } from '../api';
 import { findClassIcon, classIconDataUri } from '../classIcons';
-import type { ObjectSummary, ObjectDetail, ClassInfo } from '../types';
+import type { ObjectSummary, ObjectDetail, ClassInfo, AttributeDefinition } from '../types';
 
 // Cache des blobs logo résolus (même pattern que fileBlobCache,
 // NavigationPage.tsx) : une version de fichier est immuable une fois
@@ -75,6 +75,34 @@ function isClassVisibleForLayers(def: { layers?: string[] } | undefined, selecte
   const layers = def?.layers || [];
   if (layers.length === 0) return true;
   return layers.some((l) => selectedLayers.has(l));
+}
+
+// Layer effectif d'un objet (plan-mark3.md action 18, specifications/
+// 07-roadmap.md §10.15 ; même predicate que NavigationPage.tsx, dette de
+// duplication déjà acceptée pour isClassVisibleForLayers) : union du
+// `layers` statique de sa classe et, pour chaque attribut 'select' de la
+// classe portant un `layer_map`, des layers mappés à la valeur courante de
+// l'objet sur cet attribut (si connue). Repli sur `classDef.layers`
+// statique seul si le détail de l'objet n'est pas encore chargé - en
+// pratique tous les détails sont chargés en amont (effet ci-dessous), ce
+// repli ne joue donc que pendant la fenêtre de chargement initiale.
+function getObjectEffectiveLayers(
+  classDef: { layers?: string[]; attributes: AttributeDefinition[] } | undefined,
+  detail: ObjectDetail | undefined,
+): string[] {
+  const base = classDef?.layers || [];
+  if (!classDef || !detail) return base;
+  const extra: string[] = [];
+  for (const attrDef of classDef.attributes) {
+    if (attrDef.type !== 'select' || !attrDef.layer_map) continue;
+    const attrVal = detail.attributes.find((a) => a.name === attrDef.name);
+    if (!attrVal || attrVal.values.length === 0) continue;
+    const current = attrVal.values[0];
+    if (typeof current !== 'string') continue;
+    const mapped = attrDef.layer_map[current];
+    if (mapped) extra.push(...mapped);
+  }
+  return extra.length > 0 ? [...new Set([...base, ...extra])] : base;
 }
 
 export default function DiagramPage({ selectedMetaClass, selectedClass, readOnly, selectedLayers }: DiagramPageProps) {
@@ -172,10 +200,13 @@ export default function DiagramPage({ selectedMetaClass, selectedClass, readOnly
       if (selectedClass && o.class !== selectedClass) return false;
       if (hiddenClasses.has(o.class)) return false;
       const def = classes.find((c) => c.meta_class === o.meta_class && c.class === o.class);
-      if (!isClassVisibleForLayers(def, selectedLayers)) return false;
+      // Layer effectif par objet (action 18) : remplace classDef.layers
+      // statique seul par le calcul union (voir getObjectEffectiveLayers).
+      const effectiveLayers = getObjectEffectiveLayers(def, details[o.id]);
+      if (!isClassVisibleForLayers({ layers: effectiveLayers }, selectedLayers)) return false;
       return true;
     });
-  }, [objects, selectedMetaClass, selectedClass, hiddenClasses, classes, selectedLayers]);
+  }, [objects, selectedMetaClass, selectedClass, hiddenClasses, classes, selectedLayers, details]);
 
   // Pointeur logo actif par objet (bug 2, correction post-revue) : extrait
   // ici une seule fois, réutilisé à la fois par l'effet de résolution de

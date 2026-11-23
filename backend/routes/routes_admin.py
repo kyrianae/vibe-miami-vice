@@ -73,6 +73,73 @@ def set_purge_grace_period_days():
         raise e
 
 
+@admin_bp.route("/api/config/default_layers", methods=["GET"])
+def get_default_layers():
+    """Lit la liste des layers par défaut (plan-mark3.md action 18),
+    toujours proposés dans l'UI même si aucune classe du modèle ne les
+    référence encore. Lecture ouverte, AUCUN check d'auth/admin : layer =
+    pure métadonnée d'affichage UI, pas un mécanisme RBAC/sécurité (cf.
+    frontend/src/types.ts, commentaire au-dessus de ClassDef.layers) ;
+    consommée par Sidebar.tsx pour tout utilisateur, y compris anonyme.
+
+    Ce chemin est volontairement absent de auth._PROTECTED_EXACT_PATHS
+    (contrairement à /api/config/purge_grace_period_days) : voir le
+    commentaire à côté de cette liste dans auth.py pour la justification
+    complète - en résumé, cette liste protège par chemin seul (GET+PUT),
+    donc l'y ajouter casserait cette lecture anonyme."""
+    with app.get_db().cursor() as cur:
+        cur.execute("SELECT value FROM app_config WHERE key = 'default_layers'")
+        row = cur.fetchone()
+    if row is None:
+        abort(500, description="Paramètre 'default_layers' absent de app_config")
+    return jsonify({"value": json.loads(row[0])})
+
+
+@admin_bp.route("/api/config/default_layers", methods=["PUT"])
+def set_default_layers():
+    """Modifie la liste des layers par défaut. Réservé à global-admin
+    (seule l'écriture, pas la lecture - cf. get_default_layers ci-dessus).
+    Body {"value": [...]}, liste de strings non vides (400 sinon) ; trim +
+    dédoublonnage (même esprit que le filtre déjà appliqué côté frontend
+    sur classDef.layers/knownLayers, cf. ConfigurationPage.tsx)."""
+    ctx = app.get_auth_context()
+    if not ctx.is_global_admin:
+        abort(403, description="Réservé à global-admin")
+
+    body = request.get_json()
+    if not body or "value" not in body:
+        abort(400, description="Champ 'value' requis")
+
+    raw_value = body["value"]
+    if not isinstance(raw_value, list):
+        abort(400, description=f"'value' doit être une liste de chaînes non vides : {raw_value!r}")
+
+    cleaned = []
+    for item in raw_value:
+        if not isinstance(item, str):
+            abort(400, description=f"'value' doit être une liste de chaînes non vides : {raw_value!r}")
+        trimmed = item.strip()
+        if not trimmed:
+            abort(400, description=f"'value' doit être une liste de chaînes non vides : {raw_value!r}")
+        if trimmed not in cleaned:
+            cleaned.append(trimmed)
+    if not cleaned:
+        abort(400, description=f"'value' doit être une liste de chaînes non vides : {raw_value!r}")
+
+    conn = app.get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE app_config SET value = %s WHERE key = 'default_layers'",
+                (json.dumps(cleaned),)
+            )
+        conn.commit()
+        return jsonify({"status": "ok", "value": cleaned})
+    except Exception as e:
+        conn.rollback()
+        raise e
+
+
 @admin_bp.route("/api/purge", methods=["POST"])
 def purge_objects():
     """Purge physique différée (plan-mark2.md action 6.2).

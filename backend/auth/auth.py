@@ -52,6 +52,19 @@ def get_jwk_client():
 # GET/PUT (pas write/delete), car réservée global-admin strict (jamais
 # appelable anonymement) - cohérent avec le choix 401 (pas seulement 403)
 # déjà appliqué aux autres routes listées ici quand le token est absent.
+#
+# /api/config/default_layers (action 18) : volontairement ABSENTE de cette
+# liste, contrairement à purge_grace_period_days ci-dessus - ne pas
+# "corriger" par souci de cohérence (suggestion déjà rejetée). Cette liste
+# protège par CHEMIN SEUL, pas par méthode HTTP (cf. _requires_auth
+# juste en dessous) : l'y ajouter forcerait un 401 systématique même sur le
+# GET sans token, ce qui casserait la lecture anonyme requise par
+# Sidebar.tsx (layers affichés à tout utilisateur, pas seulement aux
+# admins - même principe que les layers de classe, action 14). Le PUT reste
+# protégé, mais uniquement par le check is_global_admin dans le handler
+# (routes_admin.py set_default_layers) : donc 403 sans token/droit, pas
+# 401. Différence assumée vis-à-vis de purge_grace_period_days, pas un
+# oubli.
 _PROTECTED_PREFIXES = ("/api/write/", "/api/delete/")
 _PROTECTED_EXACT_PATHS = ("/api/init", "/api/purge", "/api/config/purge_grace_period_days")
 
