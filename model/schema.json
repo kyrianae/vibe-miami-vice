@@ -44,6 +44,13 @@
                         },
                         "description": "RBAC multi-tenant (plan.md action 11) : tenants (noms de groupes Keycloak, sans '/') autorisés à utiliser/éditer cette classe. Absent ou vide = utilisable dans tous les tenants."
                     },
+                    "layers": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Calques thématiques (plan-mark3.md action 14) : tag texte libre regroupant des classes transverses à plusieurs meta-classes (ex. 'physique', 'reseau', 'securite'), filtrables ensemble dans l'IHM et les diagrammes. Purement un filtre d'affichage 100% frontend, pas un mécanisme RBAC (contrairement à 'tenants'). Absent ou vide = classe toujours visible quel que soit le filtre layer actif."
+                    },
                     "icon": {
                         "type": "string",
                         "description": "Icône par défaut d'un objet de cette classe (plan-mark3.md action 4, point 1). Identifiant choisi dans le jeu fixe d'icônes embarquées côté frontend (frontend/src/classIcons.tsx) - PAS un upload libre, pas de validation de valeur côté backend (un identifiant inconnu du frontend est simplement ignoré, repli sur l'icône auto-générée puis la couleur de palette). Absent = pas d'icône manuelle choisie."

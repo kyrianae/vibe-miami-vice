@@ -3,3 +3,4 @@
 **/__pycache__
 frontend/tsconfig.tsbuildinfo
 frontend/dist/
+frontend/node_modules/

@@ -60,9 +60,24 @@ interface DiagramPageProps {
   selectedMetaClass: string | null;
   selectedClass: string | null;
   readOnly: boolean;
+  // Filtre layers (plan-mark3.md action 14, point 7) : multi-sélection,
+  // orthogonal à selectedMetaClass/selectedClass/hiddenClasses ci-dessous.
+  // Vide = pas de filtre actif (tout visible).
+  selectedLayers: Set<string>;
 }
 
-export default function DiagramPage({ selectedMetaClass, selectedClass, readOnly }: DiagramPageProps) {
+// Classe visible pour le filtre layer actif (plan-mark3.md action 14,
+// point 1 ; même predicate que NavigationPage.tsx) : `layers` absent/vide =
+// toujours visible, quel que soit le filtre. selectedLayers vide = pas de
+// filtre actif (tout visible).
+function isClassVisibleForLayers(def: { layers?: string[] } | undefined, selectedLayers: Set<string>): boolean {
+  if (selectedLayers.size === 0) return true;
+  const layers = def?.layers || [];
+  if (layers.length === 0) return true;
+  return layers.some((l) => selectedLayers.has(l));
+}
+
+export default function DiagramPage({ selectedMetaClass, selectedClass, readOnly, selectedLayers }: DiagramPageProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
 
@@ -156,9 +171,11 @@ export default function DiagramPage({ selectedMetaClass, selectedClass, readOnly
       if (selectedMetaClass && o.meta_class !== selectedMetaClass) return false;
       if (selectedClass && o.class !== selectedClass) return false;
       if (hiddenClasses.has(o.class)) return false;
+      const def = classes.find((c) => c.meta_class === o.meta_class && c.class === o.class);
+      if (!isClassVisibleForLayers(def, selectedLayers)) return false;
       return true;
     });
-  }, [objects, selectedMetaClass, selectedClass, hiddenClasses]);
+  }, [objects, selectedMetaClass, selectedClass, hiddenClasses, classes, selectedLayers]);
 
   // Pointeur logo actif par objet (bug 2, correction post-revue) : extrait
   // ici une seule fois, réutilisé à la fois par l'effet de résolution de

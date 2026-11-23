@@ -24,10 +24,11 @@ Un modélisateur de données générique : un schéma de meta-classes/classes/at
 
 ### Frontend (React + Vite)
 - **React 18 + TypeScript**, bundlé avec **Vite**
-- **3 vues** pilotées par une barre de navigation et une sidebar commune :
+- **4 vues** pilotées par une barre de navigation et une sidebar commune :
   - **Navigation** - tableau des objets, édition inline des attributs (y compris jointures), bascule lecture seule / lecture-écriture
   - **Configuration** - éditeur de meta-classes/classes/attributs (CRUD du schéma)
   - **Diagramme** - graphe interactif des objets et de leurs jointures avec **ECharts** (layouts force / circulaire / organigramme)
+  - **Dashboard** - dashboards/tabs configurables pointant chacun vers une meta-classe/classe, avec filtre optionnel (`plan-mark3.md` actions 10a-10d)
 - **Thèmes** dark / midnight / light
 - Pas de framework de routage : navigation par état React (`App.tsx`)
 
@@ -42,9 +43,17 @@ Un modélisateur de données générique : un schéma de meta-classes/classes/at
 ```
 miami-vice/
 ├── backend/                    # API Flask
-│   ├── app.py                  # Toutes les routes (read/write/init)
-│   ├── requirements.txt        # flask, psycopg2-binary, gunicorn, jsonschema
+│   ├── app.py                  # Point d'entrée, enregistre les Blueprints
+│   ├── secret_crypto.py        # Chiffrement Fernet des attributs "secret" (plan-mark3.md action 8)
+│   ├── auth/                   # auth.py (Keycloak), rbac.py (multi-tenant)
+│   ├── data/                   # db.py (connexion/schéma)
+│   ├── files/                  # file_storage.py, file_validation.py, class_icon.py
+│   ├── routes/                 # routes_read.py, routes_write.py, routes_init.py, routes_admin.py, routes_files.py (Blueprints)
+│   ├── tests/                  # test_*.py (pytest backend/tests/ -v)
+│   ├── requirements.txt        # flask, psycopg2-binary, gunicorn, jsonschema, cryptography, PyJWT, defusedxml
 │   └── Dockerfile
+│   # Réorganisé en packages par plan-mark3.md action 12 (2026-11-22) — voir
+│   # specifications/02-architecture.md §2bis pour le détail de chaque module.
 │
 ├── frontend/                   # React + TypeScript (Vite)
 │   ├── src/
@@ -53,11 +62,12 @@ miami-vice/
 │   │   ├── App.tsx             # Layout + état global (page, thème, sélection)
 │   │   ├── components/
 │   │   │   ├── Navbar.tsx      # Navigation entre pages + switch thème/RO-RW
-│   │   │   └── Sidebar.tsx     # Arborescence meta-classe → classe
+│   │   │   └── Sidebar.tsx     # Arborescence meta-classe → classe + chips layers (action 14)
 │   │   ├── pages/
 │   │   │   ├── NavigationPage.tsx     # Tableau des objets, édition inline
 │   │   │   ├── ConfigurationPage.tsx  # Éditeur du schéma (meta-classes/classes)
-│   │   │   └── DiagramPage.tsx        # Graphe ECharts des objets/jointures
+│   │   │   ├── DiagramPage.tsx        # Graphe ECharts des objets/jointures
+│   │   │   └── DashboardPage.tsx      # Dashboards/tabs configurables (plan-mark3.md actions 10a-10d)
 │   │   ├── styles.css
 │   │   └── main.tsx
 │   ├── vite.config.ts          # Proxy /api → backend:8000
@@ -120,7 +130,7 @@ Chaque fichier décrit une **meta-classe** regroupant plusieurs **classes**, cha
 }
 ```
 
-- `type` : `string`, `integer`, `float`, `joint-1-1` ou `joint-1-n` (jointure vers une autre instance)
+- `type` : 11 types gérés au total (`string`, `integer`, `float`, `joint-1-1`/`joint-1-n` — jointure vers une autre instance —, `file`, `image`, `csv`, `select`, `secret`, `datasource`) — détail des 6 types ajoutés après la version initiale du modèle plus bas dans ce document
 - `constraint` : regex de validation (pour `string`)
 - `displayname` : gabarit d'affichage `{{attribut}}` (sinon concaténation du domaine `details`)
 
@@ -225,9 +235,16 @@ npm run build
 
 | Page | Rôle |
 |------|------|
-| **Navigation** | Tableau des objets filtrable par meta-classe/classe, édition inline des valeurs (y compris jointures via modale), bascule lecture seule |
-| **Configuration** | CRUD du schéma : création/édition de meta-classes, classes et attributs |
+| **Navigation** | Tableau des objets filtrable par meta-classe/classe/layer, édition inline des valeurs (y compris jointures via modale), bascule lecture seule |
+| **Configuration** | CRUD du schéma : création/édition de meta-classes, classes et attributs (11 types gérés, `plan-mark3.md` action 13) |
 | **Diagramme** | Visualisation graphe (ECharts) des objets et de leurs jointures, avec 3 layouts (force, circulaire, organigramme) |
+| **Dashboard** | Lecture/édition d'un dashboard configurable (tabs pointant vers une meta-classe/classe, filtre optionnel) — `plan-mark3.md` actions 10a-10d, voir specifications/05-frontend.md §6.11 |
+
+Note : au moins 11 types d'attribut existent désormais côté modèle/backend
+(`string`/`integer`/`float`/`joint-1-1`/`joint-1-n`/`file`/`image`/`csv`/
+`select`/`secret`/`datasource`) et un champ `layers` optionnel sur les
+classes (filtre IHM/diagramme) — voir specifications/03-modele-donnees.md
+§3.2ter et specifications/05-frontend.md §6.12.
 
 ### Client API
 
@@ -283,12 +300,11 @@ curl -X POST http://localhost:8000/api/write/object \
 
 ### Tests backend (RBAC multi-tenant)
 
-Pas de suite de tests automatisés formelle sur l'ensemble du projet, mais le scénario de non-régression du bug de re-tagging silencieux des classes (action 11, §11.2) est couvert par `backend/test_rbac_class_tenant_scope.py` (monkeypatch de `get_db`/`get_auth_context`, aucune dépendance à une vraie base ou à un vrai Keycloak) :
+Pas de suite de tests automatisés formelle avec reporting de couverture/CI sur l'ensemble du projet, mais 11 fichiers de tests existent sous `backend/tests/` (pytest), dont le scénario de non-régression du bug de re-tagging silencieux des classes (action 11, §11.2), couvert par `backend/tests/test_rbac_class_tenant_scope.py` (monkeypatch de `get_db`/`get_auth_context`, aucune dépendance à une vraie base ou à un vrai Keycloak). Depuis `plan-mark3.md` action 12, `backend/` est réorganisé en packages (`auth/`, `data/`, `files/`, `routes/`, `tests/`) — les tests se lancent depuis la racine du dépôt, pas depuis `backend/` :
 
 ```bash
-cd backend
-pip install -r requirements-dev.txt
-pytest test_rbac_class_tenant_scope.py -v
+pip install -r backend/requirements-dev.txt
+pytest backend/tests/test_rbac_class_tenant_scope.py -v
 ```
 
 ## 📚 Dépendances principales

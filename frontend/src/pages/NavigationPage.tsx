@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, type MouseEvent } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, type MouseEvent } from 'react';
 import { apiReadObjects, apiReadObject, apiWriteObject, apiWriteObjectCreateMultipart, apiWriteAttribute, apiDeleteObject, apiReadClasses, apiWriteObjectFile, apiReadObjectFileBlob, apiListLogos, apiSetObjectFileReference } from '../api';
 import type { ObjectSummary, ObjectDetail, ClassInfo, AttributeDefinition, LogoEntry } from '../types';
 import type { AuthInfo } from '../auth';
@@ -191,6 +191,22 @@ interface NavigationPageProps {
   selectedClass: string | null;
   readOnly: boolean;
   authInfo: AuthInfo;
+  // Filtre layers (plan-mark3.md action 14, point 6) : multi-sélection,
+  // orthogonal au filtre meta_class/class ci-dessus. Vide = pas de filtre
+  // actif (tout visible).
+  selectedLayers: Set<string>;
+}
+
+// Classe visible pour le filtre layer actif (plan-mark3.md action 14,
+// point 1) : `layers` absent/vide = toujours visible, quel que soit le
+// filtre (même convention que `tenants`, cf. isClassVisibleForTenant dans
+// ConfigurationPage.tsx). selectedLayers vide = pas de filtre actif (tout
+// visible), défaut non régressif.
+function isClassVisibleForLayers(def: { layers?: string[] } | undefined, selectedLayers: Set<string>): boolean {
+  if (selectedLayers.size === 0) return true;
+  const layers = def?.layers || [];
+  if (layers.length === 0) return true;
+  return layers.some((l) => selectedLayers.has(l));
 }
 
 // État d'édition inline d'une cellule
@@ -208,11 +224,15 @@ interface JointEdit {
   selected: number[];
 }
 
-export default function NavigationPage({ selectedMetaClass, selectedClass, readOnly, authInfo }: NavigationPageProps) {
+export default function NavigationPage({ selectedMetaClass, selectedClass, readOnly, authInfo, selectedLayers }: NavigationPageProps) {
   const [objects, setObjects] = useState<ObjectSummary[]>([]);
   const [detailCache, setDetailCache] = useState<Record<number, ObjectDetail>>({});
   const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  // Filtre texte par groupe de classe (plan-mark3.md action 15, point 4) :
+  // une case par card, filtre d'affichage pur sur les lignes déjà chargées -
+  // ne touche jamais `objects`/`detailCache`.
+  const [groupFilters, setGroupFilters] = useState<Record<string, string>>({});
   const [showCreate, setShowCreate] = useState(false);
   const [editingObjectId, setEditingObjectId] = useState<number | null>(null);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
@@ -315,12 +335,18 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
     ? classes.filter((c) => c.meta_class === selectedMetaClass)
     : [];
 
-  const filtered = objects.filter((o) => {
-    if (selectedMetaClass && o.meta_class !== selectedMetaClass) return false;
-    if (selectedMetaClass && visibleClasses.size > 0 && !visibleClasses.has(o.class)) return false;
-    if (!selectedMetaClass && selectedClass && o.class !== selectedClass) return false;
-    return true;
-  });
+  const filtered = useMemo(
+    () =>
+      objects.filter((o) => {
+        if (selectedMetaClass && o.meta_class !== selectedMetaClass) return false;
+        if (selectedMetaClass && visibleClasses.size > 0 && !visibleClasses.has(o.class)) return false;
+        if (!selectedMetaClass && selectedClass && o.class !== selectedClass) return false;
+        const def = classes.find((c) => c.meta_class === o.meta_class && c.class === o.class);
+        if (!isClassVisibleForLayers(def, selectedLayers)) return false;
+        return true;
+      }),
+    [objects, selectedMetaClass, selectedClass, visibleClasses, classes, selectedLayers],
+  );
 
   const grouped: Record<string, { meta_class: string; class: string; objects: ObjectSummary[] }> = {};
   // Ajouter les groupes vides pour les classes visibles (pour pouvoir créer des objets)
@@ -419,6 +445,34 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
       return ref ? `→ ${resolveDisplayName(ref)}` : `→ #${v.joint_id}`;
     }
     return String(v);
+  };
+
+  // Filtre texte par groupe (plan-mark3.md action 15, point 4) : construit
+  // un texte plat par ligne à partir des mêmes données que le rendu réel des
+  // cellules (formatValue, nom de fichier pour file/image/csv) - inclut l'ID
+  // (choix retenu : filtre sur toutes les cellules rendues, ID compris).
+  const rowMatchesFilter = (obj: ObjectSummary, attrNames: string[], attrDefs: AttributeDefinition[], needle: string): boolean => {
+    if (!needle) return true;
+    const parts: string[] = [String(obj.id)];
+    const detail = detailCache[obj.id];
+    if (detail) {
+      for (const name of attrNames) {
+        const attrDef = attrDefs.find((a) => a.name === name);
+        const attr = detail.attributes.find((a) => a.name === name);
+        if (!attr || attr.values.length === 0) continue;
+        if (attrDef?.type === 'file' || attrDef?.type === 'image' || attrDef?.type === 'csv') {
+          const pointer = parseFilePointer(attr.values[0]);
+          if (pointer) parts.push(pointer.filename);
+          continue;
+        }
+        if (attrDef?.type === 'datasource') {
+          attr.values.forEach((v) => parts.push(formatValue({ joint_id: Number(v) })));
+          continue;
+        }
+        attr.values.forEach((v) => parts.push(formatValue(v)));
+      }
+    }
+    return parts.join(' ').toLowerCase().includes(needle);
   };
 
   const getCandidateLabel = (obj: ObjectSummary) => {
@@ -1407,6 +1461,10 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
         const attrNames = attrDefs.map((a) => a.name);
         const isExpanded = expandedGroups.has(groupKey);
         const isLoading = group.objects.some((o) => loadingIds.has(o.id));
+        const groupFilter = (groupFilters[groupKey] || '').trim().toLowerCase();
+        const visibleObjects = groupFilter
+          ? group.objects.filter((obj) => rowMatchesFilter(obj, attrNames, attrDefs, groupFilter))
+          : group.objects;
 
         return (
           <div className="card" key={groupKey}>
@@ -1433,6 +1491,14 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
             {isExpanded && (
               <div className="table-container" style={{ marginTop: 12 }}>
                 {isLoading && <p style={{ fontSize: 13, color: 'var(--color-text-muted)', padding: 8 }}>Chargement des attributs...</p>}
+                <input
+                  type="text"
+                  placeholder="Filtrer les lignes..."
+                  value={groupFilters[groupKey] || ''}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setGroupFilters((prev) => ({ ...prev, [groupKey]: e.target.value }))}
+                  style={{ width: '100%', marginBottom: 8, padding: '4px 8px', fontSize: 13, background: 'var(--color-bg)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 4 }}
+                />
                 <table>
                   <thead>
                     <tr>
@@ -1441,7 +1507,7 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                     </tr>
                   </thead>
                   <tbody>
-                    {group.objects.map((obj) => {
+                    {visibleObjects.map((obj) => {
                       const detail = detailCache[obj.id];
                       return (
                         <tr key={obj.id}

@@ -38,6 +38,14 @@ def list_classes():
                     "class": cls["class"],
                     "displayname": cls.get("displayname"),
                     "tenants": cls.get("tenants"),
+                    # Layers (plan-mark3.md action 14) : simple passthrough
+                    # de lecture, même statut que "icon" ci-dessus - champ
+                    # déjà stocké tel quel dans la colonne JSONB "data" par
+                    # write_metaclass/write_class (aucune validation ni
+                    # RBAC dessus), seul ce projecteur de lecture l'omettait
+                    # avant ce correctif, le rendant invisible côté frontend
+                    # malgré sa présence en base.
+                    "layers": cls.get("layers"),
                     "icon": cls.get("icon"),
                     "attributes": cls["attributes"]
                 })
@@ -73,6 +81,9 @@ def get_class_by_id(class_id):
                         "class": cls["class"],
                         "displayname": cls.get("displayname"),
                         "tenants": cls.get("tenants"),
+                        # Layers (plan-mark3.md action 14) : passthrough, cf.
+                        # commentaire de list_classes ci-dessus.
+                        "layers": cls.get("layers"),
                         "icon": cls.get("icon"),
                         "attributes": cls["attributes"]
                     })
@@ -99,6 +110,12 @@ def get_classes_by_meta_class(meta_class):
                 "class": cls["class"],
                 "displayname": cls.get("displayname"),
                 "tenants": cls.get("tenants"),
+                # Layers (plan-mark3.md action 14) : passthrough, cf.
+                # commentaire de list_classes ci-dessus. Lu/édité par
+                # ConfigurationPage.tsx via apiReadMetaClass - sans cette
+                # clé, les layers sauvegardés disparaissaient au rechargement
+                # de la page malgré leur présence en base.
+                "layers": cls.get("layers"),
                 "icon": cls.get("icon"),
                 "attributes": cls["attributes"]
             })

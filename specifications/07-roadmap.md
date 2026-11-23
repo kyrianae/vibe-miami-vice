@@ -394,8 +394,22 @@ Détail complet et suivi : `plan-mark3.md` actions 3 et 4.
 > classe, fait), 5 (versionnage des fichiers modèle, fait). Action 6
 > (synchronisation de `specifications/` avec les actions 1-5, dette
 > documentaire) ajoutée ce jour — voir `plan-mark3.md`.
+>
+> **Mise à jour (2026-11-23)** : actions 7 à 14 également closes depuis —
+> 7 (type `select`, fait, §10.9), 8 (type `secret`, fait, §10.10), 9 (type
+> `datasource`, fait, §10.11), 10a-10d (framework dashboard, fait, §10.12 ;
+> 10e exclu, hors scope), 12 (réorganisation de `backend/` en packages
+> `auth`/`data`/`files`/`routes`/`tests`, fait, §2bis de
+> [02-architecture.md](02-architecture.md)), 13 (IHM Configuration : les 11
+> types d'attribut, fait, §10.12bis), 14 (champ `layers` et filtre IHM/
+> diagramme, fait, §6.12 de [05-frontend.md](05-frontend.md)). Action 11
+> (outil d'ingestion avec binding, §10.13) et action 15 (restructuration
+> IHM menu/Sidebar/filtres texte) restent **à faire**. Action 16
+> (synchronisation de `specifications/` avec les actions 7-14, dette
+> documentaire — cette mise à jour) ajoutée le 2026-11-23 — voir
+> `plan-mark3.md`.
 
-## 10.9 Type d'attribut select/enum (`tocheck.md` #18, conçu)
+## 10.9 Type d'attribut select/enum (`tocheck.md` #18, fait — `plan-mark3.md` action 7)
 
 Idée : liste de valeurs fixes (ex. statut, priorité) pour un usage type
 workflow de ticket — l'attribut ne pointe pas vers un autre objet, il ne
@@ -444,9 +458,26 @@ Conception :
   possibles (une ligne historisée continue de porter une chaîne qui ne
   figure plus dans `values`), aucune migration automatique prévue ici.
 
+> **Mise à jour (2026-11-23, fait)** : conception ci-dessus implémentée
+> sans écart majeur — `allOf` restructuré en **2 branches** (pas 3,
+> `datasource` ajouté à l'enum de la 1ère branche aux côtés de
+> `joint-1-1`/`joint-1-n` plutôt qu'une 3e couple `if`/`then` séparée,
+> action 9 de `plan-mark3.md`), `_coerce_typed_value`
+> (`backend/routes/routes_write.py`) valide l'appartenance à `values`.
+> IHM : branche `<select>` dédiée dans le formulaire **et** l'édition
+> inline de cellule de `NavigationPage.tsx` (2e branche ajoutée en
+> itération 2, suite revue croisée — absente de l'itération 1).
+> `ConfigurationPage.tsx` gère désormais aussi ce type (dette comblée par
+> l'action 13, §10.12bis ci-dessous). Détail complet : §4.7 de
+> [04-api-backend.md](04-api-backend.md), §3.2ter de
+> [03-modele-donnees.md](03-modele-donnees.md), §6.9 de
+> [05-frontend.md](05-frontend.md). Point ouvert toujours non traité
+> (volontairement) : pas de migration automatique si `values` est réduit
+> après coup sur un attribut déjà utilisé.
+
 Détail complet et suivi : `plan-mark3.md` action 7.
 
-## 10.10 Type d'attribut secret/password (`tocheck.md` #19, conçu)
+## 10.10 Type d'attribut secret/password (`tocheck.md` #19, fait — `plan-mark3.md` action 8)
 
 ⚠️ Le score de difficulté 2/5 affiché dans `tocheck.md` ne reflète que
 l'effort perçu avant analyse — à ne pas sous-estimer sur cette base :
@@ -486,9 +517,28 @@ ci-dessous.
   uniquement, comme un formulaire classique de changement de mot de
   passe.
 
+> **Mise à jour (2026-11-23, fait) — les 3 points ouverts tranchés par
+> l'utilisateur (2026-11-22)** : clé de chiffrement Fernet **globale**
+> (pas par tenant) via `SECRET_ENCRYPTION_KEY`, lue dynamiquement (jamais
+> mise en cache au démarrage, `backend/secret_crypto.py`) ; masquage
+> **strict** en lecture générique (placeholder fixe, jamais de
+> déchiffrement implicite) **avec une route reveal dédiée réservée
+> global-admin uniquement** (jamais un tenant-admin, même dans son propre
+> périmètre) — `GET /api/read/object/<id>/secret/<attribute>` ; écriture
+> via le JSON classique de `POST /api/write/object` (pas de route dédiée),
+> chiffrement effectué dans `_coerce_typed_value`. **Correctif
+> post-revue** : `secret` ajouté au garde-fou d'écriture par URL (`PUT
+> /api/write/attribute/...`), oubli initial aligné avec `file`/`image`/
+> `csv`. Détail complet (RBAC, fail-fast vs runtime, non-déduplication
+> Fernet) : §4.7 de [04-api-backend.md](04-api-backend.md), §3.2ter de
+> [03-modele-donnees.md](03-modele-donnees.md), §6.9 de
+> [05-frontend.md](05-frontend.md). Limite connue acceptée, non corrigée :
+> aucune voie API pour fermer explicitement un attribut `secret` existant
+> sans le remplacer.
+
 Détail complet et suivi : `plan-mark3.md` action 8.
 
-## 10.11 Type d'attribut datasource (`tocheck.md` #1, conçu)
+## 10.11 Type d'attribut datasource (`tocheck.md` #1, fait — `plan-mark3.md` action 9)
 
 Idée : type d'attribut porté par une définition JSON et une meta-class
 (ex. Prometheus, PostgreSQL). `tocheck.md` le note explicitement comme
@@ -516,9 +566,29 @@ ici.
   `tocheck.md`, hors scope, non demandé) — uniquement la définition du
   type et son schéma.
 
+> **Mise à jour (2026-11-23, fait) — point ouvert tranché par
+> l'utilisateur (2026-11-22)** : **meta-classe dédiée par type de
+> datasource** retenue (ex. `datasource_prometheus`), **pas** un blob
+> JSON opaque — réutilisation intégrale du modèle objet dynamique
+> existant (classes/attributs `model/*.json`, RBAC tenant, historisation).
+> Nouveau fichier `model/datasource.json` (démo : classes
+> `datasource_prometheus` et `query`, voir §3.2ter de
+> [03-modele-donnees.md](03-modele-donnees.md)). Le champ `classes` —
+> déjà requis pour `joint-1-1`/`joint-1-n` — est réutilisé tel quel pour
+> les classes cibles autorisées. Validation serveur **plus stricte**
+> qu'une jointure ordinaire (classe + tenant de la cible vérifiés,
+> `abort(400)`/`abort(403)`), cascade de fermeture à la suppression de
+> l'objet cible — détail complet : §4.7 de
+> [04-api-backend.md](04-api-backend.md). Aucun câblage d'exécution de
+> requête (pas de route interrogeant Prometheus) : uniquement le type, la
+> référence, et la meta-classe de démo, comme prévu. Report explicite
+> confirmé : aucun champ credential/secret sur `datasource_prometheus` à
+> ce jour (le jour où ce besoin apparaît, il devra utiliser le type
+> `secret` de §10.10, jamais un champ texte en clair).
+
 Détail complet et suivi : `plan-mark3.md` action 9.
 
-## 10.12 Framework de dashboard/affichage configurable (`tocheck.md` #9, conçu)
+## 10.12 Framework de dashboard/affichage configurable (`tocheck.md` #9, actions 10a-10d fait, 10e hors scope — `plan-mark3.md` actions 10a-10d)
 
 `tocheck.md` qualifie cette idée de « gros chantier frontend, à
 découper en sous-actions ». Ce qui suit n'est donc pas un design détaillé
@@ -541,7 +611,44 @@ que l'action 2 du plan (brique isolée, pas de câblage prématuré) :
 ⚠️ Ce découpage lui-même reste à valider/affiner avant de devenir des
 actions trackées dans un futur `plan-markN.md` — il n'est pas figé.
 
-Détail complet et suivi : `plan-mark3.md` action 10.
+> **Mise à jour (2026-11-23)** : découpage validé le 2026-11-22 et
+> **10a-10d livrés**, **10e exclu** (dépend de `tocheck.md` #10, non
+> engagé). Conception tranchée par l'orchestrateur (pas de blob JSON) :
+> meta-classe dynamique `dashboard` (`model/dashboard.json`), deux
+> classes `dashboard` (`name`) et `tab` (`name`, `dashboard` en
+> `joint-1-1`, `target_meta_class`/`target_class` string libres — deux
+> champs séparés car une meta-classe peut porter plusieurs classes —
+> et, ajoutés en 10d, `filter_attribute`/`filter_value` optionnels,
+> égalité stricte après extraction d'id de jointure). **Aucune table
+> applicative dédiée, aucun code backend nouveau** (10a confirmé par
+> grep exhaustif : `routes_init.py` charge tout `model/*.json` sans
+> whitelist/blacklist de meta-classe). IHM 100% dans
+> `frontend/src/pages/DashboardPage.tsx` (nouvelle page, 4e bouton
+> Navbar), bâtie sur les routes génériques d'objets — aucune route
+> dédiée dashboard. Détail complet (rendu, CRUD, filtre, bugs
+> corrigés en revue croisée) : §6.11 de
+> [05-frontend.md](05-frontend.md), §3.2ter de
+> [03-modele-donnees.md](03-modele-donnees.md).
+
+Détail complet et suivi : `plan-mark3.md` actions 10a-10d.
+
+## 10.12bis IHM de configuration : les 11 types d'attribut (`tocheck.md` #14-20, fait — `plan-mark3.md` action 13)
+
+Dette technique signalée et acceptée à chaque action concernée
+(§10.8/§10.9/§10.11 ci-dessus) : `frontend/src/pages/ConfigurationPage.tsx`
+(IHM admin de création/édition de classe) limitait `ATTR_TYPES` à 5 types
+(`string`/`integer`/`float`/`joint-1-1`/`joint-1-n`) alors que le backend/
+schema supportaient déjà 11 types depuis les actions 3 (`file`/`image`/
+`csv`), 7 (`select`), 8 (`secret`), 9 (`datasource`). Corrigé : `ATTR_TYPES`
+étendu aux 11 types, colonne « Options » dédiée par type (réutilisation du
+bloc classes cibles pour `joint-1-1`/`joint-1-n`/`datasource`, nouvel
+éditeur de chips pour `select`, input `separator` pour `csv`), validation
+front bloquante ajoutée (classes/values vides refusées à la sauvegarde —
+comble un trou réel du schema JSON, qui n'impose que la présence de la clé
+via `required`, pas `minItems`). Détail complet : §6.10 de
+[05-frontend.md](05-frontend.md).
+
+Détail complet et suivi : `plan-mark3.md` action 13.
 
 ## 10.13 Outil d'ingestion avec binding (`tocheck.md` #11, conçu)
 

@@ -58,8 +58,8 @@ Trois ajouts à `model/schema.json`, livrés par `plan-mark3.md` actions 3-5
   document modèle, à côté de `meta_class`/`depends_on`/`classes`. Absent =
   version 1 par défaut. Purement informatif pour l'instant — aucune
   logique de migration ne le consomme encore (action 5, préparation
-  future) ; propagé tel quel par `backend/routes_init.py` (`/api/init`) et
-  `backend/routes_write.py` (`write_metaclass`), voir §4.4/§4.5 de
+  future) ; propagé tel quel par `backend/routes/routes_init.py` (`/api/init`) et
+  `backend/routes/routes_write.py` (`write_metaclass`), voir §4.4/§4.5 de
   [04-api-backend.md](04-api-backend.md).
 - **`attributes[].type`** étendu à `"file"`, `"image"`, `"csv"` (aux côtés
   de `string|integer|float|joint-1-1|joint-1-n`) — ces trois types
@@ -88,6 +88,86 @@ Trois ajouts à `model/schema.json`, livrés par `plan-mark3.md` actions 3-5
   possibilité de *référencer* le fichier déjà stocké d'un autre objet
   plutôt que d'uploader de nouveaux octets (voir §4.6 de
   [04-api-backend.md](04-api-backend.md)).
+
+## 3.2ter Extensions Mark 3 (suite) : types `select`/`secret`/`datasource`, champ `layers`, meta-classes `datasource`/`dashboard` (ajout 2026-11-23, actions 7-9/14)
+
+Quatre ajouts supplémentaires à `model/schema.json` (`attributes[].type` et
+une classe), livrés par `plan-mark3.md` actions 7-9 et 14, postérieurs à
+§3.2bis :
+
+- **`attributes[].type` étendu à `"select"`** (action 7) — liste fermée de
+  valeurs, portée par un nouveau champ `"values"` (tableau de chaînes) sur
+  la définition d'attribut, `required` si `type: select`. La valeur
+  stockée dans `attribute_value.value_string` doit appartenir à `values` —
+  vérifié côté serveur (`_coerce_typed_value`, `backend/routes/
+  routes_write.py`), `abort(400)` sinon. Restructuration du bloc `allOf`
+  du schéma en **2 branches** (pas une 3e couple `if`/`then` séparée) :
+  branche 1 — `type` dans `["joint-1-1", "joint-1-n", "datasource"]` →
+  `classes` requis ; branche 2 — `type` = `"select"` → `values` requis.
+  ⚠️ Pas de migration automatique si `values` est réduit après coup sur un
+  attribut déjà utilisé (valeurs orphelines possibles dans l'historique).
+- **`attributes[].type` étendu à `"secret"`** (action 8) — valeur
+  chiffrée Fernet (`cryptography.fernet`) dans `value_string`, jamais en
+  clair. Clé unique globale lue dynamiquement depuis la variable
+  d'environnement `SECRET_ENCRYPTION_KEY` (`backend/secret_crypto.py`,
+  jamais mise en cache au démarrage). Aucune nouvelle colonne, aucun champ
+  de schéma supplémentaire sur la définition d'attribut (contrairement à
+  `select`/`csv`/`joint-*`/`datasource`) — le typage seul suffit, le
+  masquage et le chiffrement sont entièrement portés par le code. Détail
+  complet (masquage en lecture, route reveal, garde-fou d'écriture par
+  URL) : §4.7 de [04-api-backend.md](04-api-backend.md).
+- **`attributes[].type` étendu à `"datasource"`** (action 9) — pointeur
+  vers un objet d'une meta-classe `datasource_*` dédiée (ex.
+  `datasource_prometheus`), réutilisant le modèle objet dynamique
+  existant plutôt qu'un blob JSON opaque. Le champ `"classes"` — déjà
+  requis pour `joint-1-1`/`joint-1-n` — est **réutilisé tel quel** pour
+  lister les classes cibles autorisées (même branche `allOf` que les
+  jointures, voir ci-dessus). ⚠️ Différence de représentation importante
+  avec une jointure : la valeur est stockée dans `value_string` (un
+  identifiant d'objet entier en chaîne), **jamais** dans la colonne
+  `joint_id` — en lecture, la valeur ressort donc comme une chaîne brute,
+  pas comme `{"joint_id": ...}`. Validation serveur plus stricte qu'une
+  jointure ordinaire (`_apply_attribute_diff`, `backend/routes/
+  routes_write.py`) : `abort(400)` si l'objet cible n'existe pas/est
+  supprimé ou si sa classe n'est pas dans `attr_def["classes"]`,
+  `abort(403)` si l'objet cible est hors du périmètre tenant de l'acteur
+  (tenant-admin) — plus strict que `joint-1-1`/`joint-1-n`, qui ne
+  vérifient aujourd'hui ni classe ni tenant de la cible (incohérence
+  documentée, non corrigée pour les jointures ordinaires). Suppression de
+  l'objet cible : `delete_object` ferme en cascade toute valeur
+  `datasource` qui pointait dessus (même esprit que `joint_id` → `ON
+  DELETE SET NULL`, mais géré applicativement puisque `value_string`
+  n'est pas une clé étrangère). Détail complet : §4.7 de
+  [04-api-backend.md](04-api-backend.md).
+- **Champ `"layers"`** (array de string, optionnel) sur une classe (action
+  14) — même emplacement/pattern que `"tenants"` : tag texte libre,
+  **pas** une nouvelle meta-classe dédiée. Absent/vide = classe toujours
+  visible quel que soit le filtre actif. Purement un filtre d'affichage
+  100% frontend (localStorage, §6.9 de [05-frontend.md](05-frontend.md)),
+  **pas** un mécanisme RBAC comme `tenants`.
+
+Deux nouveaux fichiers de modèle (meta-classes applicatives, pas des
+extensions de `schema.json`) :
+- **`model/datasource.json`** (action 9) — meta-classe `datasource`, deux
+  classes : `datasource_prometheus` (`url` string) et `query` (`name`,
+  `expression` string + `datasource` en `joint-1-1` vers
+  `datasource_prometheus`) — une datasource (connexion) et une requête
+  sont deux concepts distincts, la requête référence sa datasource.
+  Aucun champ credential/secret sur `datasource_prometheus` à ce jour (le
+  jour où ce besoin apparaît, il devra utiliser le type `secret`
+  ci-dessus, jamais un champ texte en clair).
+- **`model/dashboard.json`** (action 10a/10d) — meta-classe `dashboard`,
+  deux classes : `dashboard` (`name` string) et `tab` (`name` string,
+  `dashboard` en `joint-1-1` vers `dashboard`, `target_meta_class`/
+  `target_class` string libres désignant la meta-classe/classe précise à
+  afficher dans l'onglet — deux champs séparés, pas un seul, car une
+  meta-classe peut porter plusieurs classes — et `filter_attribute`/
+  `filter_value` string optionnels, action 10d, filtre d'égalité stricte
+  sur les objets candidats). Aucune table applicative dédiée : stockage
+  entièrement porté par le modèle dynamique existant (`object`/
+  `attribute`/`attribute_value`), comme toute autre meta-classe. Détail
+  complet (rendu, CRUD, filtre) : §6.10 de
+  [05-frontend.md](05-frontend.md).
 
 ⚠️ Note : les fichiers
 `model/personnes.json` et `model/reseau.json` fournis contiennent une clé
@@ -133,10 +213,15 @@ Points clés :
   cible d'une jointure ne supprime pas l'attribut source, mais met son
   `joint_id` à `NULL` (valeur « orpheline », distincte d'une valeur
   scalaire — elle resterait alors invisible côté lecture, voir §4).
-- `object`/`attribute` sont en `ON DELETE CASCADE` : supprimer un objet
-  supprime tous ses attributs et leurs valeurs. ⚠️ Mais **aucune route de
-  suppression d'objet n'existe** dans `app.py` — il n'y a pas de
-  `DELETE /api/...` pour les objets, les classes ou les meta-classes.
+- `object`/`attribute` sont en `ON DELETE CASCADE` : une suppression SQL
+  réelle d'un objet supprimerait tous ses attributs et leurs valeurs. En
+  pratique, `DELETE /api/delete/object/<int:object_id>`
+  (`backend/routes/routes_write.py:683`, détail §3.2ter ci-dessus) existe bien
+  et ne fait jamais de `DELETE` SQL sur `object` : elle pose `deleted_at =
+  now()` (suppression logique) et ferme (`valid_to = now()`) les
+  `attribute_value` associées, donc le `ON DELETE CASCADE` ci-dessus n'est
+  jamais déclenché par ce chemin applicatif. Pas de route de suppression
+  pour les classes/meta-classes (`definition`) à ce jour.
 - `definition.data` stocke **le JSON de définition tel quel**
   (`{"meta_class": ..., "classes": [...]}`), c'est la seule table qui
   porte le schéma ; `object`/`attribute`/`attribute_value` ne référencent

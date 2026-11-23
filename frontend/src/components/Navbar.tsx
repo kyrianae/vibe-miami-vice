@@ -63,14 +63,10 @@ export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly,
   return (
     <nav className="navbar">
       <h1>Miami Vice</h1>
-      <button
-        className={page === 'navigation' ? 'active' : ''}
-        onClick={() => onPageChange('navigation')}
-      >
-        Navigation
-      </button>
       {/* RBAC multi-tenant (plan.md action 11) : entrée de menu entièrement
-          masquée (pas juste désactivée) pour le rôle tenant-readonly. */}
+          masquée (pas juste désactivée) pour le rôle tenant-readonly.
+          Ordre des boutons (plan-mark3.md action 15, point 1) :
+          Configuration en premier, avant Navigation. */}
       {!authInfo.isTenantReadonly && (
         <button
           className={page === 'configuration' ? 'active' : ''}
@@ -79,6 +75,12 @@ export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly,
           Configuration
         </button>
       )}
+      <button
+        className={page === 'navigation' ? 'active' : ''}
+        onClick={() => onPageChange('navigation')}
+      >
+        Navigation
+      </button>
       <button
         className={page === 'diagramme' ? 'active' : ''}
         onClick={() => onPageChange('diagramme')}

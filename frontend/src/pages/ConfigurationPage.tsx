@@ -97,6 +97,15 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
     ...classDefs.map((c) => c.class).filter(Boolean),
   ])];
 
+  // Registre des layers (plan-mark3.md action 14, point 3) : pas de
+  // meta-classe dédiée - union dédupliquée (trim) des `layers` de toutes
+  // les classes du modèle chargé (allClasses, déjà filtré par tenant),
+  // affichée en lecture pour que l'utilisateur réutilise un nom de layer
+  // existant au lieu de le retaper/fauter dans le champ texte libre.
+  const knownLayers = [...new Set(
+    allClasses.flatMap((c) => (c.layers || []).map((l) => l.trim()).filter(Boolean))
+  )].sort();
+
   // Load definition when selecting a meta_class
   useEffect(() => {
     if (!selectedMetaClass) {
@@ -264,6 +273,7 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
         const def: ClassDefinition = { class: c.class, attributes: cleanAttrs };
         if (c.displayname) def.displayname = c.displayname;
         if (c.tenants && c.tenants.length > 0) def.tenants = c.tenants;
+        if (c.layers && c.layers.length > 0) def.layers = c.layers;
         if (c.icon) def.icon = c.icon;
         return def;
       });
@@ -400,6 +410,26 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
             </div>
           </div>
 
+          {/* Layers connus (plan-mark3.md action 14, point 3) : union
+              dédupliquée de tous les layers du modèle chargé, lecture seule
+              - sert de référentiel visuel pour le champ "Layers" ci-dessous,
+              aucune édition inline de cette liste (le layer se retape/se
+              retire via le champ texte de la classe concernée). */}
+          {knownLayers.length > 0 && (
+            <div className="card">
+              <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                Layers connus <span style={{ color: 'var(--color-text-muted)' }}>(toutes classes confondues)</span>
+              </label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {knownLayers.map((l) => (
+                  <span key={l} className="badge" style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+                    {l}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Classes */}
           {classDefs.map((cls, classIdx) => {
             const isExpanded = expandedClasses.has(classIdx);
@@ -428,8 +458,8 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
 
                 {isExpanded && (
                   <div style={{ marginTop: 12 }}>
-                    {/* Class name + displayname + tenants */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+                    {/* Class name + displayname + tenants + layers */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
                       <div className="form-group" style={{ marginBottom: 0 }}>
                         <label style={{ fontSize: 12 }}>Nom de la classe</label>
                         <input type="text" value={cls.class}
@@ -449,6 +479,14 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
                             tenants: e.target.value.split(',').map((t) => t.trim()).filter(Boolean),
                           })}
                           placeholder="ex: tenant1, tenant2" style={smallInput} />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label style={{ fontSize: 12 }}>Layers <span style={{ color: 'var(--color-text-muted)' }}>(vide = toujours visible)</span></label>
+                        <input type="text" value={(cls.layers || []).join(', ')}
+                          onChange={(e) => updateClass(classIdx, {
+                            layers: e.target.value.split(',').map((t) => t.trim()).filter(Boolean),
+                          })}
+                          placeholder="ex: physique, reseau" style={smallInput} />
                       </div>
                     </div>
 

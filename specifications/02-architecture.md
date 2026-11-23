@@ -29,11 +29,12 @@
 
 *(État réel actuel, hors scope de cet instantané figé — voir
 [07-roadmap.md](07-roadmap.md) §10.2/§10.3 : authentification Keycloak
-(`backend/auth.py`) et RBAC multi-tenant (`backend/rbac.py`) actifs depuis
-`plan-mark1.md` actions 7b et 11. Voir « Découpage en Blueprints »
-ci-dessous pour la structure à jour de ces modules.)*
+(`backend/auth/auth.py`) et RBAC multi-tenant (`backend/auth/rbac.py`)
+actifs depuis `plan-mark1.md` actions 7b et 11 (chemins packagés depuis
+`plan-mark3.md` action 12). Voir « Découpage en Blueprints » ci-dessous
+pour la structure à jour de ces modules.)*
 
-## 2bis. Découpage de `backend/app.py` en Blueprints (ajout 2026-11-21, `plan-mark3.md` actions 1-4)
+## 2bis. Découpage de `backend/app.py` en Blueprints et packages (ajout 2026-11-21 `plan-mark3.md` actions 1-4, réorganisé en packages 2026-11-22 action 12, mis à jour 2026-11-23 action 16)
 
 `backend/app.py` n'est plus un fichier plat (c'était le cas à l'audit
 initial, §0) : depuis `plan-mark3.md` action 1, c'est un point d'entrée
@@ -45,41 +46,66 @@ par appel explicite, puis enregistre 5 Blueprints dans cet ordre (sans
 dépendance d'ordre vis-à-vis de `before_request`, qui s'applique à toutes
 les routes quel que soit l'ordre d'enregistrement) :
 `routes_read.read_bp`, `routes_write.write_bp`, `routes_init.init_bp`,
-`routes_admin.admin_bp`, `routes_files.files_bp`. Modules du dossier
-`backend/` et leur rôle :
-- `auth.py` : hook d'authentification Keycloak (`require_auth`,
-  `get_jwk_client`) — voir ci-dessus.
-- `rbac.py` : `AuthContext`, `get_auth_context`, filtrage/validation
-  tenant (`_tenant_read_filter`, `_check_class_tenant_write_permission`,
-  etc.).
-- `db.py` : `get_db`, `close_db`, `load_schema`.
-- `routes_read.py` (Blueprint `read_bp`) : tous les `GET /api/read/...`,
-  dont `GET /api/class_icon/<meta_class>/<class>` (action 4).
-- `routes_write.py` (Blueprint `write_bp`) : `POST/PUT /api/write/...`,
-  `DELETE /api/delete/object/<id>`, dont la détection multipart de
-  `POST /api/write/object` (création atomique objet + fichiers, action 3
-  itération 2, `_write_object_multipart`).
-- `routes_init.py` (Blueprint `init_bp`) : `POST /api/init`.
-- `routes_admin.py` (Blueprint `admin_bp`) : purge/suppression de schéma
-  (action Mark 2), et depuis l'action 3 `POST /api/admin/sweep_orphan_files`
-  (voir §4.6 de [04-api-backend.md](04-api-backend.md)).
-- `routes_files.py` (Blueprint `files_bp`, action 3-4) : routes de lecture/
-  écriture des attributs `file`/`image`/`csv` et des références de logo
-  (détail complet : §4.6 de [04-api-backend.md](04-api-backend.md)).
-- `class_icon.py` (action 4) : génération de l'icône de secours SVG par
-  classe (rond + initiales), consommée par `routes_read.py`.
-- `file_storage.py` (action 2) : interface `FileStorage` (ABC) +
-  `LocalFileStorage`, stockage à plat versionné des fichiers d'attribut.
-- `file_validation.py` (action 3) : validation de contenu (`image`/`csv`)
-  et écriture sûre (`save_file_or_400`), partagées entre `routes_files.py`
-  et `routes_write.py`.
+`routes_admin.admin_bp`, `routes_files.files_bp` (24 routes applicatives au
+total, action 12).
 
-Chaque `routes_*.py` fait `import app` en tête de module et appelle
+Depuis `plan-mark3.md` action 12 (2026-11-22), `backend/` **n'est plus
+plat** : les modules ci-dessus (hors `app.py`) sont répartis en 5 packages
+Python (déplacement mécanique, aucun changement de comportement) :
+- `backend/auth/` : `auth.py` (hook d'authentification Keycloak,
+  `require_auth`, `get_jwk_client`, et depuis l'action 8 la liste
+  `_PROTECTED_REGEXES` qui force un Bearer token même sur certaines routes
+  `GET /api/read/...` normalement ouvertes — voir §4.7 de
+  [04-api-backend.md](04-api-backend.md)), `rbac.py` (`AuthContext`,
+  `get_auth_context`, filtrage/validation tenant —
+  `_tenant_read_filter`, `_check_class_tenant_write_permission`, etc.).
+- `backend/data/` : `db.py` (`get_db`, `close_db`, `load_schema`).
+- `backend/files/` : `file_storage.py` (action 2, interface `FileStorage`
+  ABC + `LocalFileStorage`), `file_validation.py` (action 3, validation de
+  contenu `image`/`csv` et écriture sûre `save_file_or_400`), `class_icon.py`
+  (action 4, génération de l'icône de secours SVG par classe).
+- `backend/routes/` : `routes_read.py` (Blueprint `read_bp`, tous les
+  `GET /api/read/...`, dont `GET /api/class_icon/<meta_class>/<class>`
+  action 4, et depuis l'action 8 `GET /api/read/object/<id>/secret/
+  <attribute>`), `routes_write.py` (Blueprint `write_bp`, `POST/PUT
+  /api/write/...`, `DELETE /api/delete/object/<id>`, dont la détection
+  multipart de `POST /api/write/object` — création atomique objet +
+  fichiers, action 3 itération 2, `_write_object_multipart` — et depuis
+  les actions 7/8/9 la coercition typée `select`/`secret`/`datasource`,
+  voir §4.3/§4.7 de [04-api-backend.md](04-api-backend.md)),
+  `routes_init.py` (Blueprint `init_bp`, `POST /api/init`), `routes_admin.py`
+  (Blueprint `admin_bp`, purge/suppression de schéma — action Mark 2 — et
+  depuis l'action 3 `POST /api/admin/sweep_orphan_files`, voir §4.6 de
+  [04-api-backend.md](04-api-backend.md)), `routes_files.py` (Blueprint
+  `files_bp`, actions 3-4, routes de lecture/écriture des attributs
+  `file`/`image`/`csv` et des références de logo, détail complet : §4.6 de
+  [04-api-backend.md](04-api-backend.md)).
+- `backend/tests/` : les 11 fichiers `test_*.py` (invocation :
+  `SCHEMA_PATH=<chemin absolu>/model/schema.json pytest backend/tests/ -v`
+  depuis la racine du dépôt — le chemin a changé par rapport à l'ancienne
+  commande `pytest backend/test_X.py`, corrigé aussi dans les docstrings
+  des fichiers de test eux-mêmes).
+
+Restent à la racine de `backend/` (pas de package dédié) :
+- `app.py` : point d'entrée Flask décrit ci-dessus.
+- `secret_crypto.py` (action 8) : chiffrement/déchiffrement Fernet des
+  attributs `secret` (`encrypt_secret`/`decrypt_secret`, clé lue
+  dynamiquement depuis `SECRET_ENCRYPTION_KEY`) — jugé module générique de
+  chiffrement sans lien direct avec un seul des 4 domaines de packages
+  (`auth`/`data`/`files`/`routes`), donc non déplacé. Détail complet :
+  §4.7 de [04-api-backend.md](04-api-backend.md) et §10.10 de
+  [07-roadmap.md](07-roadmap.md).
+
+Chaque `routes/routes_*.py` fait `import app` en tête de module (le
+`WORKDIR` du conteneur et la racine `backend/` du dépôt placent `app.py`
+sur le path d'import, même depuis un sous-package) et appelle
 `app.get_db()`/`app.get_auth_context()` à l'intérieur des corps de
 fonctions (jamais au niveau module) : permet aux tests de monkeypatcher
 directement `miami_app.get_db`/`miami_app.get_auth_context`, sans import
-circulaire constaté. Détail complet (vérifications, tests, dettes
-assumées) : `plan-mark3.md` action 1.
+circulaire constaté — préservé tel quel par la réorganisation en packages
+(aucun changement requis au `Dockerfile`, `COPY backend/ .` copie tout le
+dossier et `CMD gunicorn app:app` reste valide). Détail complet
+(vérifications, tests, dettes assumées) : `plan-mark3.md` actions 1 et 12.
 
 ## 5. Flux de démarrage
 

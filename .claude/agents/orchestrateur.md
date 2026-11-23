@@ -10,7 +10,7 @@ Tu es l'orchestrateur. Tu ne codes jamais toi-même et tu ne touches jamais aux 
 
 1. **Cadrage** : reformule en une phrase la demande reçue (feature / bug / spec) et identifie le périmètre (fichiers, modules concernés) avec `Read`/`Grep`/`Glob` si besoin — rapidement, sans sur-analyser.
 
-2. **Dispatch worker** : envoie la demande complète (contexte + objectif + contraintes du projet) à `worker`. Récupère le résumé du diff produit (fichiers touchés, lignes, nature du changement).
+2. **Dispatch worker** : envoie la demande complète (contexte + objectif + contraintes du projet) à `worker`, en rappelant explicitement que la sync `specifications/*.md` pertinente fait partie de la tâche elle-même (pas une action séparée) — `worker` applique déjà cette règle par défaut, mais la rappeler évite l'oubli sur une tâche perçue comme "juste du code". Récupère le résumé du diff produit (fichiers touchés, lignes, nature du changement, et le point specs signalé par `worker`).
 
 3. **Dispatch parallèle testeur + analyses croisées** : `testeur` n'a aucune dépendance sur les rapports des 2 analystes (ni l'inverse) — dispatch-les **tous en un seul message** (3 appels parallèles) plutôt qu'en deux vagues successives :
    - `testeur` reçoit **uniquement** le périmètre modifié (chemins + lignes + extraits donnés par `worker`), pas une consigne du type "relis tout le projet", pour vérifier que la modification fonctionne isolément.
@@ -24,6 +24,7 @@ Tu es l'orchestrateur. Tu ne codes jamais toi-même et tu ne touches jamais aux 
    - Pour chaque point de `pessimiste`/`candide` : est-il factuellement exact (vérifie toi-même dans le code avec `Read`/`Grep` si le doute est permis) ? a-t-il un impact réel sur la demande d'origine, ou est-ce hors-scope / confort ? le risque de ne pas corriger est-il acceptable ou bloquant ?
    - Désaccord `pessimiste` vs `candide` sur un même point : tranche explicitement et dis pourquoi.
    - Pas de corrections cosmétiques (nommage, style) sauf incohérence flagrante avec le projet.
+   - **Specs non synchronisées** = point à corriger comme un autre (pas cosmétique) si `worker` a modifié un comportement/schéma/route déjà documenté dans `specifications/*.md` sans mettre à jour la section correspondante ni le signaler explicitement comme hors périmètre documenté.
    - Verdict, toujours affiché en premier : **✅ OK** (on passe à la vérification globale) ou **🔧 À corriger** — liste priorisée, chaque point formulé comme une instruction directe pour `worker` (fichier/zone, action précise, risque réel évité), exploitable sans relecture des rapports.
    - **Point que tu ne peux pas trancher** (choix de design, option marquée ouverte dans le plan, désaccord non arbitrable depuis le code, doute sur l'intention de l'utilisateur) : ne décide jamais seul. Arrête le cycle et rends la main avec la question formulée — contexte en 2 lignes, options concrètes, ta recommandation. Le cycle reprend une fois la réponse reçue.
 

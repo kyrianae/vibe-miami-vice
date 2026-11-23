@@ -1634,8 +1634,212 @@
   `frontend/src/pages/ConfigurationPage.tsx`,
   `frontend/src/pages/NavigationPage.tsx`,
   `frontend/src/pages/DiagramPage.tsx`.
-- **Statut** : ⬜ à faire — conception tranchée (2026-11-22), pas encore
+- **Statut** : ✅ fait (2026-11-22, 2 itérations). Conception tranchée par
+  l'utilisateur le 2026-11-22 (3 points, rappelés en tête de section :
+  classe sans layer toujours visible, sélection persistée en
+  localStorage, registre layers = tag texte libre visible dans
+  `ConfigurationPage.tsx`, pas de meta-classe dédiée). Itération 1
+  (implémentation worker) : `model/schema.json` (champ `layers` array
+  string, pattern `tenants`), `frontend/src/types.ts` (`layers?:
+  string[]` sur `ClassDefinition`/`ClassInfo`), `ConfigurationPage.tsx`
+  (éditeur comma-separated + carte "Layers connus" union dédupliquée non
+  scopée à la meta-classe courante), `App.tsx` (state `selectedLayers:
+  Set<string>` persisté localStorage clé
+  `miami-vice-selected-layers`), `Sidebar.tsx` (section chips togglables
+  multi-sélection), `NavigationPage.tsx` et `DiagramPage.tsx` (predicate
+  `isClassVisibleForLayers` ajouté dans le filtre d'objets existant),
+  `model/itil_cmdb.json` (layers de test : `datacenter`→physique,
+  `serveur`→physique+reseau, `base_de_donnees`→securite). Fix backend
+  imprévu (non prévu par le plan initial qui disait "aucun changement
+  backend") : `backend/routes/routes_read.py`, 3 routes de lecture
+  (`list_classes`, `get_class_by_id`, `get_classes_by_meta_class`) ne
+  projetaient pas la clé `layers` du JSONB stocké — persistée en
+  écriture mais invisible en lecture. Fix = simple passthrough
+  `cls.get("layers")`, même statut que `icon`, zéro RBAC. Itération 2
+  (suite arbitrage sur rapport pessimiste) : `NavigationPage.tsx` ligne
+  ~334, `filtered` enveloppé dans `useMemo` (deps `objects`/
+  `selectedMetaClass`/`selectedClass`/`visibleClasses`/`classes`/
+  `selectedLayers`) — régression perf réelle introduite par le nouveau
+  `classes.find()` par objet dans le filter, corrigée. Résultats
+  testeur (tsc 0 nouvelle erreur, jsonschema 9/9 model/*.json valides,
+  API confirme `layers` bien renvoyé par les 3 routes pour les 3
+  classes de test, absent=null sans erreur sur les autres), candide
+  (convergence totale avec implémentation indépendante, fix backend
+  jugé correct et justifié par précédent `icon`), pessimiste (fix
+  backend sans risque RBAC vérifié directement dans le code, 3 points
+  mineurs dont perf corrigée en itération 2), testeur-global (OK
+  complet : build, stack docker-compose, `/api/init`, routes non
+  régressées, RBAC tenant testé sans erreur mais sans différenciation
+  observable faute de données taguées en base — limite d'environnement,
+  pas un défaut de code, bout-en-bout objet créé/relu). Limites connues
+  documentées (acceptées, non bloquantes) : Sidebar ne recharge
+  `classes` que sur changement de page donc staleness après save sur
+  ConfigurationPage tant qu'on ne change pas de page ; predicate
+  `isClassVisibleForLayers` dupliqué verbatim dans `NavigationPage.tsx`
+  et `DiagramPage.tsx` sans factorisation (pas de convention établie
+  dans le projet pour ce cas) ; pas de normalisation de casse sur les
+  noms de layers (même risque déjà accepté pour `tenants`) ; RBAC
+  tenant différentiel non testé faute de données de test taguées en
+  base actuellement.
+
+## 15. [Nouvelle fonctionnalité] Restructuration IHM : menu, Sidebar par layer, filtres texte, combo layers Diagramme
+
+> Demande utilisateur (2026-11-23), 5 points. 4 points de conception
+> ambigus tranchés par l'utilisateur après clarification (options
+> recommandées retenues) :
+> 1. Filtre texte `NavigationPage.tsx` = **une seule case globale** par
+>    table de classe (pas une case par colonne) — ligne visible si une
+>    de ses cellules contient le texte tapé.
+> 2. Sidebar : l'arbre par layer (nouveau) **coexiste** avec l'arbre par
+>    meta_class (existant) — rien retiré, section ajoutée en plus.
+> 3. Filtre texte Configuration = **le même filtre Sidebar** (point C
+>    ci-dessous) — aucune nouvelle liste dédiée dans
+>    `ConfigurationPage.tsx`, puisque Sidebar y liste déjà toutes les
+>    classes sans filtre meta_class.
+> 4. Diagramme : la combo-list de layers **remplace** les chips Sidebar
+>    partagées sur cette page uniquement (Sidebar garde ses chips sur
+>    Navigation/Configuration).
+
+- **Problème** : 5 demandes UX distinctes constatées à l'usage après
+  l'action 14 (layers) :
+  1. Menu (`Navbar.tsx`) : Configuration doit être tout à gauche (avant
+     Navigation), actuellement 2e bouton après Navigation.
+  2. Dashboard (`App.tsx`) : le panneau Sidebar reste affiché (vide de
+     sens) sur cette page — pas de meta_class/class/layers pertinent
+     puisque `DashboardPage.tsx` ne les consomme pas.
+  3. Navigation/Diagramme/Configuration (`Sidebar.tsx`) : l'arbre de
+     classes n'est groupé que par meta_class — demande d'un groupement
+     supplémentaire par layer (une classe apparaît dans chaque groupe
+     layer auquel elle appartient, doublons acceptés), avec repli/
+     dépli, replié par défaut.
+  4. `NavigationPage.tsx` : aucun moyen de filtrer les lignes d'une
+     table de classe par texte libre.
+  5. `DiagramPage.tsx` : le filtre layers (chips Sidebar, action 14) doit
+     devenir une combo-list dédiée à cette page, dont la sélection narrow
+     aussi la liste des classes proposées aux layers sélectionnés.
+- **Correctif** :
+  1. `frontend/src/components/Navbar.tsx` : réordonner les boutons —
+     Configuration en premier (avant Navigation), reste inchangé
+     (Diagramme, Dashboard).
+  2. `frontend/src/App.tsx` : ne plus rendre `<Sidebar>` ni le bouton
+     `sidebar-toggle` quand `page === 'dashboard'` (retrait conditionnel,
+     pas juste un `open=false`).
+  3. `frontend/src/components/Sidebar.tsx` :
+     - Nouvelle section "Par layer" (sous ou à côté de la section
+       meta_class existante) : classes groupées par layer (une classe
+       apparaît sous chaque layer de `c.layers`, classes sans layer
+       absentes de cette section — cohérent avec la convention "absent =
+       toujours visible" déjà actée côté filtre, ici c'est un
+       regroupement d'affichage, pas un filtre). Clic sur une classe du
+       groupe layer = même comportement que clic dans l'arbre meta_class
+       (`onSelectMetaClass`/`onSelectClass`).
+     - Chaque groupe (meta_class existant ET layer nouveau) repliable/
+       dépliable indépendamment, **replié par défaut** (changement de
+       comportement : aujourd'hui `selectedMetaClass === mc` pilote
+       l'ouverture, à réconcilier avec un état de repli local propre,
+       distinct de la sélection active).
+     - Nouveau champ texte filtre au-dessus de l'arbre (une seule case,
+       cohérent avec le point 1 Navigation) : filtre les classes/
+       meta_class affichées par sous-chaîne sur le nom de classe (et/ou
+       meta_class), appliqué aux deux arbres (meta_class et layer).
+     - Sur la page `diagramme` uniquement (`page === 'diagramme'`) : la
+       section chips layers existante (action 14) est remplacée par une
+       combo-list (`<select multiple>` ou composant dédié) — la
+       sélection pilote `selectedLayers` comme aujourd'hui, et narrow en
+       plus l'arbre de classes affiché (meta_class + layer) aux classes
+       des layers sélectionnés.
+  4. `frontend/src/pages/NavigationPage.tsx` : état de filtre texte par
+     groupe de classe affiché (un input par card, au-dessus du
+     `<table>`), une ligne visible si une des cellules affichées (ID
+     inclus ou non, à trancher à l'implémentation si ambigu) contient le
+     texte tapé (insensible à la casse).
+  5. Tests : navbar ordre des boutons ; Dashboard sans Sidebar visible
+     (et sans bouton toggle) ; Sidebar arbre layer affiche bien les
+     doublons, replié par défaut, filtre texte narrow les deux arbres ;
+     NavigationPage filtre texte narrow les lignes visibles sans toucher
+     aux données chargées ; DiagramPage combo-list remplace bien les
+     chips sur cette page uniquement (Navigation/Configuration gardent
+     les chips), sélection combo narrow la liste de classes proposée.
+- **Effort** : moyen (5 points distincts mais tous frontend, aucun
+  changement backend/schema attendu — réorganisation de composants
+  existants + ajout d'inputs de filtre, pas de nouvelle donnée modèle).
+- **Fichiers** : `frontend/src/components/Navbar.tsx`,
+  `frontend/src/App.tsx`, `frontend/src/components/Sidebar.tsx`,
+  `frontend/src/pages/NavigationPage.tsx`,
+  `frontend/src/pages/DiagramPage.tsx`.
+- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
   implémentée.
+
+## 16. [Dette documentaire] Synchronisation specifications/ avec actions 7-14
+
+> Demande utilisateur (2026-11-23) : avant de lancer l'action 15, vérifier
+> si `specifications/` est à jour par rapport au plan — constat : seule
+> `specifications/07-roadmap.md` (doc de design/décisions) mentionne
+> `select`/`secret`/`datasource`/`dashboard`/`layers` ; `03-modele-
+> donnees.md`/`04-api-backend.md`/`05-frontend.md`/`02-architecture.md`
+> n'ont pas été resynchronisés depuis l'action 6 (2026-11-21, qui ne
+> couvrait que les actions 1-5). Même nature que l'action 6, portée
+> étendue aux actions 7-14 (select, secret, datasource, dashboard
+> 10a-10d, réorganisation backend en packages, IHM ConfigurationPage
+> types manquants, layers).
+- **Problème** : `specifications/` en retard sur le code réel livré par
+  les actions 7 à 14 — à vérifier précisément par relecture du code
+  (pas seulement de ce plan) avant de rédiger les corrections, même
+  méthode que l'action 6.
+- **Correctif** : relecture des fichiers `specifications/*.md` face au
+  code réel (`model/schema.json`, `backend/routes/`, `backend/auth/`,
+  `backend/data/`, `backend/files/`, `frontend/src/pages/
+  ConfigurationPage.tsx`/`NavigationPage.tsx`/`DiagramPage.tsx`/
+  `DashboardPage.tsx`, `frontend/src/components/Sidebar.tsx`), mise à
+  jour des sections concernées : types `select`/`secret`/`datasource`
+  (action 7/8/9), modèle dashboard/tab (action 10a-10d), découpage
+  `backend/` en packages (action 12, remplace la description de l'action
+  1 qui référence encore l'ancienne structure plate), `ConfigurationPage`
+  types d'attribut complets (action 13), champ `layers`/filtre IHM
+  (action 14). Dette documentaire déjà notée hors scope à l'action 12
+  (README.md + specs référençant encore les anciens chemins plats) — à
+  inclure si jugé pertinent dans la même passe.
+- **Effort** : faible (doc only, lecture seule du code pour vérifier la
+  forme réelle, même méthode éprouvée à l'action 6).
+- **Fichiers** : `specifications/02-architecture.md`,
+  `specifications/03-modele-donnees.md`,
+  `specifications/04-api-backend.md`, `specifications/05-frontend.md`,
+  `specifications/07-roadmap.md` (ligne de statut fin de section 10 à
+  mettre à jour), `README.md` (si inclus).
+- **Statut** : ✅ fait (2026-11-23, `worker`/`testeur`/`pessimiste`/
+  `candide`/`testeur-global`).
+  - Travail repris d'une session parallèle antérieure :
+    `specifications/02-architecture.md`, `03-modele-donnees.md`,
+    `04-api-backend.md`, `05-frontend.md` déjà modifiés (514 ins/82 del),
+    vérifié exact par relecture croisée du code.
+  - Complété : 2 chemins obsolètes dans `02-architecture.md`
+    (`backend/auth.py`/`backend/rbac.py` → `backend/auth/auth.py`,
+    `backend/auth/rbac.py`), `README.md` (vues 3→4 + Dashboard,
+    `DashboardPage.tsx` dans l'arbre, mention layers Sidebar, chemins
+    tests `backend/tests/`). `specifications/07-roadmap.md` déjà à jour
+    par la session parallèle, rien à corriger.
+  - Revue croisée (testeur + analyste combiné pessimiste/candide) : 1
+    point bloquant trouvé — affirmation fausse répétée « displayname
+    jamais renvoyé par l'API » dans `04-api-backend.md` et
+    `05-frontend.md`, alors que `backend/routes/routes_read.py:39,82,111`
+    le renvoie bien — + 3 points secondaires (contradiction interne
+    `03-modele-donnees.md` sur l'existence de `delete_object`,
+    contradiction `README.md` 5 vs 11 types d'attribut, comptage routes
+    25 vs 24 réel dans `02-architecture.md`). Tous corrigés en 1
+    itération.
+  - Revalidation ciblée (testeur + analyste) : 4/4 OK, 1 point mineur
+    résiduel trouvé — pointeur mort « détail §3.2 ci-dessus » dans
+    `03-modele-donnees.md:219`, devait être §3.2ter — corrigé en
+    micro-fix.
+  - **Testeur-global final : OK** — stack 6 services up, 235/235 pytest
+    backend, endpoints 200, frontend servi 200, logs propres. Seul point
+    KO relevé (`tsc -b` strict sur `DiagramPage.tsx`) confirmé
+    préexistant, hors scope de cette action (aucun fichier de code
+    touché).
+  - **Décision assumée** : 2 points plus larges de `README.md` (liste
+    types d'attribut détaillée ailleurs, pattern URL API) laissés hors
+    scope, dette documentaire plus large déjà notée hors scope à
+    l'action 12.
 
 ## Récapitulatif d'avancement
 
@@ -1661,4 +1865,6 @@
 | 11 | Outil d'ingestion avec binding | ⬜ à faire |
 | 12 | Réorganisation de backend/ en packages (auth, data, files, routes, tests) | ✅ fait |
 | 13 | IHM de configuration : types d'attribut manquants (file/image/csv/select/secret/datasource) | ✅ fait |
-| 14 | Layers sur les classes et filtre IHM/diagramme | ⬜ à faire |
+| 14 | Layers sur les classes et filtre IHM/diagramme | ✅ fait |
+| 15 | Restructuration IHM : menu, Sidebar par layer, filtres texte, combo layers Diagramme | ⬜ à faire |
+| 16 | [Dette documentaire] Synchronisation specifications/ avec actions 7-14 | ✅ fait |

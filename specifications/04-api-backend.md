@@ -22,11 +22,13 @@ Réponse `200` : `[{"id": int, "meta_class": str}, ...]` (triées par nom).
 
 **`GET /api/read/class`**
 Liste toutes les classes de toutes les meta-classes (à plat).
-Réponse `200` : `[{"meta_class": str, "class": str, "attributes": [...]}, ...]`.
-⚠️ Le champ `displayname` défini dans `definition.data` **n'est jamais
-renvoyé** par cet endpoint (le code ne le recopie pas dans l'objet JSON de
-sortie), alors que le frontend (`ClassInfo`, `types.ts`) s'attend à pouvoir
-le lire ici pour résoudre l'affichage des objets (voir §6.7).
+Réponse `200` : `[{"meta_class": str, "class": str, "displayname": str|None,
+"tenants": ..., "layers": ..., "icon": ..., "attributes": [...]}, ...]`.
+Le champ `displayname` défini dans `definition.data` **est bien renvoyé**
+par cet endpoint (`cls.get("displayname")` recopié dans l'objet JSON de
+sortie, `backend/routes/routes_read.py:39`), et le frontend (`ClassInfo`,
+`types.ts`) le lit effectivement ici pour résoudre l'affichage des objets
+(voir §6.7).
 
 **`GET /api/read/class/<int:class_id>`**
 Récupère une classe par un **index global** 1-based calculé en parcourant
@@ -34,13 +36,18 @@ toutes les classes de toutes les meta-classes (ordre : meta-classes triées
 par nom, puis ordre d'apparition dans le tableau `classes` de chaque
 définition) — ce n'est pas un identifiant stable en base, il change si une
 classe est ajoutée/supprimée avant elle dans cet ordre.
-Réponse `200` : `{"id": int, "meta_class": str, "class": str, "attributes": [...]}` (sans `displayname`, même limitation que ci-dessus).
+Réponse `200` : `{"id": int, "meta_class": str, "class": str, "displayname":
+str|None, "tenants": ..., "layers": ..., "icon": ..., "attributes": [...]}`
+(`displayname` inclus, même comportement que ci-dessus,
+`backend/routes/routes_read.py:82`).
 Réponse `404` si l'index dépasse le nombre total de classes (`"Classe non trouvée"`).
 
 **`GET /api/read/<string:meta_class>`**
 Récupère toutes les classes d'une meta-classe donnée (correspondance exacte
 et sensible à la casse sur la colonne `meta_class`).
-Réponse `200` : `{"meta_class": str, "classes": [{"class": str, "attributes": [...]}, ...]}` (sans `displayname`).
+Réponse `200` : `{"meta_class": str, "classes": [{"class": str, "displayname":
+str|None, "tenants": ..., "layers": ..., "icon": ..., "attributes": [...]},
+...]}` (`displayname` inclus, `backend/routes/routes_read.py:111`).
 Réponse `404` si la meta-classe n'existe pas (`"Meta-classe '<x>' non trouvée"`).
 ⚠️ **C'est dans le corps de cette fonction que se trouve l'erreur de syntaxe
 décrite en §0** — dans l'état actuel du dépôt, non seulement cette route est
@@ -225,19 +232,21 @@ modifier le code ni la config. Pour chaque fichier `*.json` **sauf
 
 ## 4.6 Fichiers (`file`/`image`/`csv`), logos et icônes de classe (ajout 2026-11-21, `plan-mark3.md` actions 3-4)
 
-Routes du Blueprint `backend/routes_files.py` (sauf mention contraire),
-consommant `backend/file_storage.py` (action 2) et
-`backend/file_validation.py`. Le contenu des attributs `file`/`image`/`csv`
+Routes du Blueprint `backend/routes/routes_files.py` (sauf mention
+contraire ; chemins packagés depuis `plan-mark3.md` action 12, voir §2bis
+de [02-architecture.md](02-architecture.md)), consommant
+`backend/files/file_storage.py` (action 2) et
+`backend/files/file_validation.py`. Le contenu des attributs `file`/`image`/`csv`
 ne transite jamais par le JSON générique de `POST /api/write/object`/
 `PUT /api/write/attribute/...` : ces deux routes rejettent explicitement
 (`400`) toute tentative d'écrire une valeur sur un attribut de ce type
-(`routes_write.py`), afin qu'un appelant ne puisse jamais injecter un
+(`routes/routes_write.py`), afin qu'un appelant ne puisse jamais injecter un
 pointeur arbitraire ne correspondant à aucun fichier réellement stocké.
 `POST /api/write/object` accepte en plus, depuis l'action 3 itération 2, un
 corps `multipart/form-data` (détection sur `request.content_type`) pour
 créer **atomiquement** un objet et un ou plusieurs de ses attributs
 fichier en une seule transaction (`_write_object_multipart`,
-`routes_write.py`) — réservé à la création (`id` interdit dans ce mode).
+`routes/routes_write.py`) — réservé à la création (`id` interdit dans ce mode).
 
 **Format de pointeur** stocké dans `attribute_value.value_string` (aucune
 nouvelle colonne) :
@@ -312,7 +321,7 @@ porteur (`"<classe> #<id>"`) — alimente le sélecteur frontend de
 réutilisation d'un logo existant (`NavigationPage.tsx`).
 
 **`GET /api/class_icon/<string:meta_class>/<string:cls>`** (Blueprint
-`routes_read.py`, génération dans `backend/class_icon.py`) — sert le SVG de
+`routes/routes_read.py`, génération dans `backend/files/class_icon.py`) — sert le SVG de
 secours généré localement (rond coloré + initiales, hash déterministe du
 nom de classe, mis en cache disque sous
 `<FILE_STORAGE_ROOT>/_class_icon_cache/`) pour une classe sans logo ni
@@ -325,7 +334,7 @@ avec les autres routes de lecture de schéma déjà non filtrées tenant
 (`GET /api/read/class`, `GET /api/read/class/<id>`,
 `GET /api/read/<meta_class>`).
 
-**`POST /api/admin/sweep_orphan_files`** (`backend/routes_admin.py`) —
+**`POST /api/admin/sweep_orphan_files`** (`backend/routes/routes_admin.py`) —
 purge les fichiers présents sur `FileStorage` mais jamais indexés par une
 ligne `attribute_value` (crash process entre écriture disque et commit).
 Réservé strictement à `global-admin` : contrôle fait dans le handler via
@@ -341,3 +350,99 @@ logo de tout objet qui le référence encore. Réponse `200` :
 documentée dans le code : une requête SQL par fichier scanné, sans commit
 intermédiaire — acceptable au volume actuel, à traiter avant un volume
 important (voir aussi §10.8 de [07-roadmap.md](07-roadmap.md)).
+
+## 4.7 Types `select`/`secret`/`datasource` (ajout 2026-11-23, `plan-mark3.md` actions 7-9)
+
+Les trois types ci-dessous transitent par le JSON classique de `POST
+/api/write/object` (coercition dans `_coerce_typed_value`,
+`backend/routes/routes_write.py`) — contrairement à `file`/`image`/`csv`
+(§4.6), aucune route binaire dédiée.
+
+**`select`** (action 7) — la valeur soumise doit appartenir au tableau
+`values` déclaré sur l'attribut (`model/schema.json`) : `_coerce_typed_value`
+vérifie l'appartenance, `abort(400)` avec message explicite sinon ; stockage
+scalaire ordinaire dans `value_string`, aucune route dédiée. Même garde
+rejouée côté `PUT /api/write/attribute/<cls>/<id>/<attribute>/<value>`
+(édition inline par URL) — ce type n'est **pas** bloqué sur cette route
+(contrairement à `file`/`image`/`csv`/`secret` ci-dessous), car la valeur
+reste une chaîne scalaire ordinaire sans risque d'injecter un pointeur
+arbitraire.
+
+**`secret`** (action 8, conception détaillée : §10.10 de
+[07-roadmap.md](07-roadmap.md)) :
+- **Écriture** — `_coerce_typed_value` chiffre la valeur reçue (Fernet,
+  `backend/secret_crypto.py`, clé lue dynamiquement depuis
+  `SECRET_ENCRYPTION_KEY`) avant stockage dans `value_string` ; `abort(500)`
+  si la clé est absente/invalide au moment de l'appel (jamais de repli en
+  clair). Le token Fernet n'étant pas déterministe, **resoumettre la même
+  valeur en clair n'est jamais dédupliqué** par l'historisation — une
+  nouvelle ligne `attribute_value` est systématiquement créée.
+- **Garde-fou d'écriture par URL** — `PUT /api/write/attribute/<cls>/<id>/
+  <attribute>/<value>` rejette explicitement (`abort(400)`) toute tentative
+  d'écrire un attribut `secret` via ce chemin (même garde que `file`/
+  `image`/`csv`, §4.6) : la valeur en clair transiterait sinon dans l'URL,
+  donc potentiellement dans des logs d'accès proxy/APM — pas un défaut de
+  chiffrement en base, un risque de fuite ailleurs.
+- **Masquage en lecture générique** — `GET /api/read/object/<id>` (et donc
+  tout code qui le consomme) ne renvoie **jamais** le texte chiffré ni le
+  texte en clair pour un attribut `secret` : chaque valeur active est
+  remplacée par un placeholder fixe (`"••••••••"`), une par valeur
+  présente (`_build_object_payload`, `backend/routes/routes_read.py`).
+  Aucun flag `?reveal=true` sur cette route.
+- **`GET /api/read/object/<int:object_id>/secret/<string:attribute>`**
+  (`backend/routes/routes_read.py`) — seule route qui déchiffre et renvoie
+  la valeur en clair d'un attribut `secret`. RBAC strict et **différent**
+  de toutes les autres routes de lecture : réservée exclusivement à
+  `ctx.is_global_admin` (`403` même pour un tenant-admin dans son propre
+  périmètre) ; en plus, cette route est explicitement listée dans
+  `_PROTECTED_REGEXES` (`backend/auth/auth.py`) pour exiger un Bearer token
+  valide même si c'est un `GET` — à la différence des autres `GET
+  /api/read/*`, ouvertes sans authentification obligatoire (`401` sans
+  token/token invalide, `403` si authentifié non global-admin). `404` si
+  objet inexistant/supprimé, attribut non déclaré ou pas de type `secret`
+  sur la classe, ou aucune valeur active — même sémantique « ne pas
+  distinguer les cas » que les routes de fichiers. `500` (jamais un succès
+  trompeur) si `SECRET_ENCRYPTION_KEY` absente/invalide ou si le jeton
+  chiffré est corrompu/chiffré avec une autre clé.
+- **Historisation** (§10.4) : une valeur `secret` historisée reste chiffrée
+  dans les versions passées aussi, aucun traitement différent du reste du
+  modèle.
+- Limite connue acceptée : aucune voie API pour fermer explicitement un
+  attribut `secret` existant sans le remplacer — l'omettre dans
+  `POST /api/write/object` ne le ferme jamais par garde-fou volontaire
+  (contrairement aux autres types scalaires, où un attribut omis ferme la
+  valeur active).
+
+**`datasource`** (action 9, conception détaillée : §10.11 de
+[07-roadmap.md](07-roadmap.md)) :
+- **Écriture** — `_coerce_typed_value` attend un identifiant d'objet entier
+  (ou une chaîne numérique), `abort(400)` sinon (y compris un flottant non
+  entier, ex. `3.5`). Stocké dans `value_string` (jamais la colonne
+  `joint_id`) — en lecture, la valeur ressort donc comme une chaîne brute
+  (l'identifiant), pas comme `{"joint_id": ...}`.
+- **Validation de cible** — `_apply_attribute_diff` (`backend/routes/
+  routes_write.py`) vérifie, pour chaque valeur insérée : l'objet cible
+  existe et n'est pas supprimé logiquement (`abort(400)` sinon), sa classe
+  appartient à `attr_def["classes"]` (`abort(400)` sinon), et — pour un
+  acteur tenant-admin — l'objet cible est dans son périmètre tenant
+  (`abort(403)` sinon). Rejoué à l'identique sur `PUT /api/write/attribute/
+  .../` (édition inline par URL), qui n'est **pas** bloqué pour ce type
+  (contrairement à `secret`/`file`/`image`/`csv`) : la valeur reste un
+  entier scalaire ordinaire, pas un pointeur fichier ni un secret en clair.
+  ⚠️ Ce niveau de validation (classe + tenant de la cible) est **plus
+  strict** que celui appliqué aujourd'hui à une jointure `joint-1-1`/
+  `joint-1-n` ordinaire, qui ne vérifie que l'existence/non-suppression de
+  la cible — incohérence assumée entre les deux mécanismes, non corrigée
+  côté jointures par cette action.
+- **Suppression en cascade** — `delete_object` (`DELETE /api/delete/
+  object/<id>`) ferme désormais aussi toute valeur `attribute_value` de
+  type `datasource` qui pointait (`value_string = str(id)`) vers l'objet
+  supprimé, filtrée tenant et revalidée contre la définition réelle de
+  l'attribut source (ne ferme que si le type est bien `datasource` et que
+  la classe source figure dans `attr_def["classes"]`) — même esprit que
+  `joint_id` → `ON DELETE SET NULL`, mais géré applicativement puisque
+  `value_string` n'est pas une clé étrangère SQL.
+- Pas de câblage d'exécution de requête (aucune route n'interroge
+  Prometheus ou une autre source réelle) : uniquement le type, la
+  référence, et la meta-classe de démo `model/datasource.json` (§3.2ter de
+  [03-modele-donnees.md](03-modele-donnees.md)).

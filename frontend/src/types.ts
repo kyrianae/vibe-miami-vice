@@ -25,6 +25,11 @@ export interface ClassDefinition {
   // cette classe (noms de groupes Keycloak, sans '/'). Absent/vide =
   // utilisable dans tous les tenants.
   tenants?: string[];
+  // Calques thématiques (plan-mark3.md action 14) : tag texte libre (comme
+  // tenants), pas un mécanisme RBAC - sert uniquement au filtre d'affichage
+  // IHM/diagramme (selectedLayers). Absent/vide = classe toujours visible
+  // quel que soit le filtre layer actif.
+  layers?: string[];
   // Icône par défaut de la classe (plan-mark3.md action 4, point 1) :
   // identifiant dans le jeu fixe frontend/src/classIcons.tsx, jamais un
   // upload libre. Absent = pas d'icône manuelle choisie (repli sur l'icône
@@ -48,6 +53,8 @@ export interface ClassInfo {
   class: string;
   displayname?: string;
   tenants?: string[];
+  // Calques thématiques (plan-mark3.md action 14), cf. ClassDefinition.layers.
+  layers?: string[];
   icon?: string;
   attributes: AttributeDefinition[];
 }
