@@ -1767,8 +1767,45 @@
   `frontend/src/App.tsx`, `frontend/src/components/Sidebar.tsx`,
   `frontend/src/pages/NavigationPage.tsx`,
   `frontend/src/pages/DiagramPage.tsx`.
-- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
-  implémentée.
+- **Statut** : ✅ fait (2026-11-23, `worker`/`testeur`/`pessimiste`/
+  `candide`/`testeur-global`). Implémentation itération 1 : les 5 points
+  du correctif appliqués — `Navbar.tsx` (Configuration repositionné en
+  premier bouton, masquage tenant-readonly préservé), `App.tsx` (Sidebar
+  + bouton toggle retirés du DOM sur page dashboard, condition
+  `page !== 'dashboard'`), `Sidebar.tsx` (réécrit, +219 lignes : filtre
+  texte unique au-dessus des 2 arbres meta_class+layer, 2 états de repli
+  indépendants `expandedMeta`/`expandedLayerGroups` repliés par défaut
+  et distincts de la sélection active, nouvel arbre "par layer" avec
+  doublons de classe entre groupes layer, classes sans layer absentes
+  de cette section, combo `<select multiple>` remplaçant les chips
+  uniquement sur page diagramme et narrowant en plus les 2 arbres aux
+  layers sélectionnés — classe sans layer restant visible dans ce
+  narrow), `NavigationPage.tsx` (filtre texte par groupe/card au-dessus
+  du tableau, visible si groupe déplié, matche texte plat de ligne
+  incluant l'ID et les valeurs formatées via `formatValue`/
+  `parseFilePointer`, sans toucher aux données chargées),
+  `specifications/05-frontend.md` §6.1/6.2/6.11/6.12 mis à jour +
+  nouvelle §6.13. Itération 2 : fix ciblé suite rapport pessimiste —
+  `NavigationPage.tsx` ligne 332, ajout `setGroupFilters({})` dans le
+  useEffect de reset sur changement de sélection sidebar (lignes
+  309-333), pour éviter qu'un filtre texte résiduel masque silencieusement
+  des objets en revenant sur une classe déjà visitée. Limite connue
+  assumée (pas une dérive, autorisée explicitement par le plan) : le
+  `<select multiple>` natif sur la page Diagramme nécessite Ctrl+clic
+  pour sélection multiple, contrairement aux chips ailleurs — ergonomie
+  légèrement différente mais le plan autorisait explicitement ce choix
+  d'implémentation ("select multiple ou composant dédié"). Résultats
+  validation : testeur 13/13 OK (navbar, Sidebar absente dashboard,
+  filtre texte 2 arbres, repli indépendant de la sélection, doublons
+  multi-layer, exclusivité select-multiple diagramme / chips ailleurs,
+  narrow layers, filtre NavigationPage non mutant, specs cohérentes,
+  tsc/build/HMR/curl OK) ; pessimiste sans bloquant (1 point mineur réel
+  corrigé en itération 2, 1 limite connue acceptée) ; candide convergent,
+  juge l'implémentation réelle supérieure à sa propre esquisse sur la
+  réutilisation de `formatValue`/`parseFilePointer` dans le filtre ;
+  testeur-global OK (build frontend+backend, tsc 0 nouvelle erreur sur
+  les 3 préexistantes DiagramPage.tsx, HMR propre, 4 pages SPA
+  accessibles, API OK, layers action 14 non régressés).
 
 ## 16. [Dette documentaire] Synchronisation specifications/ avec actions 7-14
 
@@ -1866,5 +1903,5 @@
 | 12 | Réorganisation de backend/ en packages (auth, data, files, routes, tests) | ✅ fait |
 | 13 | IHM de configuration : types d'attribut manquants (file/image/csv/select/secret/datasource) | ✅ fait |
 | 14 | Layers sur les classes et filtre IHM/diagramme | ✅ fait |
-| 15 | Restructuration IHM : menu, Sidebar par layer, filtres texte, combo layers Diagramme | ⬜ à faire |
+| 15 | Restructuration IHM : menu, Sidebar par layer, filtres texte, combo layers Diagramme | ✅ fait |
 | 16 | [Dette documentaire] Synchronisation specifications/ avec actions 7-14 | ✅ fait |

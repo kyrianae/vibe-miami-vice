@@ -329,6 +329,7 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
     setExpandedGroups(new Set());
     setInlineEdit(null);
     setJointEdit(null);
+    setGroupFilters({});
   }, [selectedMetaClass, selectedClass, classes]);
 
   const availableClasses = selectedMetaClass
