@@ -780,7 +780,7 @@ def test_init_loads_real_model_files_with_schema_key(client, monkeypatch, db_and
     resp = client.post("/api/init")
     assert resp.status_code == 200, resp.get_json()
     body = resp.get_json()
-    assert "personne" in body["loaded"]
+    assert "organisation" in body["loaded"]
     assert "element_avec_ip" in body["loaded"]
     assert body["skipped"] == []
 

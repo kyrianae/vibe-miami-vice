@@ -2,7 +2,7 @@
     "$schema": "schema.json",
     "meta_class": "planning",
     "depends_on": [
-        "personne"
+        "organisation"
     ],
     "classes": [
         {
@@ -73,7 +73,8 @@
                     "name": "assigne_a",
                     "type": "joint-1-1",
                     "classes": [
-                        "personne_physique"
+                        "personne_physique",
+                        "groupe"
                     ]
                 },
                 {

@@ -1,0 +1,88 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "localisation",
+    "classes": [
+        {
+            "class": "batiment",
+            "displayname": "{{nom_voie}}",
+            "layers": ["infra"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "numero",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "type_voie",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "nom_voie",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "pays",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "code_postal",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "ville",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "suffixe_ville",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "etage",
+            "displayname": "{{nom}}",
+            "layers": ["infra"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "batiment",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "batiment"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "salle",
+            "displayname": "{{nom}}",
+            "layers": ["infra"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "etage",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "etage"
+                    ]
+                }
+            ]
+        }
+    ]
+}

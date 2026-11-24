@@ -11,7 +11,7 @@ from flask import abort, g
 # l'authentification) : ces rôles/groupes Keycloak (global-admin,
 # tenant-admin, tenant-readonly, tenants) ne servent qu'à l'autorisation
 # d'accès à cette API. Ils n'ont AUCUN rapport avec les classes métier
-# "role"/"groupe" du modèle applicatif (model/personnes.json), qui sont des
+# "role"/"groupe" du modèle applicatif (model/organisation.json), qui sont des
 # objets métier ordinaires éditables via /api/write/object.
 # ---------------------
 

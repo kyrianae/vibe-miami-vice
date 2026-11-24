@@ -2,7 +2,9 @@
     "$schema": "schema.json",
     "meta_class": "cmdb",
     "depends_on": [
-        "personne"
+        "organisation",
+        "cluster",
+        "localisation"
     ],
     "classes": [
         {
@@ -20,6 +22,31 @@
                     "name": "localisation",
                     "type": "string",
                     "autosuggest": true
+                }
+            ]
+        },
+        {
+            "class": "baie_serveur",
+            "displayname": "{{nom}}",
+            "layers": ["infra", "physique"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "datacenter",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "datacenter"
+                    ]
+                },
+                {
+                    "domain": "physique",
+                    "name": "position_rack",
+                    "type": "string"
                 }
             ]
         },
@@ -77,6 +104,62 @@
                     "domain": "logique",
                     "name": "actif",
                     "type": "boolean"
+                },
+                {
+                    "domain": "lien",
+                    "name": "hyperviseur",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "hyperviseur"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "os",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "os"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "os",
+            "displayname": "{{nom}}",
+            "layers": ["infra"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string",
+                    "autosuggest": true
+                },
+                {
+                    "domain": "logique",
+                    "name": "type",
+                    "type": "select",
+                    "values": ["linux", "windows"]
+                },
+                {
+                    "domain": "logique",
+                    "name": "architecture",
+                    "type": "select",
+                    "values": ["32", "64", "arm"]
+                },
+                {
+                    "domain": "logique",
+                    "name": "version",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "code_version",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "active",
+                    "type": "boolean"
                 }
             ]
         },
@@ -133,6 +216,227 @@
                     "type": "joint-1-1",
                     "classes": [
                         "base_de_donnees"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "modules",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "module"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "module",
+            "displayname": "{{nom}}",
+            "layers": ["applicatif"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "application",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "application"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "container",
+            "displayname": "{{nom}}",
+            "layers": ["applicatif", "infra"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "image",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "namespace_kubernetes",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "namespace_kubernetes"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "namespace_kubernetes",
+            "displayname": "{{nom}}",
+            "layers": ["applicatif", "infra"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "kube",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "kube"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "interface",
+            "displayname": "{{nom}}",
+            "layers": ["applicatif", "fonctionnel"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "type",
+                    "type": "select",
+                    "values": ["REST", "SOAP", "file", "queue", "db"]
+                },
+                {
+                    "domain": "lien",
+                    "name": "application",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "application"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "flux_donnee",
+            "displayname": "{{nom}}",
+            "layers": ["fonctionnel", "metier"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "type_donnee",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "interface_source",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "interface"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "interface_cible",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "interface"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "application_versionnee",
+            "displayname": "{{version}}",
+            "layers": ["applicatif"],
+            "attributes": [
+                {
+                    "domain": "lien",
+                    "name": "application",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "application"
+                    ]
+                },
+                {
+                    "domain": "logique",
+                    "name": "version",
+                    "type": "string",
+                    "autosuggest": true
+                },
+                {
+                    "domain": "lien",
+                    "name": "modules_versionnes",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "module_versionne"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "module_versionne",
+            "displayname": "{{version}}",
+            "layers": ["applicatif"],
+            "attributes": [
+                {
+                    "domain": "lien",
+                    "name": "module",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "module"
+                    ]
+                },
+                {
+                    "domain": "logique",
+                    "name": "version",
+                    "type": "string",
+                    "autosuggest": true
+                }
+            ]
+        },
+        {
+            "class": "materiel",
+            "displayname": "{{nom}}",
+            "layers": ["infra", "physique"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "type",
+                    "type": "select",
+                    "values": ["poste", "imprimante", "peripherique"]
+                },
+                {
+                    "domain": "details",
+                    "name": "numero_serie",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "personne_affectee",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "personne_physique"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "salle",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "salle"
                     ]
                 }
             ]

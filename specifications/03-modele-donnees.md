@@ -170,10 +170,14 @@ extensions de `schema.json`) :
   [05-frontend.md](05-frontend.md).
 
 ⚠️ Note : les fichiers
-`model/personnes.json` et `model/reseau.json` fournis contiennent une clé
+`model/organisation.json` et `model/reseau.json` fournis contiennent une clé
 `"$schema": "schema.json"` au niveau racine, qui n'est pas déclarée dans
 `model/schema.json` — si la validation était un jour activée, ces fichiers
 d'exemple échoueraient eux-mêmes à cause de `additionalProperties: false`.
+En pratique cette clé est ignorée au runtime (voir `$schema` dans
+`model/schema.json`, purement informatif) et la validation Draft7 de
+l'action 17 (`backend/tests/test_model_files_schema_validation_action_17.py`)
+confirme que tous les `model/*.json` du dépôt, celui-ci inclus, passent.
 
 ## 3.2quater Extensions Mark 3 (suite) : type `boolean` (ajout 2026-11-23, action 19)
 
@@ -229,14 +233,19 @@ attributs existants, `datacenter.localisation` (`model/itil_cmdb.json`) et
 
 ## 3.3 Fichiers de modèle fournis
 
-**`model/personnes.json`** — meta-classe `personne` :
+**`model/organisation.json`** — meta-classe `organisation` (action 17,
+remplace les anciens `model/organigramme.json`/`model/personnes.json`,
+supprimés) :
 - `personne_physique` : attributs `nom`, `prenom` (domaine `details`, string). `displayname`: `"{{prenom}} {{nom}}"`.
 - `role` : `nom` (string) + `membres` (`joint-1-1` → `personne_physique`).
 - `groupe` : `nom` (string) + `membres` (`joint-1-n` → `personne_physique` ou `groupe`, donc récursif).
+- `service_organisation`, `poste` : organigramme (hiérarchie service/poste, repris à l'identique de l'ancien `organigramme.json`).
+- `societe` (+`holding` auto-référence), `departement`, `contact` (`type` tel/mail, `cible` multi-classe) : nouvelles classes action 17.
 
 **`model/reseau.json`** — meta-classe `element_avec_ip` :
-- `addresse_ip` : `adresse_ip` (string, `constraint` = regex IPv4, `sql_constraint: "UNIQUE VALUE"` — non appliquée par le code, voir §8).
+- `addresse_ip` : `adresse_ip` (string, `constraint` = regex IPv4, `sql_constraint: "UNIQUE VALUE"` — non appliquée par le code, voir §8), `vlan` (`joint-1-1` → `vlan`, action 17).
 - `vlan` : `nom` (string), `definition` (string, regex CIDR), `membres` (`joint-1-n` → `addresse_ip`).
+- `zone_reseau`, `equipement_reseau`, `entree_dns` : nouvelles classes réseau action 17 (détail complet : §10.14 de [07-roadmap.md](07-roadmap.md)).
 
 ## 3.4 Tables PostgreSQL (`sql/init.sql`)
 

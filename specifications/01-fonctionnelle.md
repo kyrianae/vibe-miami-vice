@@ -11,5 +11,6 @@ PostgreSQL, puis de créer/lire/modifier des instances (« objets ») conformes
 Le modèle n'est pas figé dans des tables SQL métier : il est entièrement
 dynamique — toute entité (« classe ») et ses attributs sont décrits dans des
 documents JSON stockés en base, interprétés à la volée par le backend et le
-frontend. Deux exemples de domaines sont fournis (`model/personnes.json` :
-personnes, rôles, groupes ; `model/reseau.json` : adresses IP, VLAN).
+frontend. Deux exemples de domaines sont fournis (`model/organisation.json` :
+personnes, rôles, groupes, société, organigramme ; `model/reseau.json` :
+adresses IP, VLAN, équipements réseau).

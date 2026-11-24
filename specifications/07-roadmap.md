@@ -677,7 +677,7 @@ Conception à esquisser :
 
 Détail complet et suivi : `plan-mark3.md` action 11.
 
-## 10.14 Extension du modèle CMDB embarqué (conçu, pas implémenté — `plan-mark3.md` action 17)
+## 10.14 Extension du modèle CMDB embarqué (implémenté — `plan-mark3.md` action 17)
 
 > Demande utilisateur (2026-11-23) : enrichir le modèle `model/*.json`
 > embarqué (compute, applicatif, réseau, organisation, localisation,
@@ -852,6 +852,63 @@ parmi la taxonomie retenue : `applicatif` / `infra` / `organisationnel`
   assignable à une personne **ou** une équipe.
 
 Détail complet et suivi : `plan-mark3.md` action 17.
+
+### Mise à jour (2026-11-24, fait)
+
+Implémenté conformément à la conception ci-dessus, points ouverts tranchés
+comme suit : `equipement_reseau` = classe unique + attribut `type` (pas 3
+classes séparées), `materiel` = classe générique + attribut `type` (pas une
+classe par type de matériel), `besoin.emerge_par`/`couvert_par` ciblent
+exactement `["serveur", "application", "cluster_applicatif", "kube",
+"hyperviseur", "materiel", "interface", "module"]` (recommandation de la
+conception confirmée telle quelle). Le changement `datacenter`/`baie_serveur`
+→ `salle` évoqué en fin de section « Localisation » n'a **pas** été fait :
+`datacenter.localisation` reste un `string` libre avec son `autosuggest`
+existant intact ; seul `baie_serveur` (nouveau) pointe `datacenter`, pas
+`salle`.
+
+Meta-classes des 4 nouveaux fichiers : `model/cluster.json` → `cluster`,
+`model/organisation.json` → `organisation` (remplace `organigramme.json` +
+`personnes.json`, supprimés), `model/localisation.json` → `localisation`,
+`model/besoin.json` → `besoin`.
+
+Liste finale `ticket.ci_concerne.classes` (`model/ticketing.json`) :
+`["serveur", "application", "service_metier", "baie_serveur", "os",
+"module", "container", "namespace_kubernetes", "interface", "flux_donnee",
+"application_versionnee", "module_versionne", "materiel"]` — les 3 classes
+d'origine + les classes CMDB/hardware de `itil_cmdb.json` ajoutées dans
+cette même section (pas les classes de `cluster.json`/`reseau.json`, hors
+scope de cette retouche).
+
+Dette assumée, non traitée ici :
+- Chevauchement `application_versionnee` (`itil_cmdb.json`) et
+  `version_logicielle` (`ansible_inventory.json`) : les deux coexistent
+  sans fusion, rôle encore proche. À clarifier dans un futur cycle.
+- `/api/init` (`backend/routes/routes_init.py`) ne supprime jamais une ligne
+  `definition` dont le fichier modèle source a disparu — une base déjà
+  initialisée avec les anciens `organigramme.json`/`personnes.json` et
+  réinitialisée avec les nouveaux fichiers sans ménage manuel garderait en
+  base les anciennes lignes `meta_class = 'organigramme'`/`'personne'` en
+  doublon des classes désormais dans `organisation`. C'est exactement ce qui
+  s'est produit sur la DB dev de ce projet : `pessimiste` a démontré un 409
+  bloquant (`_check_class_name_unique`, action 22) sur `POST
+  /api/write/class` (meta_class `organisation`, classe `personne_physique`)
+  tant que les lignes `definition.meta_class IN ('personne', 'organigramme')`
+  restaient en base. **Nettoyage réellement exécuté par l'utilisateur
+  (2026-11-24)**, pas juste recommandé : `DELETE FROM definition WHERE
+  meta_class IN ('personne', 'organigramme');` puis `UPDATE object SET
+  meta_class = 'organisation' WHERE id = 144 AND meta_class = 'personne';`
+  (seul objet existant portant l'ancienne meta-classe, conservé
+  soft-deleted tel quel). Revalidé après coup : le même `POST
+  /api/write/class` renvoie désormais 200, plus de 409. Pas de mécanisme de
+  suppression ni de renommage de meta-classe existant dans ce projet, et
+  aucun n'est construit ici (hors scope, décision assumée) — **toute autre
+  instance** qui migrerait vers ce modèle (anciens `organigramme.json`/
+  `personnes.json` encore chargés) devra reproduire la même migration
+  manuelle au cas par cas : reclasser `object.meta_class` pour les objets
+  concernés, purger les lignes `definition` obsolètes, et réconcilier
+  d'éventuels tags `tenants` divergents entre l'ancienne et la nouvelle
+  définition de classe.
 
 ## 10.15 Layer dynamique piloté par un attribut `select` (implémenté — `plan-mark3.md` action 18)
 

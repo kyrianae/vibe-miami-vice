@@ -2,7 +2,7 @@
 //
 // ATTENTION : les rôles/tenants décodés ici viennent du token Keycloak
 // (autorisation d'accès à l'API) — à ne jamais confondre avec les classes
-// métier "role"/"groupe" du modèle applicatif (model/personnes.json), qui
+// métier "role"/"groupe" du modèle applicatif (model/organisation.json), qui
 // sont des objets métier ordinaires sans rapport avec les droits d'accès.
 //
 // Pas de dépendance ajoutée (ex. jwt-decode) : un simple décodage base64url

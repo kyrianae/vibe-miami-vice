@@ -1,0 +1,57 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "besoin",
+    "depends_on": [
+        "cmdb",
+        "cluster"
+    ],
+    "classes": [
+        {
+            "class": "besoin",
+            "displayname": "{{nom}}",
+            "layers": ["fonctionnel", "metier"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "description",
+                    "type": "string"
+                },
+                {
+                    "domain": "requirement",
+                    "name": "emerge_par",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "serveur",
+                        "application",
+                        "cluster_applicatif",
+                        "kube",
+                        "hyperviseur",
+                        "materiel",
+                        "interface",
+                        "module"
+                    ]
+                },
+                {
+                    "domain": "requirement",
+                    "name": "couvert_par",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "serveur",
+                        "application",
+                        "cluster_applicatif",
+                        "kube",
+                        "hyperviseur",
+                        "materiel",
+                        "interface",
+                        "module"
+                    ]
+                }
+            ]
+        }
+    ]
+}

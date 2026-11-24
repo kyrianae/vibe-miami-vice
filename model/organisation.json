@@ -1,0 +1,197 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "organisation",
+    "classes": [
+        {
+            "class": "service_organisation",
+            "displayname": "{{nom}}",
+            "layers": ["organisationnel"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "responsable",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "personne_physique"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "service_parent",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "service_organisation"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "poste",
+            "displayname": "{{intitule}}",
+            "layers": ["organisationnel"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "intitule",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "titulaire",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "personne_physique"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "poste_parent",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "poste"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "service",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "service_organisation"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "personne_physique",
+            "displayname": "{{prenom}} {{nom}}",
+            "layers": ["organisationnel"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "prenom",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "role",
+            "displayname": "{{nom}}",
+            "layers": ["organisationnel"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "membres",
+                    "type": "joint-1-1",
+                    "classes":                    [
+                        "personne_physique"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "groupe",
+            "displayname": "{{nom}}",
+            "layers": ["organisationnel"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "membres",
+                    "type": "joint-1-n",
+                    "classes":                    [
+                        "personne_physique",
+                        "groupe"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "societe",
+            "displayname": "{{nom}}",
+            "layers": ["organisationnel", "metier"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "holding",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "societe"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "departement",
+            "displayname": "{{nom}}",
+            "layers": ["organisationnel"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "societe",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "societe"
+                    ]
+                }
+            ]
+        },
+        {
+            "class": "contact",
+            "displayname": "{{valeur}}",
+            "layers": ["organisationnel"],
+            "attributes": [
+                {
+                    "domain": "logique",
+                    "name": "type",
+                    "type": "select",
+                    "values": ["tel", "mail"]
+                },
+                {
+                    "domain": "details",
+                    "name": "valeur",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "cible",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "personne_physique",
+                        "societe",
+                        "service_organisation",
+                        "departement"
+                    ]
+                }
+            ]
+        }
+    ]
+}

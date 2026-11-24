@@ -1,0 +1,95 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "cluster",
+    "depends_on": [
+        "cmdb",
+        "element_avec_ip"
+    ],
+    "classes": [
+        {
+            "class": "kube",
+            "displayname": "{{nom}}",
+            "layers": ["infra"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "version",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "namespace_defaut",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "hyperviseur",
+            "displayname": "{{nom}}",
+            "layers": ["infra"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "type",
+                    "type": "string"
+                },
+                {
+                    "domain": "logique",
+                    "name": "capacite_cpu",
+                    "type": "integer"
+                },
+                {
+                    "domain": "logique",
+                    "name": "capacite_ram",
+                    "type": "integer"
+                }
+            ]
+        },
+        {
+            "class": "cluster_applicatif",
+            "displayname": "{{nom}}",
+            "layers": ["applicatif", "infra"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "lien",
+                    "name": "vip",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "addresse_ip"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "application",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "application"
+                    ]
+                },
+                {
+                    "domain": "lien",
+                    "name": "serveurs",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "serveur"
+                    ]
+                }
+            ]
+        }
+    ]
+}

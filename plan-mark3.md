@@ -1936,8 +1936,45 @@
   `model/localisation.json` (remplace `model/organigramme.json` et
   `model/personnes.json`, à supprimer si la fusion est confirmée à
   l'implémentation).
-- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
-  implémentée.
+- **Statut** : ✅ fait (2026-11-24, `worker`/`testeur`/`pessimiste`), en 2
+  itérations.
+  - **Itération 1** (`worker`) : conception ci-dessus implémentée
+    conformément à `specifications/07-roadmap.md` §10.14 (paragraphe « Mise
+    à jour (2026-11-24, fait) ») — 4 nouveaux fichiers modèle
+    (`cluster.json`, `organisation.json`, `localisation.json`,
+    `besoin.json`), extensions `itil_cmdb.json`/`reseau.json`/
+    `ticketing.json`, `organigramme.json`/`personnes.json` supprimés.
+  - **Itération 2** (correction, suite revue croisée `pessimiste`) : bug
+    bloquant trouvé — `POST /api/write/class` (meta_class `organisation`,
+    classe `personne_physique`) renvoyait 409 (`_check_class_name_unique`,
+    action 22) tant que les anciennes lignes `definition.meta_class IN
+    ('personne', 'organigramme')` restaient en base après le remplacement
+    de fichiers modèle (`/api/init` ne purge jamais une meta-classe dont le
+    fichier source a disparu). Nettoyage **réellement exécuté par
+    l'utilisateur** sur la DB dev de ce projet : `DELETE FROM definition
+    WHERE meta_class IN ('personne', 'organigramme');` + `UPDATE object SET
+    meta_class = 'organisation' WHERE id = 144 AND meta_class = 'personne'`
+    (seul objet concerné, conservé soft-deleted tel quel). Revalidé : le
+    même `POST /api/write/class` (nom/prenom + un attribut de test ajouté,
+    laissé en base) renvoie désormais 200, plus de 409. Aucun mécanisme
+    générique de renommage/suppression de meta-classe construit dans ce
+    projet pour autant (hors scope, décision assumée) — toute autre
+    instance migrant vers ce modèle devra reproduire la même migration
+    manuelle au cas par cas.
+  - **Points mineurs acceptés sans correction** : `hyperviseur.type`
+    (`model/cluster.json`) laissé en `string` libre plutôt qu'un `select` à
+    enum fermé (contrairement à `equipement_reseau.type`/`materiel.type`) —
+    décision assumée, pas de valeurs fermées identifiées pour ce champ ;
+    `batiment.displayname` (`model/localisation.json`) minimal
+    `{{nom_voie}}`, ne désambiguïse pas deux bâtiments homonymes situés
+    dans des villes différentes — cosmétique, non bloquant.
+  - **Dette explicitement non résolue** : chevauchement
+    `application_versionnee` (`model/itil_cmdb.json`) vs
+    `version_logicielle` (`model/ansible_inventory.json`) — coexistence
+    assumée, pas de fusion.
+  - Tests : `backend/tests/` **299/299 passés** après le nettoyage DB
+    (`SCHEMA_PATH=.../model/schema.json .venv/bin/pytest backend/tests/
+    -q`).
 
 ## 18. [Nouvelle fonctionnalité] Layer dynamique piloté par un attribut select
 
@@ -2611,7 +2648,7 @@
 | 14 | Layers sur les classes et filtre IHM/diagramme | ✅ fait |
 | 15 | Restructuration IHM : menu, Sidebar par layer, filtres texte, combo layers Diagramme | ✅ fait |
 | 16 | [Dette documentaire] Synchronisation specifications/ avec actions 7-14 | ✅ fait |
-| 17 | Extension du modèle CMDB embarqué | ⬜ à faire |
+| 17 | Extension du modèle CMDB embarqué | ✅ fait |
 | 18 | Layer dynamique piloté par un attribut select | ✅ fait |
 | 19 | Type d'attribut boolean | ✅ fait (constat rétroactif 2026-11-24) |
 | 20 | Autosuggest : suggestions de valeurs apprises sur un attribut texte | ✅ fait |

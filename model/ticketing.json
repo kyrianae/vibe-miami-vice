@@ -2,7 +2,7 @@
     "$schema": "schema.json",
     "meta_class": "ticketing",
     "depends_on": [
-        "personne",
+        "organisation",
         "cmdb"
     ],
     "classes": [
@@ -55,7 +55,17 @@
                     "classes": [
                         "serveur",
                         "application",
-                        "service_metier"
+                        "service_metier",
+                        "baie_serveur",
+                        "os",
+                        "module",
+                        "container",
+                        "namespace_kubernetes",
+                        "interface",
+                        "flux_donnee",
+                        "application_versionnee",
+                        "module_versionne",
+                        "materiel"
                     ]
                 }
             ]

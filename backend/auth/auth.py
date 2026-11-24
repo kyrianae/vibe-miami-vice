@@ -13,7 +13,7 @@ from flask import request, abort, g
 # vérifiés ici ne servent qu'à l'authentification/autorisation d'accès à
 # l'API (qui a le droit d'écrire). Ils ne doivent JAMAIS être confondus
 # avec les classes métier "role"/"groupe" du modèle applicatif
-# (model/personnes.json), qui sont des objets métier ordinaires, éditables
+# (model/organisation.json), qui sont des objets métier ordinaires, éditables
 # librement via l'UI générique (POST /api/write/object) et n'ont aucun
 # rapport avec les droits d'accès à cette API.
 
