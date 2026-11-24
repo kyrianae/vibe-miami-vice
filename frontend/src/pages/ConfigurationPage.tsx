@@ -396,6 +396,41 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
       }
     }
 
+    // Unicité du nom d'attribut au sein d'une même classe (plan-mark3.md
+    // action 21bis, specifications/07-roadmap.md §10.19bis) : un nom déclaré
+    // deux fois (ex. une fois `secret`, une fois non-secret) laissait
+    // auparavant le backend chiffrer/masquer de façon incohérente selon la
+    // déclaration résolue en premier - bloqué ici au même niveau que les
+    // validations ci-dessus. Garde-fou UX - le contrôle réel (contournement
+    // direct de l'API) est fait côté backend, voir
+    // _check_attribute_names_unique dans routes_write.py.
+    for (const c of cleanClasses) {
+      const seenAttrNames = new Set<string>();
+      for (const a of c.attributes) {
+        if (seenAttrNames.has(a.name)) {
+          addToast('error', `Attribut "${a.name}" déclaré plusieurs fois dans la classe "${c.class}"`);
+          return;
+        }
+        seenAttrNames.add(a.name);
+      }
+    }
+
+    // Unicité du nom de classe DANS ce même formulaire (plan-mark3.md action
+    // 21bis) : deux classes de même nom soumises dans un seul payload
+    // write_metaclass ne doivent jamais être acceptées (une occurrence
+    // secrète, l'autre non, par ex.) - distinct du contrôle ci-dessous
+    // (otherClassNames, action 22) qui ne compare qu'aux AUTRES meta-classes
+    // déjà en base. Voir _check_no_duplicate_class_names_in_payload côté
+    // backend.
+    const seenClassNamesInPayload = new Set<string>();
+    for (const c of cleanClasses) {
+      if (seenClassNamesInPayload.has(c.class)) {
+        addToast('error', `La classe "${c.class}" est déclarée plusieurs fois dans ce formulaire`);
+        return;
+      }
+      seenClassNamesInPayload.add(c.class);
+    }
+
     // Unicité du nom de classe (plan-mark3.md action 22, specifications/
     // 07-roadmap.md §10.19) : une classe de cleanClasses ne doit pas déjà
     // exister dans une AUTRE meta-classe que celle en cours d'édition. Set

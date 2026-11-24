@@ -84,7 +84,7 @@ import app
 from files.file_storage import LocalFileStorage
 from files.file_validation import extension_of, save_file_or_400, validate_csv_content, validate_image_content
 from auth.rbac import _tenant_read_filter, _tenants_db_to_list
-from routes.routes_read import _build_object_payload, _load_active_attributes_by_name
+from routes.routes_read import _build_object_payload, _load_active_attributes_by_name, _resolve_attr_def
 from routes.routes_write import _apply_attribute_diff
 
 files_bp = Blueprint("files", __name__)
@@ -158,12 +158,13 @@ def write_object_file(object_id, attribute):
             if class_tenants and not (set(class_tenants) & set(ctx.tenants)):
                 abort(403, description=f"Classe '{obj_class}' non autorisée pour votre tenant")
 
-        attr_def = None
-        if class_def:
-            for a in class_def.get("attributes", []):
-                if a["name"] == attribute:
-                    attr_def = a
-                    break
+        # Résolution deny-priority (plan-mark3.md action 21bis, voir
+        # _resolve_attr_def dans routes_read.py) : si une quelconque
+        # déclaration de ce nom (attribut ou classe dupliqué) est `secret`,
+        # elle est utilisée ici - le garde-fou de type juste en dessous
+        # (file/image/csv attendu) la refuse alors, jamais un contournement
+        # via une déclaration non-secrète trouvée en premier.
+        attr_def = _resolve_attr_def(defn[0].get("classes", []) if defn else [], obj_class, attribute)
 
         if attr_def is None:
             abort(400, description=f"Attribut '{attribute}' non déclaré dans le modèle de la classe '{obj_class}'")
@@ -221,18 +222,22 @@ def write_object_file(object_id, attribute):
 
 
 def _lookup_attr_type(conn, meta_class, cls, attribute):
+    """Type déclaré de `attribute` sur (meta_class, cls), utilisé uniquement
+    pour décider `Content-Disposition: inline` vs `attachment` (read_object_file
+    ci-dessous) - jamais une décision de chiffrement/masquage à proprement
+    parler, mais résolu via `_resolve_attr_def` (plan-mark3.md action 21bis)
+    par cohérence avec le reste du module/projet : jamais la PREMIÈRE
+    déclaration rencontrée d'un nom ambigu (attribut ou classe dupliqué),
+    conservateur par construction (une déclaration `secret` priorise, ce qui
+    ne vaut de toute façon jamais `== "image"` plus bas, donc retombe
+    toujours sur `attachment`)."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SELECT data FROM definition WHERE meta_class = %s", (meta_class,))
         defn = cur.fetchone()
     if not defn:
         return None
-    for c in defn["data"].get("classes", []):
-        if c["class"] == cls:
-            for a in c.get("attributes", []):
-                if a["name"] == attribute:
-                    return a.get("type")
-            return None
-    return None
+    attr_def = _resolve_attr_def(defn["data"].get("classes", []), cls, attribute)
+    return attr_def.get("type") if attr_def else None
 
 
 def _find_pointer_for_version(conn, object_id, attribute, version):
@@ -491,12 +496,9 @@ def write_object_file_reference(object_id, attribute):
             if class_tenants and not (set(class_tenants) & set(ctx.tenants)):
                 abort(403, description=f"Classe '{obj_class}' non autorisée pour votre tenant")
 
-        attr_def = None
-        if class_def:
-            for a in class_def.get("attributes", []):
-                if a["name"] == attribute:
-                    attr_def = a
-                    break
+        # Résolution deny-priority (plan-mark3.md action 21bis, voir
+        # _resolve_attr_def) : même raison que write_object_file ci-dessus.
+        attr_def = _resolve_attr_def(defn[0].get("classes", []) if defn else [], obj_class, attribute)
         if attr_def is None:
             abort(400, description=f"Attribut '{attribute}' non déclaré dans le modèle de la classe '{obj_class}'")
         if attr_def.get("type") not in ("file", "image", "csv"):

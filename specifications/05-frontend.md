@@ -168,6 +168,15 @@ dépliables par groupe.
   `apiWriteMetaClass` (`POST /api/write/metaclass`) avec **la totalité**
   des classes actuellement affichées dans le formulaire (remplacement
   complet de la meta-classe côté backend, cf. §4.4).
+- Validations bloquantes avant envoi (`handleSave`, toast + `return`, pas de
+  requête envoyée si violées) : classes cibles/valeurs requises pour
+  `joint-1-1`/`joint-1-n`/`datasource`/`select` (action 7/9) ; nom de classe
+  non vide dupliqué dans une AUTRE meta-classe déjà en base (action 22,
+  §10.19) ; nom d'attribut dupliqué au sein d'une même classe, et nom de
+  classe dupliqué dans ce même formulaire (action 21bis, §10.19bis) — ces
+  deux derniers n'étaient des gardes **que** backend (`409`) jusqu'ici.
+  Contrôle réel de tous ces cas côté backend dans tous les cas
+  (`routes_write.py`), ces validations frontend ne sont qu'une garde UX.
 
 ## 6.4 Page Diagramme (`pages/DiagramPage.tsx`)
 

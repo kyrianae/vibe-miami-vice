@@ -217,22 +217,68 @@ def _load_active_attributes_by_name(conn, object_id):
     return by_name
 
 
+def _resolve_attr_def(classes, cls, attr_name):
+    """Résout l'attr_def utilisé pour une décision de sécurité (chiffrement à
+    l'écriture ou masquage/typage à la lecture) sur un (classe, nom
+    d'attribut), à partir de la liste brute `classes` d'une meta-classe
+    (`definition.data["classes"]`) - jamais seulement de la PREMIÈRE
+    occurrence rencontrée (plan-mark3.md action 21bis : fuite démontrée côté
+    écriture - `routes_write.py`, `_coerce_typed_value` - et lecture -
+    `GET /api/suggest/...` ci-dessous, `GET /api/read/object/<id>/secret/
+    <attribute>` - quand un nom a plusieurs déclarations).
+
+    Deux angles morts couverts à la fois, même principe deny-priority que
+    `_load_secret_and_layers_index` (routes_search.py, action 21 revue 3) :
+    - un nom d'attribut déclaré PLUSIEURS FOIS au sein d'une même classe
+      (une fois `secret`, une fois non-secret) ;
+    - la classe elle-même déclarée PLUSIEURS FOIS dans la même meta-classe
+      (cas que `_check_class_name_unique`/`_check_attribute_names_unique`,
+      `routes_write.py`, bloquent désormais à l'écriture - mais qui peut
+      encore exister dans des données déjà stockées avant ce correctif).
+
+    Toute déclaration de type `secret` est TOUJOURS prioritaire : dès qu'au
+    moins une existe parmi les candidats, elle est retournée - jamais une
+    déclaration non-secrète par défaut. Sinon, la première déclaration
+    trouvée est retournée (comportement historique inchangé pour un nom non
+    ambigu). None si le nom n'est déclaré nulle part pour cette classe."""
+    candidates = []
+    for c in classes or []:
+        if not isinstance(c, dict) or c.get("class") != cls:
+            continue
+        for a in (c.get("attributes") or []):
+            if isinstance(a, dict) and a.get("name") == attr_name:
+                candidates.append(a)
+    if not candidates:
+        return None
+    for a in candidates:
+        if a.get("type") == "secret":
+            return a
+    return candidates[0]
+
+
 def _secret_attribute_names(conn, meta_class, cls):
     """Noms des attributs de type `secret` déclarés sur (meta_class, cls)
     (plan-mark3.md action 8) - utilisé par `_build_object_payload` pour
     masquer leur valeur, jamais pour la déchiffrer. Une requête dédiée par
     objet affiché (même coût qu'un lookup similaire dans routes_files.py,
     `_lookup_attr_type`) : accepté, cohérent avec le reste du module qui ne
-    mutualise pas ce genre de lookup entre deux appels."""
+    mutualise pas ce genre de lookup entre deux appels.
+
+    Accumulation sur TOUTES les occurrences de `cls` (plan-mark3.md action
+    21bis) : une classe déclarée deux fois dans la même meta-classe ne doit
+    jamais laisser une déclaration `secret` de la 2e occurrence invisible au
+    masquage sous prétexte que la 1re occurrence rencontrée ne la déclare
+    pas (l'ancien `return` au premier match s'arrêtait là)."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SELECT data FROM definition WHERE meta_class = %s", (meta_class,))
         defn = cur.fetchone()
     if not defn:
         return set()
+    names = set()
     for c in defn["data"].get("classes", []):
-        if c["class"] == cls:
-            return {a["name"] for a in c.get("attributes", []) if a.get("type") == "secret"}
-    return set()
+        if isinstance(c, dict) and c.get("class") == cls:
+            names.update(a["name"] for a in (c.get("attributes") or []) if isinstance(a, dict) and a.get("type") == "secret")
+    return names
 
 
 def _build_object_payload(object_id, conn, tenant_filter=None):
@@ -422,19 +468,13 @@ def reveal_object_secret(object_id, attribute):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SELECT data FROM definition WHERE meta_class = %s", (obj_meta_class,))
         defn = cur.fetchone()
-    class_def = None
-    if defn:
-        for c in defn["data"].get("classes", []):
-            if c["class"] == obj_class:
-                class_def = c
-                break
 
-    attr_def = None
-    if class_def:
-        for a in class_def.get("attributes", []):
-            if a["name"] == attribute:
-                attr_def = a
-                break
+    # Résolution deny-priority (plan-mark3.md action 21bis, voir
+    # _resolve_attr_def) : si une quelconque déclaration de ce nom (classe
+    # dupliquée ou attribut dupliqué dans la même classe) est `secret`, elle
+    # est celle utilisée ici - jamais une déclaration non-secrète trouvée en
+    # premier qui masquerait à tort une déclaration `secret` plus loin.
+    attr_def = _resolve_attr_def(defn["data"].get("classes", []) if defn else [], obj_class, attribute)
     if attr_def is None or attr_def.get("type") != "secret":
         abort(404, description=f"Attribut '{attribute}' non déclaré ou pas de type 'secret' sur la classe '{obj_class}'")
 
@@ -489,11 +529,19 @@ def suggest_attribute_values(meta_class, cls, attribute):
     if not defn:
         abort(404, description=f"Meta-classe '{meta_class}' non trouvée")
 
-    class_def = next((c for c in defn["data"].get("classes", []) if c["class"] == cls), None)
-    if class_def is None:
+    all_classes = defn["data"].get("classes", [])
+    class_exists = any(isinstance(c, dict) and c.get("class") == cls for c in all_classes)
+    if not class_exists:
         abort(404, description=f"Classe '{cls}' non trouvée dans la meta-classe '{meta_class}'")
 
-    attr_def = next((a for a in class_def.get("attributes", []) if a["name"] == attribute), None)
+    # Résolution deny-priority (plan-mark3.md action 21bis, voir
+    # _resolve_attr_def) : un nom d'attribut dupliqué (dans la classe, ou via
+    # une classe elle-même dupliquée) dont AU MOINS une déclaration est
+    # `secret` doit toujours être traité comme `secret` ici - la vérification
+    # de type juste en dessous ("!= 'string'") le refuse alors
+    # automatiquement (400), jamais un contournement via la déclaration
+    # non-secrète trouvée en premier dans l'ancienne résolution.
+    attr_def = _resolve_attr_def(all_classes, cls, attribute)
     if attr_def is None:
         abort(404, description=f"Attribut '{attribute}' non déclaré sur la classe '{cls}'")
 

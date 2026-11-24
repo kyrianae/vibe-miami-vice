@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, abort
 import app
 from data.db import load_schema
 from auth.rbac import _check_class_tenant_write_permission, _existing_class_out_of_tenant_scope
+from routes.routes_write import _find_duplicate_attribute_name, _find_duplicate_class_name
 
 init_bp = Blueprint("init", __name__)
 
@@ -71,6 +72,51 @@ def init_from_model_files():
                             "meta_class": meta_class_name,
                             "file": filename,
                             "reason": f"champ 'version' invalide : doit être un entier, reçu un nombre à virgule ({version!r})",
+                        })
+                        continue
+
+                    # Unicité des noms de classe/attribut (plan-mark3.md
+                    # action 21bis, trou "/api/init" identifié après coup) :
+                    # write_class/write_metaclass bloquent déjà ce cas via
+                    # _check_no_duplicate_class_names_in_payload /
+                    # _check_attribute_names_unique (abort 409), mais cette
+                    # route charge directement un fichier model/*.json sans
+                    # jamais appeler ces garde-fous - jsonschema.validate
+                    # ci-dessus ne couvre pas un nom dupliqué (format
+                    # toujours valide, pas une histoire de uniqueItems sur
+                    # l'objet entier). Détection faite ICI, sur `data`
+                    # (le payload brut du fichier rechargé), AVANT tout
+                    # merge avec l'existant en base (`existing_defn` /
+                    # `merged_classes` ci-dessous) : une classe déjà en base
+                    # ne doit jamais être rejetée à cause d'un doublon
+                    # présent uniquement dans le fichier qui la remplace.
+                    # Pattern "skip + continue" (pas d'abort, cohérent avec
+                    # le reste de cette route) : seul CE fichier est
+                    # abandonné pour ce passage, le reste du batch
+                    # multi-fichiers continue.
+                    dup_class_name = _find_duplicate_class_name(data["classes"])
+                    if dup_class_name is not None:
+                        skipped.append({
+                            "meta_class": meta_class_name,
+                            "file": filename,
+                            "reason": f"classe '{dup_class_name}' déclarée plusieurs fois dans ce fichier",
+                        })
+                        continue
+
+                    dup_attr_class_name = None
+                    dup_attr_name = None
+                    for cls in data["classes"]:
+                        name = _find_duplicate_attribute_name(cls)
+                        if name is not None:
+                            dup_attr_class_name = cls.get("class")
+                            dup_attr_name = name
+                            break
+                    if dup_attr_name is not None:
+                        skipped.append({
+                            "meta_class": meta_class_name,
+                            "file": filename,
+                            "class": dup_attr_class_name,
+                            "reason": f"attribut '{dup_attr_name}' déclaré plusieurs fois dans la classe {dup_attr_class_name!r}",
                         })
                         continue
 

@@ -1466,3 +1466,83 @@ implémentés :
     `_check_class_tenant_write_permission`), inchangés.
 
 Détail complet et suivi : `plan-mark3.md` action 22.
+
+## 10.19bis Durcissement sécurité : unicité attribut/classe + résolution deny-priority (implémenté — `plan-mark3.md` action 21bis)
+
+> Trouvé par `pessimiste` en revue croisée/revalidation de l'action 21
+> (2026-11-24), traité en urgence avant la reprise de la file 17/23/24/25.
+
+- **Problème** : aucune contrainte d'unicité sur `attributes[].name` au
+  sein d'une même classe (ni `model/schema.json`, ni
+  `ConfigurationPage.tsx`, ni backend), et `_check_class_name_unique`
+  (§10.19 ci-dessus) ne détectait pas une classe dupliquée **dans le même
+  payload** d'un seul `POST /api/write/metaclass` (un `set` absorbe
+  silencieusement les doublons). Un attribut déclaré deux fois sur un même
+  nom — une fois `secret`, une fois non-secret — (ou une classe déclarée
+  deux fois dans la même meta-classe, une occurrence secrète, l'autre non)
+  était donc accepté sans erreur, avec trois conséquences prouvées en live
+  (même angle mort que celui déjà corrigé pour `GET /api/search`, action 21
+  revue 3, `_load_secret_and_layers_index`) :
+  1. **Écriture** (`_coerce_typed_value` via la résolution d'attr_def de
+     `write_object`/`write_attribute_value`/`_write_object_multipart`) :
+     la première déclaration rencontrée décidait du chiffrement — un nom
+     résolu sur une déclaration non-secrète stockait la valeur **en clair**
+     malgré une déclaration `secret` du même nom ailleurs dans le modèle.
+  2. **`GET /api/suggest/<meta>/<class>/<attribute>`** (route anonyme) :
+     résolution par première occurrence, pouvait renvoyer des valeurs
+     stockées (potentiellement en clair, cf. point 1) sans aucune
+     authentification.
+  3. **`GET /api/read/object/<id>`** (`_build_object_payload`, via
+     `_secret_attribute_names`) : classe dupliquée dans la même
+     meta-classe, le masquage (`"••••••••"`) ne s'appliquait pas si la
+     première occurrence de la classe ne déclarait pas l'attribut `secret`.
+  4. `backend/routes/routes_files.py` (`_lookup_attr_type`, résolution
+     d'attr_def de `write_object_file`/`write_object_file_reference`) :
+     même motif, confirmé affecté (fonctionnellement : une classe dupliquée
+     où l'attribut fichier n'était déclaré que dans la 2e occurrence était
+     rejetée à tort, jamais une fuite de données).
+- **Correctif implémenté** :
+  - **Blocage à la cause racine, backend** (`backend/routes/
+    routes_write.py`) : `_check_attribute_names_unique(cls)` — `abort(409)`
+    si `cls["attributes"]` contient deux déclarations du même nom, appelée
+    depuis `write_class` et pour chaque classe de `write_metaclass`, juste
+    avant `jsonschema.validate` (même emplacement que
+    `_check_class_name_unique`, action 22). `_check_no_duplicate_class_names_in_payload(classes)`
+    — `abort(409)` si `write_metaclass` reçoit deux classes du même nom
+    dans un seul payload (bug distinct de `_check_class_name_unique`, qui
+    ne compare qu'aux autres meta-classes déjà en base). Pas de nouvelle
+    contrainte dans `model/schema.json` : JSON Schema Draft 7 ne permet pas
+    d'exprimer « unique par un seul champ `name` d'un objet » via
+    `uniqueItems` (qui compare l'objet entier) — un message d'erreur
+    explicite nécessite de toute façon une vérification applicative.
+  - **Blocage à la cause racine, frontend** (`ConfigurationPage.tsx`,
+    `handleSave`) : même niveau de validation bloquante (toast + `return`)
+    que les contrôles déjà en place pour l'action 22, pour les deux mêmes
+    cas (attribut dupliqué dans une classe, classe dupliquée dans le
+    formulaire).
+  - **Résolution deny-priority** (`_resolve_attr_def`, nouvelle fonction
+    partagée de `backend/routes/routes_read.py`, importée par
+    `routes_write.py` et `routes_files.py`) : pour un (classe, nom
+    d'attribut) donné, collecte TOUTES les déclarations candidates (toutes
+    les occurrences de la classe dans la meta-classe × toutes les
+    déclarations de ce nom dans leurs `attributes`) ; si au moins une est de
+    type `secret`, elle est systématiquement retournée — jamais une
+    déclaration non-secrète trouvée en premier. Couvre, sur des données déjà
+    en base avant ce correctif (aucune migration rétroactive requise, cf.
+    point 2 du correctif couvrant déjà ce cas) : la résolution d'attr_def de
+    `write_object`/`_write_object_multipart`/`write_attribute_value`
+    (`routes_write.py`), `_secret_attribute_names` (masquage de
+    `_build_object_payload`, accumulation par union plutôt que premier
+    match), `reveal_object_secret` et la route suggest (`routes_read.py`),
+    et `_lookup_attr_type`/la résolution d'attr_def de
+    `write_object_file`/`write_object_file_reference` (`routes_files.py`).
+- **Tests** : `backend/tests/test_security_action_21bis.py` — réplique sur
+  chaque route concernée les scénarios déjà prouvés sur `GET /api/search`
+  (`test_search_action_21.py`) : attribut dupliqué secret/non-secret,
+  classe dupliquée secret/non-secret, sur l'écriture (chiffrement vérifié
+  en base), la lecture d'objet (masquage), la route reveal, la route
+  suggest (refus 400), le blocage 409 à l'écriture (`write_class` et
+  `write_metaclass`, attribut ET classe dupliqués), et `routes_files.py`
+  (résolution de type + upload réussi sur classe dupliquée).
+
+Détail complet et suivi : `plan-mark3.md` action 21bis.

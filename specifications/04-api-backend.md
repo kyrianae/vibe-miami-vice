@@ -169,6 +169,10 @@ Corps : `{"meta_class": str, "class": {"class": str, "attributes": [...]}}`.
   les clés `class`/`attributes`.
 - `404` si la meta-classe `meta_class` n'existe pas encore dans `definition`
   (message : « ...Créez-la d'abord avec /api/write/metaclass »).
+- `409` si `class.attributes` contient deux déclarations du même nom
+  (`_check_attribute_names_unique`, plan-mark3.md action 21bis — cause
+  racine d'une incohérence de chiffrement/masquage si l'une des deux
+  déclarations est de type `secret`, voir §4.7).
 - Si une classe du même nom existe déjà dans cette meta-classe, elle est
   **intégralement remplacée** (pas de fusion d'attributs — il faut renvoyer
   la liste complète des attributs désirés, y compris ceux déjà existants) ;
@@ -182,6 +186,13 @@ fichiers `model/*.json`, sans la clé `$schema`).
 - Corps accepte un champ optionnel `"version"` (entier >= 1, défaut `1` si
   absent), propagé tel quel dans `data` ; `400` si ce n'est pas un entier
   valide, notamment un float à valeur entière (ex. `2.0`) est rejeté.
+- `409` si `classes` contient deux entrées du même nom de classe DANS CE
+  MÊME payload (`_check_no_duplicate_class_names_in_payload`, plan-mark3.md
+  action 21bis — distinct de la vérification `_check_class_name_unique`
+  ci-dessous, qui ne compare qu'aux AUTRES meta-classes déjà en base) ; puis
+  `409` si l'une des classes du payload contient deux attributs du même nom
+  (`_check_attribute_names_unique`, même action, même contrôle que
+  `POST /api/write/class` ci-dessus).
 - Si la meta-classe existe déjà, son `data` est **entièrement remplacé**
   (toutes les classes précédemment définies pour cette meta-classe sont
   perdues si elles ne sont pas réincluses dans `classes`) ; sinon une
@@ -204,6 +215,17 @@ modifier le code ni la config. Pour chaque fichier `*.json` **sauf
   `model/schema.json`, voir §3.2) : fichier invalide au regard du schéma
   → **pas d'erreur HTTP**, l'entrée est ajoutée à `skipped` avec la
   raison, le chargement des autres fichiers continue ;
+- unicité des noms (action 21bis, `plan-mark3.md`, trou identifié après le
+  correctif initial sur `write_class`/`write_metaclass`) : une classe
+  déclarée deux fois dans le **même fichier** (même `class`), ou un
+  attribut déclaré deux fois au sein d'une classe du fichier (`attributes[].name`
+  dupliqué, ex. une déclaration `secret` et une non-secrète) → **pas
+  d'erreur HTTP**, le fichier entier est ajouté à `skipped` avec la raison
+  (`class` renseigné pour le cas attribut dupliqué), **rien n'est persisté**
+  pour la meta-classe de ce fichier lors de ce passage, le chargement des
+  autres fichiers continue. Détection faite sur le contenu du fichier
+  rechargé, **avant** toute fusion avec l'existant en base (branche
+  tenant-admin ci-dessous) ;
 - RBAC multi-tenant (action 11, `plan-mark2.md`) :
   - `tenant-readonly` → `403` systématique, rien n'est chargé.
   - `tenant-admin` → fusion **classe par classe**, pas un remplacement
@@ -412,6 +434,18 @@ arbitraire.
   `POST /api/write/object` ne le ferme jamais par garde-fou volontaire
   (contrairement aux autres types scalaires, où un attribut omis ferme la
   valeur active).
+- **Résolution deny-priority** (plan-mark3.md action 21bis, durcissement
+  sécurité) : `POST /api/write/class`/`POST /api/write/metaclass` rejettent
+  désormais (`409`) un nom d'attribut déclaré deux fois dans la même classe,
+  et une classe déclarée deux fois dans le même payload `write_metaclass`
+  (voir §4.4) — cause racine bloquée pour toute NOUVELLE écriture de schéma.
+  Pour des données déjà stockées avant ce correctif (aucune migration
+  rétroactive requise), tout point de code qui résout un attr_def par nom
+  (chiffrement à l'écriture, masquage en lecture générique, route reveal,
+  route suggest §4.9, `routes_files.py`) traite désormais un nom ambigu
+  comme `secret` dès qu'**au moins une** de ses déclarations l'est —
+  jamais une déclaration non-secrète trouvée en premier qui laisserait
+  passer un stockage en clair ou une valeur non masquée.
 
 **`datasource`** (action 9, conception détaillée : §10.11 de
 [07-roadmap.md](07-roadmap.md)) :
@@ -527,7 +561,12 @@ autre attribut `string`, sans coercition particulière).
   sa définition — seule route de ce module qui vérifie à l'usage la
   cohérence du champ `autosuggest` (voir aussi §3.2quinquies de
   [03-modele-donnees.md](03-modele-donnees.md) : aucune garde n'existe au
-  chargement du modèle).
+  chargement du modèle). Résolution deny-priority (plan-mark3.md action
+  21bis, `_resolve_attr_def`) : si le nom a plusieurs déclarations (attribut
+  ou classe dupliqué dans le modèle), celle de type `secret` prévaut
+  systématiquement — la vérification de type ci-dessus la rejette alors en
+  `400`, jamais un contournement via une déclaration non-secrète trouvée en
+  premier.
 - **Valeurs candidates** — `SELECT DISTINCT av.value_string` jointe
   `attribute_value`/`attribute`/`object` sur (meta_class, class,
   attribute), `av.valid_to IS NULL` (valeurs **actives seulement** —

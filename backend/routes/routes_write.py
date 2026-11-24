@@ -20,7 +20,7 @@ from auth.rbac import (
     _check_class_tenant_write_permission,
     _check_existing_class_tenant_scope,
 )
-from routes.routes_read import _load_active_attributes_by_name
+from routes.routes_read import _load_active_attributes_by_name, _resolve_attr_def
 
 write_bp = Blueprint("write", __name__)
 
@@ -134,15 +134,19 @@ def write_object():
 
             attrs = body.get("attributes", {})
             seen_attr_names = set()
+            all_classes = defn["data"].get("classes", [])
             for attr_name, attr_value in attrs.items():
                 seen_attr_names.add(attr_name)
 
-                # Trouver la définition de l'attribut dans le modèle de la classe
-                attr_def = None
-                for a in class_def.get("attributes", []):
-                    if a["name"] == attr_name:
-                        attr_def = a
-                        break
+                # Résolution deny-priority (plan-mark3.md action 21bis) :
+                # jamais la PREMIÈRE déclaration rencontrée du nom - si une
+                # quelconque déclaration de ce nom (attribut dupliqué dans la
+                # classe, ou classe elle-même dupliquée dans la meta-classe)
+                # est `secret`, c'est elle qui est utilisée, pour que
+                # _coerce_typed_value chiffre systématiquement la valeur
+                # plutôt que de risquer un stockage en clair (voir
+                # _resolve_attr_def, routes_read.py).
+                attr_def = _resolve_attr_def(all_classes, body["class"], attr_name)
 
                 if attr_def is None:
                     abort(400, description=f"Attribut {attr_name!r} non déclaré dans le modèle de la classe {body['class']!r}")
@@ -180,7 +184,12 @@ def write_object():
             for attr_name, existing_attr in existing_by_name.items():
                 if attr_name in seen_attr_names:
                     continue
-                omitted_attr_def = next((a for a in class_def.get("attributes", []) if a["name"] == attr_name), None)
+                # Résolution deny-priority (plan-mark3.md action 21bis,
+                # cohérent avec la boucle d'écriture ci-dessus) : un nom
+                # ambigu (secret quelque part parmi ses déclarations) ne doit
+                # jamais être traité comme un attribut scalaire ordinaire
+                # qu'une omission referme silencieusement.
+                omitted_attr_def = _resolve_attr_def(all_classes, body["class"], attr_name)
                 if omitted_attr_def and omitted_attr_def.get("type") == "secret":
                     # Limite connue acceptée (pas à corriger ici) : aucune voie
                     # n'existe pour fermer explicitement un secret actif via
@@ -297,22 +306,38 @@ def _write_object_multipart():
 
         object_tenants = _determine_object_tenants(ctx, body, None)
 
-        file_attr_defs = {}
-        non_file_attr_defs = {}
-        for a in class_def.get("attributes", []):
-            if a.get("type") in ("file", "image", "csv"):
-                file_attr_defs[a["name"]] = a
-            else:
-                non_file_attr_defs[a["name"]] = a
+        all_classes = defn["data"].get("classes", [])
+
+        # file_attr_defs : seulement pour catégoriser les champs multipart
+        # fournis (type fichier). Pas affecté par la résolution deny-priority
+        # ci-dessous (un pointeur fichier n'est jamais chiffré, cf.
+        # _coerce_typed_value) - gardé sur class_def (1re occurrence) comme
+        # avant, cohérent avec les autres résolutions de classe non liées au
+        # chiffrement/masquage secret (tenants, displayname...) dans ce
+        # module.
+        file_attr_defs = {
+            a["name"]: a
+            for a in class_def.get("attributes", [])
+            if isinstance(a, dict) and a.get("type") in ("file", "image", "csv")
+        }
 
         attrs = body.get("attributes", {})
         if not isinstance(attrs, dict):
             abort(400, description="'metadata.attributes' doit être un objet JSON")
+
+        # Résolution deny-priority (plan-mark3.md action 21bis, voir
+        # _resolve_attr_def) pour chaque attribut non-fichier reçu : jamais
+        # la première déclaration trouvée, pour ne jamais chiffrer à tort en
+        # clair un nom qui a une déclaration `secret` ailleurs (classe ou
+        # attribut dupliqué).
+        resolved_attr_defs = {}
         for attr_name in attrs:
             if attr_name in file_attr_defs:
                 abort(400, description=f"Attribut {attr_name!r} (type fichier) : fournir un champ multipart nommé '{attr_name}', jamais une valeur dans 'metadata.attributes'")
-            if attr_name not in non_file_attr_defs:
+            attr_def = _resolve_attr_def(all_classes, body["class"], attr_name)
+            if attr_def is None:
                 abort(400, description=f"Attribut {attr_name!r} non déclaré dans le modèle de la classe {body['class']!r}")
+            resolved_attr_defs[attr_name] = attr_def
 
         # Lecture + validation de contenu de chaque fichier fourni AVANT toute
         # écriture DB (échec de validation = aucun objet créé).
@@ -353,7 +378,7 @@ def _write_object_multipart():
                 _apply_attribute_diff(cur, object_id, attr_name, attr_def, None, [pointer])
 
             for attr_name, attr_value in attrs.items():
-                attr_def = non_file_attr_defs[attr_name]
+                attr_def = resolved_attr_defs[attr_name]
                 received_values = attr_value if isinstance(attr_value, list) else [attr_value]
                 _apply_attribute_diff(cur, object_id, attr_name, attr_def, None, received_values)
 
@@ -649,9 +674,10 @@ def write_attribute_value(cls, object_id, attribute, value):
             if obj_class != cls:
                 abort(400, description=f"L'objet {object_id} n'est pas de classe '{cls}'")
 
-            # Résolution du modèle (classe -> attr_def), nécessaire dans tous
-            # les cas (RBAC tenant-admin ET typage/Option B ci-dessous), donc
-            # faite une seule fois ici plutôt que dupliquée comme auparavant.
+            # Résolution du modèle (classe -> class_def pour le RBAC
+            # tenant-admin ci-dessous ; attr_def résolu séparément plus bas
+            # via _resolve_attr_def, plan-mark3.md action 21bis), faite une
+            # seule fois ici plutôt que dupliquée comme auparavant.
             cur.execute("SELECT data FROM definition WHERE meta_class = %s", (obj_meta_class,))
             defn = cur.fetchone()
             class_def = None
@@ -669,12 +695,15 @@ def write_attribute_value(cls, object_id, attribute, value):
                 if class_tenants and not (set(class_tenants) & set(ctx.tenants)):
                     abort(403, description=f"Classe '{cls}' non autorisée pour votre tenant")
 
-            attr_def = None
-            if class_def:
-                for a in class_def.get("attributes", []):
-                    if a["name"] == attribute:
-                        attr_def = a
-                        break
+            # Résolution deny-priority (plan-mark3.md action 21bis, voir
+            # _resolve_attr_def) : jamais la PREMIÈRE déclaration de
+            # `attribute` rencontrée dans `class_def["attributes"]` - si une
+            # quelconque déclaration de ce nom est `secret` (attribut ou
+            # classe dupliqué), c'est elle qui est retenue ici, pour que le
+            # garde-fou "secret" juste en dessous s'applique bien (abort),
+            # jamais une déclaration non-secrète trouvée en premier qui
+            # laisserait passer une écriture en clair par URL.
+            attr_def = _resolve_attr_def(defn[0].get("classes", []) if defn else [], cls, attribute)
 
             if attr_def is None:
                 abort(400, description=f"Attribut '{attribute}' non déclaré dans le modèle de la classe '{cls}'")
@@ -896,6 +925,77 @@ def _check_class_name_unique(conn, meta_class_name, class_names):
                     abort(409, description=f"La classe '{other_class_name}' existe déjà dans la meta-classe '{other_meta}'")
 
 
+def _find_duplicate_class_name(classes):
+    """Retourne le premier nom de classe dupliqué dans `classes` (tableau
+    JSON), ou None si tous les noms sont uniques. Logique de détection pure
+    (plan-mark3.md action 21bis, puis 21bis trou `/api/init` ci-après) :
+    factorisée pour être réutilisable par `_check_no_duplicate_class_names_in_payload`
+    (abort 409, write_metaclass) ET par `init_from_model_files`
+    (routes_init.py, pattern skip + continue - un abort() y romprait tout le
+    batch multi-fichiers)."""
+    seen = set()
+    for cls in classes or []:
+        name = cls.get("class") if isinstance(cls, dict) else None
+        if name is None:
+            continue
+        if name in seen:
+            return name
+        seen.add(name)
+    return None
+
+
+def _find_duplicate_attribute_name(cls):
+    """Retourne le premier nom d'attribut dupliqué dans `cls['attributes']`,
+    ou None si tous les noms sont uniques. Même rôle de détection pure que
+    `_find_duplicate_class_name` (plan-mark3.md action 21bis, trou
+    `/api/init`) : factorisée pour être réutilisable par
+    `_check_attribute_names_unique` (abort 409, write_class/write_metaclass)
+    ET par `init_from_model_files` (routes_init.py, skip + continue)."""
+    seen = set()
+    for a in (cls.get("attributes") or []) if isinstance(cls, dict) else []:
+        name = a.get("name") if isinstance(a, dict) else None
+        if name is None:
+            continue
+        if name in seen:
+            return name
+        seen.add(name)
+    return None
+
+
+def _check_no_duplicate_class_names_in_payload(classes):
+    """Lève abort(409) si `classes` (payload `write_metaclass`, le tableau
+    JSON reçu dans un seul POST) contient deux entrées du même nom de classe
+    (plan-mark3.md action 21bis).
+
+    Bug distinct de celui déjà couvert par `_check_class_name_unique`
+    ci-dessus (action 22, qui ne compare qu'aux AUTRES meta-classes déjà en
+    base) : `class_names = {cls["class"] for cls in data["classes"] ...}`
+    (un `set`) absorbait silencieusement tout doublon DANS CE MÊME payload -
+    une classe déclarée deux fois (ex. une occurrence secrète, l'autre non,
+    voir `_resolve_attr_def`) n'était donc jamais rejetée tant qu'aucune
+    AUTRE meta-classe ne portait déjà ce nom."""
+    name = _find_duplicate_class_name(classes)
+    if name is not None:
+        abort(409, description=f"La classe '{name}' est déclarée plusieurs fois dans ce payload")
+
+
+def _check_attribute_names_unique(cls):
+    """Lève abort(409) si `cls['attributes']` (une classe du payload, reçue
+    par `write_class` ou `write_metaclass`) contient deux déclarations du
+    même nom d'attribut (plan-mark3.md action 21bis) - cause racine des
+    fuites corrigées par `_resolve_attr_def` (routes_read.py) : un nom
+    déclaré deux fois (une fois `secret`, une fois non-secret) n'était
+    jusqu'ici jamais rejeté par aucune des trois couches (`model/
+    schema.json`, `ConfigurationPage.tsx`, ici). Même code d'erreur (409)
+    que `_check_class_name_unique` (action 22) : conflit de données
+    soumises, pas une requête malformée (400) - JSON Schema seul
+    (`uniqueItems` compare des objets entiers, pas un seul champ "name") ne
+    permet pas de porter ce message explicite, voir `model/schema.json`."""
+    name = _find_duplicate_attribute_name(cls)
+    if name is not None:
+        abort(409, description=f"Attribut '{name}' déclaré plusieurs fois dans la classe {cls.get('class')!r}")
+
+
 @write_bp.route("/api/write/class", methods=["POST"])
 def write_class():
     """Ajoute ou met à jour une classe dans une meta-classe existante.
@@ -960,6 +1060,11 @@ def write_class():
         # meta-classe - il reste à vérifier qu'aucune AUTRE meta-classe ne
         # porte déjà une classe de ce nom.
         _check_class_name_unique(conn, meta_class_name, {new_class["class"]})
+
+        # Unicité du nom d'attribut au sein de la classe (plan-mark3.md
+        # action 21bis) : bloque la cause racine d'un nom d'attribut déclaré
+        # deux fois (une fois `secret`, une fois non-secret).
+        _check_attribute_names_unique(new_class)
 
         try:
             jsonschema.validate(instance=data, schema=load_schema())
@@ -1027,6 +1132,18 @@ def write_metaclass():
 
         if isinstance(data["version"], float):
             abort(400, description=f"champ 'version' invalide : doit être un entier, reçu un nombre à virgule ({data['version']!r})")
+
+        # Unicité de la classe DANS ce même payload (plan-mark3.md action
+        # 21bis) : bloque la cause racine qui permettait d'accepter une même
+        # classe déclarée deux fois dans un seul POST (une occurrence
+        # secrète, l'autre non) - distinct du contrôle ci-dessous (action 22),
+        # qui ne compare qu'aux AUTRES meta-classes déjà en base.
+        _check_no_duplicate_class_names_in_payload(data["classes"])
+
+        # Unicité du nom d'attribut au sein de chaque classe (plan-mark3.md
+        # action 21bis), même raison que write_class.
+        for cls in data["classes"]:
+            _check_attribute_names_unique(cls)
 
         # Unicité du nom de classe (plan-mark3.md action 22, specifications/
         # 07-roadmap.md §10.19) : même contrôle que write_class, à l'échelle

@@ -2324,6 +2324,9 @@
      aucune authentification requise** (route de lecture anonyme par
      design).
   3. **`GET /api/read/object/<id>`** (`routes_read.py:232-234`,
+     `_secret_attribute_names`, appelée par `_build_object_payload` —
+     correction de citation à l'implémentation : le code cité est bien
+     dans `_secret_attribute_names`, pas directement dans
      `_build_object_payload`) : en cas de **classe déclarée deux fois**
      dans la même meta-classe, la boucle `for c in ...: if c["class"] ==
      cls: return {...}` s'arrête à la **première** occurrence trouvée —
@@ -2331,10 +2334,19 @@
      2e occurrence de la même classe le fait), le masquage générique
      (`"••••••••"`) ne s'applique jamais, la valeur ressort telle
      quelle.
-  4. Même motif de résolution « première occurrence gagne », non vérifié
-     dans ce cycle mais très probablement affecté (même pattern de code) :
-     `backend/routes/routes_files.py:229-235` (`_lookup_attr_type`) et
-     un autre point de `routes_read.py:569`.
+  4. Même motif de résolution « première occurrence gagne », vérifié à
+     l'implémentation : `backend/routes/routes_files.py:223-235`
+     (`_lookup_attr_type`) **confirmé affecté** (fonctionnellement — une
+     classe dupliquée où l'attribut fichier n'est déclaré que dans la 2e
+     occurrence était rejetée à tort, jamais une fuite de données en
+     tant que telle), et aussi la résolution d'attr_def de
+     `write_object_file`/`write_object_file_reference` (même fichier,
+     non listée initialement par le plan). Correction de citation : le
+     point cité `routes_read.py:569` (`get_class_fallback_icon`) est en
+     réalité **non affecté** — cette route ne résout qu'un NOM de classe
+     pour générer un SVG de repli, jamais un attr_def ni une décision de
+     secret (confirmé par sa propre docstring : « le SVG généré ne
+     dépend que du NOM de la classe, jamais d'une donnée d'objet »).
   L'action 21 (recherche globale) avait le même angle mort, **déjà
   corrigé** (3e itération, commit à venir) côté `/api/search`
   spécifiquement — ce point couvre les autres routes déjà existantes
@@ -2384,8 +2396,38 @@
   `backend/routes/routes_write.py`, `backend/routes/routes_read.py`
   (`_build_object_payload` + route suggest), `backend/routes/
   routes_files.py` (`_lookup_attr_type`), nouveaux tests.
-- **Statut** : ⬜ à faire — **priorité immédiate**, à traiter avant de
-  reprendre 17/23/24/25.
+- **Statut** : ✅ fait (2 itérations, validé testeur/pessimiste/candide à
+  chaque itération, testeur-global OK).
+  - **Itération 1** : correctif principal livré — unicité
+    `attributes[].name` intra-classe et unicité classe intra-meta-classe
+    bloquées à l'écriture (`write_class`/`write_metaclass` dans
+    `routes_write.py`, même pattern que `_check_class_name_unique`) et
+    côté frontend (`ConfigurationPage.tsx`, validation bloquante avant
+    sauvegarde) ; résolution deny-prioritaire (secret dès qu'une seule
+    déclaration du nom l'est) introduite via une fonction commune
+    `_resolve_attr_def`, répliquée dans `routes_read.py`,
+    `routes_write.py` et `routes_files.py` ; 12 tests ajoutés. Les 3
+    fuites prouvées par `pessimiste` (stockage en clair à l'écriture,
+    fuite via `GET /api/suggest`, fuite via `GET /api/read/object`)
+    closes et reprouvées en live.
+  - **Itération 2** : trou résiduel trouvé par `pessimiste` — `POST
+    /api/init` contournait les deux garde-fous d'unicité posés en
+    itération 1 (chemin d'import/bootstrap distinct de
+    `write_class`/`write_metaclass`). Corrigé en réutilisant les finders
+    purs déjà introduits en itération 1, avec skip+continue au niveau
+    fichier en cas de violation (pas d'échec de tout l'init pour un seul
+    fichier invalide) ; 3 tests ajoutés. Reprouvé en live sur les 2
+    chemins RBAC concernés (tenant-admin et global-admin).
+  - 298/298 tests backend verts, `testeur-global` OK (stack docker
+    saine).
+  - **Hors scope, noté mais non traité** (dette, pas sécurité) :
+    `_resolve_datasource_attr_def`/`delete_object` — référence
+    `datasource` orpheline après suppression si la classe était dupliquée
+    (pas de décision de secret en jeu) ; absence d'appel à
+    `_check_class_name_unique` (unicité **inter**-meta-classes, action
+    22) depuis `POST /api/init` — lacune pré-existante, pas une
+    régression introduite par 21bis. À reprendre dans une action de
+    suivi si l'utilisateur le souhaite, non bloquant pour cette clôture.
 
 ## 22. [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique
 
@@ -2574,7 +2616,7 @@
 | 19 | Type d'attribut boolean | ✅ fait (constat rétroactif 2026-11-24) |
 | 20 | Autosuggest : suggestions de valeurs apprises sur un attribut texte | ✅ fait |
 | 21 | Recherche globale | ✅ fait |
-| 21bis | [Sécurité, urgent] Unicité nom d'attribut + fuite secret via `/api/suggest`/`/api/read/object` | ⬜ à faire — priorité immédiate |
+| 21bis | [Sécurité, urgent] Unicité nom d'attribut + fuite secret via `/api/suggest`/`/api/read/object` | ✅ fait |
 | 22 | [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique | ✅ fait |
 | 23 | [Dette documentaire] Enrichissement de `specifications/use case.md` | ⬜ à faire |
 | 24 | [Dette documentaire] Réorganisation de `specifications/07-roadmap.md` (sortir le livré) | ⬜ à faire |
