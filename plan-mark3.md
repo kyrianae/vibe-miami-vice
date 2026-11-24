@@ -2264,13 +2264,27 @@
   routes_search.py`), nouveau `frontend/src/pages/RecherchePage.tsx`,
   `frontend/src/components/Navbar.tsx`, `frontend/src/App.tsx`,
   `frontend/src/api.ts`.
-- **Statut** : 🔄 en cours (2026-11-24) — implémentation faite (backend
+- **Statut** : ✅ fait (2026-11-24) — implémentation faite (backend
   `backend/routes/routes_search.py` + frontend `RecherchePage.tsx` +
-  intégrations `Navbar.tsx`/`App.tsx`/`api.ts`/`types.ts`), 8 tests
-  dédiés ajoutés (`backend/tests/test_search_action_21.py`, 275 tests
-  backend au total, tous verts), `tsc -b`/`vite build` sans nouvelle
-  erreur. En attente de revue croisée/arbitrage avant passage en ✅ fait
-  (détail complet : `specifications/07-roadmap.md` §10.18).
+  intégrations `Navbar.tsx`/`App.tsx`/`api.ts`/`types.ts`), validée après
+  4 passages de correction (testeur/pessimiste/candide/testeur-global) :
+  1) allow-list secret stricte (deny-list initiale abandonnée) avec
+  accumulation cumulative + soustraction explicite (`safe_names`) suite
+  à 2 fuites résiduelles trouvées et corrigées (attribut dupliqué
+  secret/non-secret dans une classe, classe dupliquée dans une
+  meta-classe) ; 2) facettes recalculées sur l'ensemble complet des
+  lignes matchantes, pas seulement les 500 lignes tronquées ; 3) mode
+  fuzzy avec `score_cutoff=60` + tri du pool pour éviter le bruit ; 4)
+  durcissement défensif sur définitions de modèle malformées
+  (`classes`/`attributes` `null` ou non-dict). 16 tests dédiés
+  (`backend/tests/test_search_action_21.py`), 283 tests backend au
+  total, tous verts ; `tsc -b`/`vite build` sans nouvelle erreur. Détail
+  complet : `specifications/07-roadmap.md` §10.18. 2 points hors-scope
+  identifiés en cours de route et remontés séparément à l'utilisateur
+  (traités dans l'action 21bis) : fuite de la même famille (« première
+  occurrence gagne ») via `/api/suggest` et `/api/read/object` sur
+  attribut/classe dupliqué, et un bug d'écriture stockant un secret en
+  clair dans ce même scénario de duplication.
 
 ## 21bis. [Sécurité, urgent] Unicité du nom d'attribut dans une classe + fuite de secret via `/api/suggest` et `/api/read/object`
 
@@ -2559,7 +2573,7 @@
 | 18 | Layer dynamique piloté par un attribut select | ✅ fait |
 | 19 | Type d'attribut boolean | ✅ fait (constat rétroactif 2026-11-24) |
 | 20 | Autosuggest : suggestions de valeurs apprises sur un attribut texte | ✅ fait |
-| 21 | Recherche globale | 🔄 en cours |
+| 21 | Recherche globale | ✅ fait |
 | 21bis | [Sécurité, urgent] Unicité nom d'attribut + fuite secret via `/api/suggest`/`/api/read/object` | ⬜ à faire — priorité immédiate |
 | 22 | [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique | ✅ fait |
 | 23 | [Dette documentaire] Enrichissement de `specifications/use case.md` | ⬜ à faire |

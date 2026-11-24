@@ -5,9 +5,10 @@ import ConfigurationPage from './pages/ConfigurationPage';
 import NavigationPage from './pages/NavigationPage';
 import DiagramPage from './pages/DiagramPage';
 import DashboardPage from './pages/DashboardPage';
+import RecherchePage from './pages/RecherchePage';
 import { getAuthInfo, type AuthInfo } from './auth';
 
-type Page = 'configuration' | 'navigation' | 'diagramme' | 'dashboard';
+type Page = 'configuration' | 'navigation' | 'diagramme' | 'dashboard' | 'recherche';
 type Theme = 'dark' | 'midnight' | 'light';
 
 // Filtre layers (plan-mark3.md action 14, point 2) : multi-sélection,
@@ -70,8 +71,11 @@ export default function App() {
       <div className="layout">
         {/* Dashboard (plan-mark3.md action 15, point 2) : ni Sidebar ni
             bouton toggle, absence complète du DOM (pas juste open=false) -
-            DashboardPage ne consomme ni meta_class/class/layers. */}
-        {page !== 'dashboard' && (
+            DashboardPage ne consomme ni meta_class/class/layers. Recherche
+            (action 21) : même traitement, même raison - la recherche porte
+            sur toutes les classes/meta-classes, un filtre Sidebar par
+            classe n'a pas de sens ici. */}
+        {page !== 'dashboard' && page !== 'recherche' && (
           <button
             className={`sidebar-toggle ${sidebarOpen ? 'shifted' : ''}`}
             onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -79,7 +83,7 @@ export default function App() {
             {sidebarOpen ? '◀' : '▶'}
           </button>
         )}
-        {page !== 'dashboard' && (
+        {page !== 'dashboard' && page !== 'recherche' && (
           <Sidebar
             open={sidebarOpen}
             page={page}
@@ -106,6 +110,8 @@ export default function App() {
             />
           ) : page === 'dashboard' ? (
             <DashboardPage readOnly={readOnly} />
+          ) : page === 'recherche' ? (
+            <RecherchePage />
           ) : (
             <NavigationPage
               selectedMetaClass={selectedMetaClass}

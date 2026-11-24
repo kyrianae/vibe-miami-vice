@@ -5,6 +5,7 @@ import type {
   ObjectSummary,
   ObjectDetail,
   LogoEntry,
+  SearchResponse,
 } from './types';
 
 const BASE = '/api';
@@ -80,6 +81,17 @@ export const apiSuggest = (metaClass: string, cls: string, attribute: string, q:
   fetchJson<{ suggestions: string[] }>(
     `${BASE}/suggest/${metaClass}/${cls}/${attribute}?q=${encodeURIComponent(q)}`
   );
+
+// Recherche globale (plan-mark3.md action 21, specifications/
+// 07-roadmap.md §10.18) : GET /api/search, ouverte comme les autres routes
+// de lecture (RBAC tenant appliqué côté backend). `fuzzy`/`history` omis si
+// false (défaut serveur identique).
+export const apiSearch = (q: string, fuzzy: boolean, history: boolean) => {
+  const params = new URLSearchParams({ q });
+  if (fuzzy) params.set('fuzzy', 'true');
+  if (history) params.set('history', 'true');
+  return fetchJson<SearchResponse>(`${BASE}/search?${params.toString()}`);
+};
 
 // WRITE - Definitions
 export const apiWriteMetaClass = (data: MetaClassDefinition) =>

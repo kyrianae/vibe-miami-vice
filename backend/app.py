@@ -32,6 +32,7 @@ from routes import routes_write
 from routes import routes_init
 from routes import routes_admin
 from routes import routes_files
+from routes import routes_search
 
 # Hook d'authentification et fermeture de la connexion DB : enregistrement
 # explicite (plutôt que décorateur) puisque require_auth/close_db sont
@@ -47,6 +48,7 @@ app.register_blueprint(routes_write.write_bp)
 app.register_blueprint(routes_init.init_bp)
 app.register_blueprint(routes_admin.admin_bp)
 app.register_blueprint(routes_files.files_bp)
+app.register_blueprint(routes_search.search_bp)
 
 
 if __name__ == "__main__":

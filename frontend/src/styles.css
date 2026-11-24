@@ -716,3 +716,131 @@ tr:hover {
   border-radius: 8px;
   background: var(--color-surface);
 }
+
+/* ==================== Recherche Page (plan-mark3.md action 21) ==================== */
+
+.search-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.search-form {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.search-form input[type="text"] {
+  flex: 1;
+  min-width: 240px;
+}
+
+.search-switches {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.search-facets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.search-facet-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+}
+
+.search-facet-group h4 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-muted);
+}
+
+.search-facet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.search-facet-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 14px;
+  border: 1.5px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: all 0.2s;
+}
+
+.search-facet-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.search-facet-btn.active {
+  background: var(--color-accent);
+  color: #fff;
+  border-color: var(--color-accent);
+}
+
+.search-facet-count {
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.search-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.search-suggestion-chip {
+  padding: 3px 10px;
+  border-radius: 14px;
+  border: 1.5px dashed var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: all 0.2s;
+}
+
+.search-suggestion-chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text);
+}
+
+/* Badge actif/historique (revue action 21, point 2) : visible seulement
+   quand history=true, toutes les lignes étant actives par construction
+   sinon. */
+.search-current-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.search-current-badge-active {
+  background: rgba(46, 204, 113, 0.2);
+  color: #2ecc71;
+}
+
+.search-current-badge-historic {
+  background: rgba(149, 165, 166, 0.2);
+  color: var(--color-text-muted);
+}

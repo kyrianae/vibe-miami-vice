@@ -1147,7 +1147,7 @@ Conception à esquisser :
 
 Détail complet et suivi : `plan-mark3.md` action 20.
 
-## 10.18 Recherche globale (nouvel onglet, conçu, pas implémenté — `plan-mark3.md` action 21)
+## 10.18 Recherche globale (implémenté — `plan-mark3.md` action 21)
 
 > Demande utilisateur (2026-11-23) : nouvel onglet « Recherche » — champ
 > texte + 2 switches (`fuzzy`, `history`, désactivés par défaut) qui
@@ -1161,68 +1161,258 @@ Grounding DB (`sql/init.sql`) pour la requête de recherche :
 → `object.id`. `attribute_value.value_string`/`valid_from`/`valid_to`
 porte l'historisation (action 6.0 de `plan-mark2.md`) ;
 `object.deleted_at`/`object.tenants` portent la suppression
-logique/RBAC tenant déjà filtrés par tout le reste de l'API.
+logique/RBAC tenant déjà filtrés par tout le reste de l'API. Seuls les
+attributs stockés en `value_string` sont cherchés (`string`, `secret`
+exclu, `select`, `boolean`, `datasource`, `file`/`image`/`csv`) — les
+attributs `integer`/`float`/jointure (`value_integer`/`value_float`/
+`joint_id`) ne portent jamais de `value_string`, donc ne sont jamais
+trouvés par construction de la requête de base (comportement attendu,
+pas une restriction supplémentaire ajoutée à l'implémentation).
 
-Conception à esquisser :
-- Nouvelle route `GET /api/search?q=<texte>&fuzzy=<bool>&history=<bool>`
-  (RBAC tenant identique à `_tenant_read_filter`, objets non supprimés
-  uniquement). Requête de base :
-  `SELECT o.id, o.meta_class, o.class, a.name, av.value_string FROM
-  attribute_value av JOIN attribute a ON a.id=av.attribute_id JOIN
-  object o ON o.id=a.object_id WHERE av.value_string ILIKE %q% AND
-  o.deleted_at IS NULL [AND av.valid_to IS NULL si history=false]` +
-  filtre tenant.
-- **`history=false` (défaut)** : `valid_to IS NULL` — seuls les
-  attributs actifs (décision déjà actée dans la demande : « par défaut
-  que les attributs actifs »). **`history=true`** : la contrainte
-  `valid_to IS NULL` saute, l'historique complet (lignes fermées
-  incluses) est cherché aussi.
-- **`fuzzy=false` (défaut)** : correspondance substring directe
-  (`ILIKE '%q%'`). **`fuzzy=true`** : propose en plus des valeurs
-  proches sélectionnables — réutilise la même dépendance `rapidfuzz`
-  déjà prévue à l'action 20 (autosuggest), même principe (distance
-  d'édition sur les valeurs candidates), l'utilisateur sélectionne une
-  proposition pour relancer la recherche dessus plutôt que de modifier
-  le filtrage des résultats déjà affichés.
-- ⚠️ **Exclusion explicite du type `secret`** : un attribut `secret`
-  ne doit jamais être recherché — la valeur stockée est chiffrée
-  (`backend/secret_crypto.py`, action 8), une correspondance sur le
-  texte chiffré serait de toute façon fonctionnellement inutile, mais
-  l'exclure explicitement (plutôt que compter sur ce hasard) évite
-  toute fuite d'information du type « cet objet a un attribut secret
-  qui matche votre recherche ». Résolution du type (`string` vs
-  `secret` etc.) par consultation du modèle chargé (même mécanisme que
-  `_coerce_typed_value`/`_build_object_payload`), pas une colonne DB —
-  la table `attribute`/`attribute_value` ne porte pas le type.
-- Facettes renvoyées avec les résultats : **layers** (`classDef.layers`
-  statique, action 14 — **pas** le layer effectif par objet de l'action
-  18, volontairement, pour éviter un calcul par objet coûteux sur un
-  résultat de recherche potentiellement large ; le layer dynamique
-  reste scopé à `NavigationPage.tsx`/`DiagramPage.tsx` comme déjà
-  précisé à l'action 18), **classes** (`meta_class`/`class`),
-  **attributs** (`name`) — chacune avec un compte d'objets. Sélection
-  d'une ou plusieurs facettes = filtrage **en ET** progressif de la
-  liste d'objets déjà remontée (logique de facette standard, pas un
-  nouveau round-trip serveur par clic si le jeu de résultats initial
-  reste raisonnable).
-- ⚠️ Point ouvert : limite de résultats (pas de `LIMIT` = requête
-  potentiellement énorme sur un gros CMDB) — recommandé : `LIMIT`
-  serveur (ex. 500) + message « trop de résultats, affinez la
-  recherche » si atteint, à trancher précisément à l'implémentation.
-- ⚠️ Point ouvert : les attributs `file`/`image`/`csv` stockent un
-  pointeur (`"<version>:<nom_fichier>"` ou `"ref:..."`) dans
-  `value_string` — une recherche matche donc le nom de fichier intégré
-  au pointeur, pas le contenu du fichier. Comportement accepté par
-  défaut (recherche par nom de fichier reste utile), pas un contenu à
-  indexer.
-- Frontend : nouvelle page `frontend/src/pages/RecherchePage.tsx`,
-  nouvelle entrée `Navbar.tsx` (pas de restriction RBAC particulière
-  envisagée, cohérent avec Diagramme/Dashboard). Champ texte + 2
-  switches (réutilise le style `rw-switch` déjà existant pour RO/RW
-  dans `Navbar.tsx`). 3 blocs de facettes + liste d'objets filtrée en
-  dessous, réutilisation du rendu de ligne/cellule déjà existant dans
-  `NavigationPage.tsx` si extractible sans trop de travail (sinon rendu
-  simplifié dédié, lecture seule).
+Backend : nouveau module `backend/routes/routes_search.py` (isolé de
+`routes_read.py`, blueprint `search_bp` enregistré dans `backend/app.py`)
+— une seule route `GET /api/search?q=<texte>&fuzzy=<bool>&history=<bool>`.
+RBAC tenant identique à `_tenant_read_filter` (même overlap Postgres que
+le reste de l'API), objets non supprimés uniquement.
+
+- `q` requis (400 si absent/vide — une recherche vide matcherait
+  indistinctement toute valeur, décision prise à l'implémentation, pas
+  un point ouvert initial).
+- `history=false` (défaut) : `av.valid_to IS NULL` (attributs actifs
+  seulement). `history=true` : lève cette contrainte, cherche aussi
+  l'historique fermé.
+- `fuzzy=false` (défaut) : substring direct, `q` échappé contre les
+  caractères spéciaux ILIKE (`%`, `_`, `\`, fonction `_ilike_escape`)
+  avant insertion dans le motif `%...%`, requête `ILIKE %s ESCAPE '\'`
+  — sans cet échappement, un `q` contenant `%`/`_` élargirait le
+  résultat au lieu de chercher le caractère littéral. `fuzzy=true` :
+  calcule en plus `fuzzy_suggestions` (rapidfuzz, `process.extract` +
+  `fuzz.ratio`, même principe que `suggest_attribute_values` de l'action
+  20) sur un pool de valeurs candidates distinctes (toutes classes
+  confondues, même RBAC/historique/exclusion secret que la recherche
+  principale, borné à 2000 lignes brutes — `_SEARCH_FUZZY_POOL_LIMIT`,
+  constante indépendante de la limite de résultats ci-dessous, avec un
+  `ORDER BY av.value_string` — ajouté en revue post-implémentation,
+  2026-11-24 : sans tri, le sous-ensemble de 2000 lignes gardé par le
+  `LIMIT` était arbitraire d'une requête à l'autre) — ces suggestions ne
+  modifient JAMAIS le filtrage des `results` déjà renvoyés dans la même
+  réponse, elles sont prévues pour relancer une nouvelle recherche côté
+  frontend (clic sur une suggestion). `score_cutoff=60` passé à
+  `process.extract` (idem, revue post-implémentation) : sans seuil, les N
+  valeurs "les moins pires" du pool étaient renvoyées même si rien n'était
+  réellement proche de `q` (bruit pur constaté en test live) — aucune
+  suggestion n'est renvoyée si rien ne dépasse ce score.
+- **Exclusion stricte du type `secret` — ALLOW-LIST** (corrigé en revue
+  post-implémentation, 2026-11-24, voir encadré de correction en fin de
+  section — la première implémentation, deny-list, avait une faille) :
+  implémentée en SQL (clause `EXISTS (SELECT 1 FROM unnest(%s::text[],
+  %s::text[], %s::text[]) AS safe(meta_class, class, name) WHERE ...)`),
+  construite à partir d'un préchargement unique de tout le modèle chargé
+  (`SELECT meta_class, data FROM definition`, fonction
+  `_load_secret_and_layers_index`). **Accumulation cumulative, jamais de
+  réassignation en place** (durcissement en revue 3, suite à 2 fuites
+  résiduelles trouvées et corrigées : un attribut déclaré deux fois dans
+  la même classe, une fois `secret` une fois non-secret, ou une classe
+  déclarée deux fois dans la même meta-classe, ne doit JAMAIS faire
+  gagner la déclaration non-secrète) : `all_names` accumule, pour chaque
+  clé `(meta_class, class)`, TOUS les noms d'attributs vus sur TOUTES les
+  occurrences rencontrées (quel que soit le type) ; `secret_names_seen`
+  accumule séparément tous les noms vus AU MOINS UNE FOIS avec le type
+  `secret` ; `safe_names` est dérivé par soustraction explicite
+  (`all_names - secret_names_seen`) une fois les deux index complets —
+  jamais pendant la boucle. Une ligne n'est incluse QUE SI son triplet
+  (meta_class, class, attribute_name) figure dans `safe_names` ; un
+  triplet absent (classe supprimée du schéma depuis, attribut
+  renommé/retiré, ou vu au moins une fois en `secret`) est donc exclu PAR
+  DÉFAUT. Choix assumé : l'exclusion est appliquée AVANT le `LIMIT` (une
+  ligne secrète ou orpheline ne consomme jamais le budget de 500 lignes),
+  plus stricte que de filtrer après coup. Le même préchargement fournit
+  `layers_index` (facette layers, voir plus bas). Accès défensif
+  (`.get(...)`, durci en revue 4) sur chaque entrée lue du modèle (classe
+  qui n'est pas un dict ou sans `class`, clé `attributes` `null` ou non-
+  dict, attribut qui n'est pas un dict ou sans `name` — ignorés
+  silencieusement, jamais de 500 pour une entrée malformée).
+- **Limite de résultats (point ouvert tranché)** : `LIMIT` serveur à 500
+  lignes brutes (`_SEARCH_RESULT_LIMIT`), avant agrégation des facettes
+  et dédup objets — une ligne = un (objet, attribut, valeur) matchant,
+  pas un objet distinct. Implémentation : la requête SQL demande
+  `LIMIT 501`, et `truncated = len(rows) > 500` ; les lignes sont
+  tronquées à 500 avant construction de `results`/`facets`.
+- **Pointeurs `file`/`image`/`csv` (point ouvert tranché)** : comportement
+  accepté tel quel, confirmé sans changement — une recherche matche le
+  nom de fichier intégré au pointeur `value_string`
+  (`"<version>:<nom>"`/`"ref:..."`), jamais le contenu du fichier.
+- Facettes (`facets.layers`/`facets.classes`/`facets.attributes`), compte
+  d'OBJETS DISTINCTS (pas de lignes) par valeur de facette, calculées sur
+  l'ENSEMBLE des lignes matchantes via deux requêtes d'agrégation SQL
+  séparées SANS `LIMIT` (`GROUP BY o.meta_class, o.class`/`GROUP BY
+  a.name`, `COUNT(DISTINCT o.id)` — corrigé en revue post-implémentation,
+  2026-11-24, voir encadré de correction : calculer sur les seules lignes
+  déjà tronquées à 500 pouvait rendre une classe invisible des facettes) :
+  `classes`/`attributes` directement depuis ces agrégations, `layers`
+  dérivé en Python (somme des comptes de `classes` par layer statique de
+  la classe, `classDef.layers` de l'action 14 — PAS le layer effectif
+  dynamique de l'action 18, volontairement, pour ne pas payer un calcul
+  par objet sur un résultat de recherche potentiellement large). Tri de
+  chaque facette par compte décroissant puis alphabétique (choix
+  d'implémentation, pas spécifié initialement).
+
+Forme JSON exacte de la réponse (documentée dans le docstring de
+`search_objects`, `backend/routes/routes_search.py`) :
+
+```json
+{
+  "results": [
+    {"id": 12, "meta_class": "cmdb", "class": "serveur",
+     "attribute": "nom", "value": "web-01", "is_current": true}
+  ],
+  "facets": {
+    "layers": [{"value": "infra", "count": 3}],
+    "classes": [{"meta_class": "cmdb", "class": "serveur", "count": 5}],
+    "attributes": [{"name": "nom", "count": 5}]
+  },
+  "truncated": false,
+  "fuzzy_suggestions": []
+}
+```
+
+`fuzzy_suggestions` est TOUJOURS présent (liste vide si `fuzzy=false` ou
+aucune suggestion trouvée) — simplifie le typage frontend (pas de clé
+optionnelle à vérifier), léger écart par rapport à la formulation
+initiale « si fuzzy=true » de la conception. `is_current` (ajouté en
+revue post-implémentation, 2026-11-24) : true si la ligne porte la valeur
+ACTIVE de l'attribut (`valid_to IS NULL`), false si fermée (historique) —
+sans ce champ, deux valeurs successives d'un même attribut matchant
+toutes les deux en `history=true` étaient indiscernables.
+
+Frontend :
+- `frontend/src/pages/RecherchePage.tsx` (nouveau) : champ texte + 2
+  switches réutilisant le style `rw-switch`/`rw-label`/`rw-toggle`/
+  `rw-thumb` déjà existant (`Navbar.tsx`, RO/RW) — classes CSS génériques,
+  réutilisées telles quelles avec des libellés différents (« Exact »/
+  « Fuzzy », « Actifs »/« Historique »). 3 blocs de facettes cliquables
+  (nouvelles classes CSS dédiées `search-facet-*`/`search-suggestion-chip`
+  dans `styles.css`, inspirées visuellement de `diagram-filter-btn`/
+  `diagram-chip` de `DiagramPage.tsx` sans les réutiliser directement —
+  séparation de nommage par page, convention déjà en place dans ce
+  fichier CSS). Sélection de facette : OR au sein d'une même catégorie,
+  ET entre catégories différentes (interprétation standard d'une
+  recherche à facettes ; la conception initiale disait seulement
+  « filtrage en ET progressif » sans trancher le cas de plusieurs
+  valeurs sélectionnées dans la MÊME catégorie — précision apportée à
+  l'implémentation). Filtrage 100% client sur le jeu de résultats déjà
+  remonté (aucun round-trip par clic de facette). Résultats regroupés
+  par objet (une ligne de tableau par objet, listant tous les attributs/
+  valeurs matchant) plutôt qu'une ligne brute par (objet, attribut) —
+  lecture plus naturelle, toujours sans round-trip supplémentaire.
+- Rendu de valeur dédié et lecture seule (`formatSearchValue`,
+  `RecherchePage.tsx`) : **PAS** de réutilisation de `formatValue`
+  (`NavigationPage.tsx`) — vérifié explicitement avant réutilisation
+  (consigne rappelée pour la 3e fois après les actions 7/19/20) :
+  `formatValue` ne traduit pas `boolean` en texte lisible (`String(v)`
+  brut → "true"/"false"), ne gère pas spécifiquement `datasource`
+  (identique au comportement par défaut, juste `String(v)`), et est de
+  toute façon une closure non extractible (dépend de `detailCache` local
+  au composant, même constat déjà fait pour `DashboardPage.tsx`,
+  `formatCellValue`). Couverture du rendu dédié : `boolean` → "Oui"/
+  "Non" ; `file`/`image`/`csv` → nom de fichier extrait du pointeur
+  (copie locale minimale de la logique de `parseFilePointer`) ; `datasource`
+  → `"→ #<id>"` (jamais l'ID brut affiché comme une valeur, pas de
+  résolution de label vers l'objet cible — jugée trop coûteuse pour une
+  liste de résultats de recherche, cf. consigne explicite) ; `select`/
+  `string` → valeur brute (déjà un texte lisible, `select` stocke
+  directement l'option choisie, pas un ID) ; `secret` n'apparaît jamais
+  (exclusion stricte côté backend). Badge actif/historique (ajout en
+  revue post-implémentation, 2026-11-24) : quand `history=true`, chaque
+  ligne de résultat affiche un badge « actif »/« historique »
+  (`search-current-badge*`, `styles.css`) à partir de `is_current` —
+  jamais affiché si `history=false` (toutes les lignes sont alors actives
+  par construction). Suggestions fuzzy : formatage BEST-EFFORT dédié
+  (`formatFuzzySuggestionBestEffort`, même ajout) — le serveur ne renvoie
+  qu'une valeur brute sans meta_class/class/attribute associés pour ces
+  suggestions (pool toutes classes confondues par construction), donc le
+  type exact n'est pas connaissable ; détection heuristique sur la forme
+  seule (`"true"`/`"false"` → "Oui"/"Non", forme d'un pointeur fichier →
+  nom de fichier extrait), faux positif possible et assumé, contrairement
+  au rendu de `results` qui connaît le type exact via meta_class/class/
+  attribute. Clic sur une chip relance la recherche sur la valeur BRUTE,
+  pas la forme affichée.
+- `frontend/src/components/Navbar.tsx` : bouton "Recherche" au même
+  niveau que Diagramme/Dashboard, aucune restriction RBAC. Type `page`
+  étendu à `'recherche'` (`Navbar.tsx`, `App.tsx`, `Sidebar.tsx` pour le
+  typage de la prop transmise, jamais rendu avec cette valeur — même
+  motif déjà présent pour `'dashboard'`).
+- `frontend/src/App.tsx` : page branchée sans Sidebar ni bouton toggle
+  (`page !== 'dashboard' && page !== 'recherche'`), même raison que
+  Dashboard — la recherche porte sur toutes les classes/meta-classes, un
+  filtre Sidebar par classe n'a pas de sens ici.
+- `frontend/src/api.ts` (`apiSearch`) + `frontend/src/types.ts`
+  (`SearchResponse`/`SearchResultRow`/`SearchFacetCount`/
+  `SearchClassFacetCount`/`SearchAttributeFacetCount`) : nouveaux types
+  alignés sur la forme JSON ci-dessus.
+
+Tests : `backend/tests/test_search_action_21.py` (16 tests, 8 initiaux +
+5 ajoutés en revue post-implémentation + 2 ajoutés en revue 3 + 1 ajouté
+en revue 4) — substring simple, `history=false`/`true` (avec distinction
+`is_current`), exclusion stricte d'un attribut `secret` (valeur stockée
+manipulée directement pour simuler un hasard de correspondance sur le
+texte chiffré), exclusion d'une classe supprimée du schéma / d'un
+attribut renommé (allow-list, voir encadré ci-dessous), RBAC tenant,
+`LIMIT`/`truncated` (501 objets créés), facettes calculées sur
+l'ensemble matchant au-delà de la troncature, `fuzzy=true` sans crash de
+la recherche standard et sans suggestion si rien n'est proche de `q`,
+tolérance à une entrée `definition.data` malformée, échappement ILIKE (`q`
+contenant littéralement `%`), exclusion d'un attribut déclaré deux fois
+dans la même classe (secret + non-secret) et d'une classe dupliquée dans
+la même meta-classe (secret dans une des deux occurrences) — accumulation
+cumulative de `safe_names`, revue 3 —, tolérance à des entrées
+`attributes`/`classes` `null` ou non-dict — durcissement défensif,
+revue 4. Sous-classe dédiée de `FakeCursor` (même pattern que
+`_SuggestCursor` de l'action 20) émulant le préchargement du modèle, la
+jointure de résultats, les deux agrégations de facettes et le pool fuzzy
+— jamais ajoutée au socle commun `test_model_driven_typing.py`.
+283 tests backend au total (267 + 16), tous verts.
+
+### Correction post-implémentation (2026-11-24, 8 points sur 4 revues, orchestrateur après testeur+pessimiste+candide)
+
+1. **[Bloquant sécurité] Allow-list au lieu de deny-list** pour
+   l'exclusion `secret` — voir paragraphe « Exclusion stricte du type
+   `secret` » ci-dessus pour le détail. Preuve manuelle effectuée contre
+   la vraie instance Docker (`backend`/`db` du projet) : objet + attribut
+   + `attribute_value` insérés directement en SQL sous une classe
+   n'existant dans AUCUNE `definition` courante, valeur = vrai ciphertext
+   Fernet chiffré avec `SECRET_ENCRYPTION_KEY` du `docker-compose.yml` —
+   `GET /api/search?q=<préfixe du ciphertext>` renvoie `results: []`
+   après le fix (avant le fix, l'analyse du SQL généré confirme un
+   `NOT EXISTS` vrai par défaut pour ce triplet absent de `secret_names`,
+   donc une ligne incluse).
+2. **`is_current`** ajouté à chaque entrée de `results` — voir forme JSON
+   ci-dessus.
+3. **Facettes sur l'ensemble matchant**, pas seulement les 500 lignes de
+   `results` — voir paragraphe « Facettes » ci-dessus.
+4. **`score_cutoff=60` + `ORDER BY` sur le pool fuzzy** — voir paragraphe
+   `fuzzy=true` ci-dessus.
+5. **Accès défensif** dans `_load_secret_and_layers_index` (`.get(...)`,
+   entrées malformées ignorées) — voir paragraphe « Exclusion stricte »
+   ci-dessus. Durci en revue 4 (entrées `attributes`/`classes` `null` ou
+   non-dict, en plus des cas déjà couverts) suite à un test de robustesse
+   supplémentaire.
+6. **[Bloquant sécurité] Accumulation cumulative + soustraction explicite
+   (`safe_names`)** (revue 3) — 2 fuites résiduelles trouvées et
+   corrigées : un attribut déclaré deux fois dans la même classe (une
+   fois `secret`, une fois non-secret) ou une classe déclarée deux fois
+   dans la même meta-classe (secret dans une des deux occurrences)
+   faisaient gagner la déclaration non-secrète selon l'ordre de
+   rencontre — voir paragraphe « Exclusion stricte du type `secret` »
+   ci-dessus pour le détail du mécanisme final.
+7. **Chips fuzzy, formatage best-effort** — voir paragraphe Frontend
+   ci-dessus (`formatFuzzySuggestionBestEffort`).
+8. **Specs** : §6.14 de [05-frontend.md](05-frontend.md) (nouvelle
+   sous-section dédiée + Navbar 5 boutons + masquage Sidebar étendu à
+   `'recherche'`), §4.10 de [04-api-backend.md](04-api-backend.md)
+   (`GET /api/search` documenté parmi les routes de lecture), §2bis de
+   [02-architecture.md](02-architecture.md) (`routes_search.py` ajouté à
+   l'énumération des modules de routes).
 
 Détail complet et suivi : `plan-mark3.md` action 21.
 

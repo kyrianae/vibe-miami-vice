@@ -11,8 +11,8 @@ const THEME_LABELS: Record<Theme, string> = {
 };
 
 interface NavbarProps {
-  page: 'configuration' | 'navigation' | 'diagramme' | 'dashboard';
-  onPageChange: (page: 'configuration' | 'navigation' | 'diagramme' | 'dashboard') => void;
+  page: 'configuration' | 'navigation' | 'diagramme' | 'dashboard' | 'recherche';
+  onPageChange: (page: 'configuration' | 'navigation' | 'diagramme' | 'dashboard' | 'recherche') => void;
   readOnly: boolean;
   onToggleReadOnly: (v: boolean) => void;
   theme: Theme;
@@ -94,6 +94,14 @@ export default function Navbar({ page, onPageChange, readOnly, onToggleReadOnly,
         onClick={() => onPageChange('dashboard')}
       >
         Dashboard
+      </button>
+      {/* Recherche globale (plan-mark3.md action 21) : même niveau que
+          Diagramme/Dashboard, pas de restriction RBAC particulière. */}
+      <button
+        className={page === 'recherche' ? 'active' : ''}
+        onClick={() => onPageChange('recherche')}
+      >
+        Recherche
       </button>
       <div className="navbar-spacer" />
       <select

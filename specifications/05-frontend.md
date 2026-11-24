@@ -19,11 +19,12 @@
   Thème/`readOnly`/sidebar ouverte restent non persistés : un rechargement
   de page les réinitialise toujours à `dark`, lecture-écriture, sidebar
   ouverte.
-- `components/Navbar.tsx` : titre, **4** boutons de changement de page —
-  ordre depuis l'action 15 (§6.13) : Configuration, Navigation, Diagramme,
-  Dashboard (Configuration passée en tête ; ce dernier bouton Dashboard
-  ajouté par l'action 10b, §6.11) —, sélecteur de thème, interrupteur
-  RO/RW.
+- `components/Navbar.tsx` : titre, **5** boutons de changement de page —
+  ordre depuis l'action 15 (§6.13), complété par l'action 21 (§6.14) :
+  Configuration, Navigation, Diagramme, Dashboard, Recherche (Configuration
+  passée en tête ; Dashboard ajouté par l'action 10b, §6.11 ; Recherche
+  ajouté par l'action 21, §6.14, sans gating RBAC particulier) —, sélecteur
+  de thème, interrupteur RO/RW.
 - `components/Sidebar.tsx` : charge `apiReadClasses()` au montage et à
   chaque changement de page. Depuis l'action 15 (§6.13) : un champ texte
   filtre (sous-chaîne, insensible casse, sur classe et/ou meta-classe)
@@ -37,9 +38,11 @@
   multiple>`) sur Diagramme (§6.13), pilotant `selectedLayers`. Le choix
   dans les arbres alimente les pages via les props
   `selectedMetaClass`/`selectedClass`/`selectedLayers` de `App.tsx` ; sur
-  la page Dashboard, `<Sidebar>` n'est plus montée du tout depuis l'action
-  15 (§6.13 — retrait conditionnel, plus un simple affichage non
-  filtrant).
+  les pages Dashboard et Recherche (cette dernière depuis l'action 21,
+  §6.14), `<Sidebar>` n'est plus montée du tout (retrait conditionnel,
+  `page !== 'dashboard' && page !== 'recherche'`, plus un simple affichage
+  non filtrant) — la recherche porte sur toutes les classes/meta-classes,
+  un filtre Sidebar par classe n'a pas de sens ici.
 
 ## 6.2 Page Navigation (`pages/NavigationPage.tsx`)
 
@@ -603,3 +606,66 @@ orthogonal au filtre `meta_class`/`class` existant (mono-sélection) :
   filtre texte Sidebar (`selectedMetaClass` uniquement, pas de liste
   dédiée ; Sidebar y liste déjà toutes les classes sans filtre
   meta-classe).
+
+## 6.14 Page Recherche (`pages/RecherchePage.tsx`, ajout 2026-11-23/24, `plan-mark3.md` action 21)
+
+5e page de l'application (`App.tsx`, type `Page` élargi à `'configuration'
+| 'navigation' | 'diagramme' | 'dashboard' | 'recherche'`), accessible via
+un 5e bouton Navbar (« Recherche », même niveau que Diagramme/Dashboard,
+aucune restriction RBAC). Consomme `GET /api/search` (détail complet :
+§4.10 de [04-api-backend.md](04-api-backend.md), conception §10.18 de
+[07-roadmap.md](07-roadmap.md)).
+
+- **Formulaire** : champ texte + 2 switches désactivés par défaut
+  (`fuzzy`, `history`), réutilisant le style `rw-switch`/`rw-label`/
+  `rw-toggle`/`rw-thumb` déjà existant (`Navbar.tsx`, RO/RW) — libellés
+  dédiés (« Exact »/« Fuzzy », « Actifs »/« Historique »).
+- **Facettes** : 3 blocs cliquables (`layers`/`classes`/`attributes`,
+  classes CSS dédiées `search-facet-*` dans `styles.css`). Sélection : OR
+  au sein d'une même catégorie, ET entre catégories différentes. Filtrage
+  100% client sur le jeu de résultats déjà remonté (aucun round-trip par
+  clic de facette) — les COMPTES affichés sur les chips proviennent en
+  revanche du serveur, calculés sur l'ENSEMBLE des lignes matchantes (pas
+  seulement celles déjà remontées dans `results`, potentiellement tronqué
+  à 500 — voir §4.10).
+- **Résultats** : regroupés par objet (une ligne de tableau par objet,
+  listant tous les attributs/valeurs matchant) plutôt qu'une ligne brute
+  par (objet, attribut). Rendu de valeur dédié et lecture seule
+  (`formatSearchValue`) — **pas** de réutilisation de `formatValue`
+  (`NavigationPage.tsx`, vérifié avant réutilisation : ne traduit pas
+  `boolean` en texte lisible, ne gère pas spécifiquement `datasource`, et
+  est de toute façon une closure non extractible) : `boolean` → "Oui"/
+  "Non" ; `file`/`image`/`csv` → nom de fichier extrait du pointeur ;
+  `datasource` → `"→ #<id>"` ; `select`/`string` → valeur brute ; `secret`
+  n'apparaît jamais (exclusion stricte côté serveur, allow-list — §4.10).
+- **Badge actif/historique** (ajout a posteriori, revue action 21) :
+  quand `history=true`, chaque ligne de résultat affiche un badge « actif »
+  ou « historique » (`search-current-badge*`, `styles.css`) à partir du
+  champ `is_current` renvoyé par le serveur — sans ce champ, deux valeurs
+  d'un même attribut (une fermée, une active) matchant toutes les deux
+  étaient indiscernables. Badge non affiché si `history=false` (toutes les
+  lignes sont alors actives par construction).
+- **Suggestions fuzzy** (`fuzzy=true`) : chips « valeurs proches »
+  (`fuzzy_suggestions`), formatage BEST-EFFORT dédié
+  (`formatFuzzySuggestionBestEffort`, ajout a posteriori, revue action
+  21) — contrairement à `formatSearchValue`, le serveur ne renvoie qu'une
+  valeur brute sans meta_class/class/attribute associés pour ces
+  suggestions (pool toutes classes confondues par construction), donc le
+  type réel exact de chaque chip n'est pas connaissable. Détection
+  heuristique sur la FORME de la valeur seule : littéral `"true"`/`"false"`
+  → "Oui"/"Non", forme d'un pointeur fichier (`"<version>:<nom>"`/
+  `"ref:..."`) → nom de fichier extrait ; un faux positif reste possible
+  (valeur `string` légitime qui ressemble par hasard à un pointeur),
+  assumé sans garantie contrairement au rendu de `results`. Clic sur une
+  chip = relance une recherche sur la valeur BRUTE (pas la forme affichée).
+- **Câblage** : `components/Navbar.tsx` (5e bouton) ; `App.tsx` (type
+  `Page` étendu, branche de rendu sans Sidebar ni bouton toggle —
+  `page !== 'dashboard' && page !== 'recherche'`) ; `components/
+  Sidebar.tsx` (type `page` élargi à `'recherche'`, pure signature TS,
+  jamais rendu avec cette valeur) ; `frontend/src/api.ts` (`apiSearch`) +
+  `frontend/src/types.ts` (`SearchResponse`/`SearchResultRow`
+  `is_current` inclus/`SearchFacetCount`/`SearchClassFacetCount`/
+  `SearchAttributeFacetCount`).
+
+Détail complet et suivi : `plan-mark3.md` action 21, §10.18 de
+[07-roadmap.md](07-roadmap.md).

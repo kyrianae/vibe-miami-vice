@@ -7,7 +7,7 @@ interface SidebarProps {
   // 'dashboard' gardé dans le type uniquement pour matcher le type Page de
   // App.tsx - en pratique Sidebar n'est jamais monté quand page==='dashboard'
   // (plan-mark3.md action 15, point 2 : retrait conditionnel dans App.tsx).
-  page: 'configuration' | 'navigation' | 'diagramme' | 'dashboard';
+  page: 'configuration' | 'navigation' | 'diagramme' | 'dashboard' | 'recherche';
   selectedMetaClass: string | null;
   selectedClass: string | null;
   onSelectMetaClass: (mc: string | null) => void;

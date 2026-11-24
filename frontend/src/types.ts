@@ -103,3 +103,46 @@ export interface AttributeValue {
 export interface ObjectDetail extends ObjectSummary {
   attributes: AttributeValue[];
 }
+
+// Recherche globale (plan-mark3.md action 21, specifications/
+// 07-roadmap.md §10.18) : GET /api/search. Forme exacte alignée sur le
+// docstring de backend/routes/routes_search.py (search_objects).
+export interface SearchResultRow {
+  id: number;
+  meta_class: string;
+  class: string;
+  attribute: string;
+  value: string;
+  // true = valeur ACTIVE de l'attribut (valid_to IS NULL), false = valeur
+  // fermée (historique) - distinction utile seulement quand `history=true`
+  // est actif côté requête (sinon toutes les lignes sont actives par
+  // construction). Ajout revue action 21 (point 2).
+  is_current: boolean;
+}
+
+export interface SearchFacetCount {
+  value: string;
+  count: number;
+}
+
+export interface SearchClassFacetCount {
+  meta_class: string;
+  class: string;
+  count: number;
+}
+
+export interface SearchAttributeFacetCount {
+  name: string;
+  count: number;
+}
+
+export interface SearchResponse {
+  results: SearchResultRow[];
+  facets: {
+    layers: SearchFacetCount[];
+    classes: SearchClassFacetCount[];
+    attributes: SearchAttributeFacetCount[];
+  };
+  truncated: boolean;
+  fuzzy_suggestions: string[];
+}

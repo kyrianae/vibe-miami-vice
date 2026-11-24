@@ -79,7 +79,12 @@ Python (déplacement mécanique, aucun changement de comportement) :
   [04-api-backend.md](04-api-backend.md)), `routes_files.py` (Blueprint
   `files_bp`, actions 3-4, routes de lecture/écriture des attributs
   `file`/`image`/`csv` et des références de logo, détail complet : §4.6 de
-  [04-api-backend.md](04-api-backend.md)).
+  [04-api-backend.md](04-api-backend.md)), `routes_search.py` (Blueprint
+  `search_bp`, ajouté `plan-mark3.md` action 21, `GET /api/search` —
+  recherche globale toutes classes/meta-classes confondues, détail
+  complet : §4.10 de [04-api-backend.md](04-api-backend.md)) — 6
+  Blueprints enregistrés dans `app.py` depuis cette action (5 avant,
+  action 12).
 - `backend/tests/` : les 11 fichiers `test_*.py` (invocation :
   `SCHEMA_PATH=<chemin absolu>/model/schema.json pytest backend/tests/ -v`
   depuis la racine du dépôt — le chemin a changé par rapport à l'ancienne

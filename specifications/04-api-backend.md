@@ -551,3 +551,95 @@ autre attribut `string`, sans coercition particulière).
   valeurs distinctes passées à `rapidfuzz.process.extract` — même esprit
   que la dette déjà assumée sur `datasource`/les jointures en fin de §4.7
   (acceptable au volume actuel, à traiter avant un volume important).
+
+## 4.10 Recherche globale (ajout 2026-11-23/24, `plan-mark3.md` action 21)
+
+Conception détaillée : §10.18 de [07-roadmap.md](07-roadmap.md).
+
+**`GET /api/search?q=<texte>&fuzzy=<bool>&history=<bool>`**
+(`search_objects`, nouveau module `backend/routes/routes_search.py`,
+blueprint `search_bp` dédié) — recherche toutes classes/meta-classes
+confondues par contenu d'attribut (`attribute_value.value_string`).
+
+- **Query params** — `q` (requis, 400 si absent/vide) : texte cherché,
+  substring insensible casse (`ILIKE '%...%' ESCAPE '\'`, `q` échappé
+  contre les caractères spéciaux ILIKE avant insertion dans le motif).
+  `fuzzy` (défaut false, `'1'/'true'/'True'`) : si actif, ajoute
+  `fuzzy_suggestions` à la réponse (valeurs proches de `q`, calculées sur
+  un pool de 2000 valeurs candidates distinctes max, `rapidfuzz.
+  process.extract` + `fuzz.ratio`, `score_cutoff=60` et `ORDER BY
+  av.value_string` sur le pool — sans seuil ni tri, les suggestions
+  pouvaient être du bruit pur sans rapport avec `q`, et le sous-ensemble de
+  2000 lignes gardé par le `LIMIT` était arbitraire d'une requête à
+  l'autre) — n'élargit JAMAIS le filtrage des `results` déjà renvoyés,
+  sert seulement à relancer une nouvelle recherche côté frontend. `history`
+  (défaut false) : si false, seuls les `attribute_value` ACTIFS
+  (`valid_to IS NULL`) sont cherchés ; si true, l'historique fermé est
+  aussi cherché.
+- **RBAC tenant** identique à `_tenant_read_filter` (même overlap Postgres
+  que le reste de l'API lecture), objets non supprimés uniquement
+  (`object.deleted_at IS NULL`).
+- **Exclusion stricte du type `secret` — ALLOW-LIST, pas deny-list** :
+  implémentée en SQL (clause `EXISTS (SELECT 1 FROM unnest(%s::text[],
+  %s::text[], %s::text[]) AS safe(meta_class, class, name) WHERE ...)`),
+  construite à partir d'un préchargement unique de tout le modèle chargé
+  (`SELECT meta_class, data FROM definition`) qui aplatit, pour CHAQUE
+  classe du modèle courant, l'ensemble des attributs dont le type n'est
+  PAS `secret` (`safe_names`). Une ligne n'est incluse QUE SI son triplet
+  (meta_class, class, attribute_name) est positivement présent dans
+  `safe_names` — tout triplet absent du modèle courant (classe supprimée
+  du schéma depuis — `routes_admin.py`, `delete_class`, qui ne touche pas
+  aux objets déjà créés —, ou attribut renommé/retiré d'une classe
+  existante) est donc exclu PAR DÉFAUT, jamais inclus par défaut. Fix
+  sécurité (revue action 21) : la première implémentation faisait l'inverse
+  (deny-list `NOT EXISTS` sur les triplets reconnus `secret` dans le modèle
+  courant) — un triplet orphelin y était alors inclus par défaut
+  (allow-by-default), pouvant exposer en clair le ciphertext Fernet d'un
+  attribut `secret` dont la classe ou l'attribut avait disparu du schéma
+  depuis. Accès défensif (`.get(...)`) sur chaque entrée du modèle lu
+  (classe sans `class`, attribut sans `name` ignorés silencieusement) —
+  une ligne `definition.data` malformée ne doit jamais faire échouer toute
+  la requête de recherche en 500.
+- **Limite de résultats** : `LIMIT` serveur à 500 lignes brutes
+  (`_SEARCH_RESULT_LIMIT`, avant dédup objets) — une ligne = un (objet,
+  attribut, valeur) matchant, pas un objet distinct. `truncated=true` si
+  plus de 500 lignes matchaient.
+- **Facettes** (`facets.layers`/`facets.classes`/`facets.attributes`,
+  compte d'OBJETS DISTINCTS par valeur de facette, pas de lignes) —
+  calculées sur l'ENSEMBLE des lignes matchantes via deux requêtes
+  d'agrégation SQL séparées (`GROUP BY o.meta_class, o.class`/`GROUP BY
+  a.name`, `COUNT(DISTINCT o.id)`), **sans LIMIT** : `classes`/`attributes`
+  directement depuis ces agrégations, `layers` dérivé en Python (somme des
+  comptes de `classes` par layer statique de la classe, `classDef.layers`
+  — pas le layer effectif dynamique de l'action 18, pour ne pas payer un
+  calcul par objet). Fix (revue action 21) : la première implémentation
+  calculait les facettes sur les seules lignes de `results` déjà tronquées
+  à 500 — une classe dont tous les objets avaient des ids triés après la
+  coupe `ORDER BY o.id LIMIT 500` pouvait devenir invisible des facettes
+  dès que `truncated=true`, sans qu'aucun clic ne puisse la faire
+  réapparaître. `results` reste plafonné à 500 + `truncated` inchangé —
+  seule l'assiette de calcul des facettes a changé.
+- **Réponse JSON** :
+  ```json
+  {
+    "results": [
+      {"id": 12, "meta_class": "cmdb", "class": "serveur",
+       "attribute": "nom", "value": "web-01", "is_current": true}
+    ],
+    "facets": {
+      "layers": [{"value": "infra", "count": 3}],
+      "classes": [{"meta_class": "cmdb", "class": "serveur", "count": 5}],
+      "attributes": [{"name": "nom", "count": 5}]
+    },
+    "truncated": false,
+    "fuzzy_suggestions": []
+  }
+  ```
+  `is_current` : true si la ligne porte la valeur ACTIVE de l'attribut
+  (`valid_to IS NULL`), false si fermée (historique) — ajout a posteriori
+  (revue action 21) : sans ce champ, deux valeurs successives d'un même
+  attribut matchant toutes les deux en `history=true` étaient
+  indiscernables. `fuzzy_suggestions` toujours présent (liste vide si
+  `fuzzy=false` ou aucune suggestion au-dessus du seuil).
+- **IHM** (`frontend/src/pages/RecherchePage.tsx`) : détail complet §6.14
+  de [05-frontend.md](05-frontend.md).
