@@ -17,7 +17,8 @@
                 {
                     "domain": "logique",
                     "name": "environnement",
-                    "type": "string"
+                    "type": "string",
+                    "autosuggest": true
                 },
                 {
                     "domain": "temporel",

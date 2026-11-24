@@ -347,6 +347,22 @@ ET édition inline de cellule (les deux, contrairement à `file`/`image`/
 §6.10) gère les 3 types dans `ATTR_TYPES` et leur colonne « Options »
 dédiée — voir ci-dessous.
 
+**Autosuggest** (ajout 2026-11-24, `plan-mark3.md` action 20, conception
+détaillée : §10.17 de [07-roadmap.md](07-roadmap.md)) — composant partagé
+`AutosuggestInput` (`pages/NavigationPage.tsx`) : champ texte + dropdown
+de suggestions, fetch débouncé (300ms, `setTimeout`/`clearTimeout`, même
+esprit que le `setTimeout` déjà utilisé pour l'auto-dismiss des toasts) sur
+`apiSuggest(metaClass, cls, attribute, q)` (`src/api.ts`) à chaque frappe.
+Branché aux **deux** endroits attendus, comme `select`/`boolean`
+ci-dessus/ci-dessous (rappel explicite respecté, 3e fois après les actions
+7/19) : le formulaire modal de création/édition (`attr.type === 'string' &&
+attr.autosuggest`, juste avant le fallback `<input>` générique) et
+l'édition inline de cellule du tableau (branche dédiée, même emplacement
+que les branches `select`/`datasource`/`boolean`). `onCommit`/`onCancel`
+routés vers `saveInlineEdit`/`setInlineEdit(null)` côté inline ; no-op côté
+modal (pas de sauvegarde par champ dans ce formulaire, l'envoi se fait
+globalement via `handleSave`).
+
 ## 6.10 IHM de configuration : les 11 types d'attribut (ajout 2026-11-23, `plan-mark3.md` action 13)
 
 `pages/ConfigurationPage.tsx` gère désormais la totalité des types déclarés
@@ -368,6 +384,15 @@ Colonne « Options » de l'éditeur d'attribut, par type :
   (robustesse en cas de doublons importés via `apiInit`).
 - `csv` : input pour `attr.separator` (placeholder `,`).
 - `file`/`image`/`secret` : « Aucune option ».
+- `string` (ajout 2026-11-24, `plan-mark3.md` action 20) : case à cocher
+  « Suggestion auto (valeurs déjà saisies) » (`attr.autosuggest`),
+  persistée `undefined` si décochée (pas `false` littéral — même
+  convention que `constraint`/`sql_constraint` juste au-dessus), visible
+  dans le fallback `string`/`integer`/`float` des options d'attribut mais
+  uniquement si `attr.type === 'string'`. Ne crée pas un 12e type :
+  `autosuggest` reste un champ optionnel sur le type `string` existant
+  (détail complet : §6.9 ci-dessus, §10.17 de
+  [07-roadmap.md](07-roadmap.md)).
 
 **Validation front bloquante** (extension jugée légitime en cours de
 revue, comble un vrai trou backend) : empêche la sauvegarde si un attribut

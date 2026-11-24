@@ -1,10 +1,16 @@
 import psycopg2.extras
 from flask import Blueprint, Response, jsonify, abort, request
+from rapidfuzz import process, fuzz
 
 import app
 from files.class_icon import generate_class_fallback_icon
 from auth.rbac import _tenant_read_filter, _tenants_db_to_list
 from secret_crypto import SecretEncryptionKeyError, decrypt_secret
+
+# Nombre max de suggestions renvoyées par /api/suggest (plan-mark3.md
+# action 20, specifications/07-roadmap.md §10.17) - décision utilisateur
+# "top 10".
+_SUGGEST_LIMIT = 10
 
 MAX_DEPTH = 5
 
@@ -447,6 +453,88 @@ def reveal_object_secret(object_id, attribute):
         abort(500, description=str(e))
 
     return jsonify({"object_id": object_id, "attribute": attribute, "value": plaintext})
+
+
+@read_bp.route("/api/suggest/<string:meta_class>/<string:cls>/<string:attribute>", methods=["GET"])
+def suggest_attribute_values(meta_class, cls, attribute):
+    """Suggestions de valeurs apprises sur un attribut `string` marqué
+    `autosuggest: true` (plan-mark3.md action 20 ; specifications/
+    07-roadmap.md §10.17).
+
+    Source des valeurs candidates : value_string ACTIF (valid_to IS NULL)
+    de tout attribute_value du triplet (meta_class, class, attribute),
+    toutes instances confondues - pas tout l'historique (décision
+    utilisateur : une faute de frappe corrigée depuis ne doit plus être
+    suggérée). RBAC tenant identique aux autres routes de lecture
+    d'objets (_tenant_read_filter + objets non supprimés) : un
+    tenant-admin ne voit que les valeurs portées par des objets visibles
+    dans son périmètre.
+
+    Tri par distance d'édition (rapidfuzz.process.extract, scorer
+    fuzz.ratio) entre `q` (query param, défaut chaîne vide) et chaque
+    valeur candidate distincte, top _SUGGEST_LIMIT renvoyé. `q` vide :
+    pas de calcul de distance (comparer à une chaîne vide n'a pas de sens
+    de tri), les _SUGGEST_LIMIT premières valeurs distinctes sont
+    renvoyées telles quelles.
+
+    404 : meta-classe/classe/attribut non déclaré dans le modèle - même
+    sémantique "ne pas distinguer les cas" que les autres routes de
+    lecture ciblées de ce module (reveal_object_secret, get_class_by_id).
+    400 : attribut existant mais pas de type 'string' ou sans
+    autosuggest actif sur sa définition.
+    """
+    with app.get_db().cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT data FROM definition WHERE meta_class = %s", (meta_class,))
+        defn = cur.fetchone()
+    if not defn:
+        abort(404, description=f"Meta-classe '{meta_class}' non trouvée")
+
+    class_def = next((c for c in defn["data"].get("classes", []) if c["class"] == cls), None)
+    if class_def is None:
+        abort(404, description=f"Classe '{cls}' non trouvée dans la meta-classe '{meta_class}'")
+
+    attr_def = next((a for a in class_def.get("attributes", []) if a["name"] == attribute), None)
+    if attr_def is None:
+        abort(404, description=f"Attribut '{attribute}' non déclaré sur la classe '{cls}'")
+
+    if attr_def.get("type") != "string" or not attr_def.get("autosuggest"):
+        abort(400, description=f"Attribut '{attribute}' n'est pas configuré en autosuggest (type 'string' + autosuggest: true requis)")
+
+    tenants = _tenant_read_filter()
+    with app.get_db().cursor() as cur:
+        if tenants is None:
+            cur.execute(
+                """SELECT DISTINCT av.value_string
+                   FROM attribute_value av
+                   JOIN attribute a ON a.id = av.attribute_id
+                   JOIN object o ON o.id = a.object_id
+                   WHERE o.meta_class = %s AND o.class = %s AND a.name = %s
+                     AND av.valid_to IS NULL AND av.value_string IS NOT NULL
+                     AND o.deleted_at IS NULL""",
+                (meta_class, cls, attribute)
+            )
+        else:
+            cur.execute(
+                """SELECT DISTINCT av.value_string
+                   FROM attribute_value av
+                   JOIN attribute a ON a.id = av.attribute_id
+                   JOIN object o ON o.id = a.object_id
+                   WHERE o.meta_class = %s AND o.class = %s AND a.name = %s
+                     AND av.valid_to IS NULL AND av.value_string IS NOT NULL
+                     AND o.deleted_at IS NULL
+                     AND (o.tenants IS NULL OR o.tenants = '' OR string_to_array(o.tenants, ',') && %s::text[])""",
+                (meta_class, cls, attribute, tenants)
+            )
+        candidates = [row[0] for row in cur.fetchall()]
+
+    q = request.args.get("q", "")
+    if not q:
+        suggestions = candidates[:_SUGGEST_LIMIT]
+    else:
+        matches = process.extract(q, candidates, scorer=fuzz.ratio, limit=_SUGGEST_LIMIT)
+        suggestions = [m[0] for m in matches]
+
+    return jsonify({"suggestions": suggestions})
 
 
 @read_bp.route("/api/class_icon/<string:meta_class>/<string:cls>", methods=["GET"])

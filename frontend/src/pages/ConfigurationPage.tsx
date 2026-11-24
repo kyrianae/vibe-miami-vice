@@ -809,6 +809,18 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
                               <input type="text" value={attr.sql_constraint || ''}
                                 onChange={(e) => updateAttribute(classIdx, attrIdx, { sql_constraint: e.target.value || undefined })}
                                 placeholder="SQL constraint" style={{ ...smallInput, fontSize: 11 }} />
+                              {attr.type === 'string' && (
+                                // Autosuggest (plan-mark3.md action 20,
+                                // specifications/07-roadmap.md §10.17) :
+                                // réservé au type 'string', même convention
+                                // que values/layer_map/separator ci-dessus.
+                                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>
+                                  <input type="checkbox" checked={!!attr.autosuggest}
+                                    onChange={(e) => updateAttribute(classIdx, attrIdx, { autosuggest: e.target.checked || undefined })}
+                                  />
+                                  Suggestion auto (valeurs déjà saisies)
+                                </label>
+                              )}
                             </div>
                           )}
                         </div>

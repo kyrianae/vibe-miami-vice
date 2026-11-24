@@ -18,7 +18,8 @@
                 {
                     "domain": "physique",
                     "name": "localisation",
-                    "type": "string"
+                    "type": "string",
+                    "autosuggest": true
                 }
             ]
         },

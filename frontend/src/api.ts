@@ -72,6 +72,15 @@ export const apiReadObjects = () =>
 export const apiReadObject = (id: number) =>
   fetchJson<ObjectDetail>(`${BASE}/read/object/${id}`);
 
+// Autosuggest (plan-mark3.md action 20, specifications/07-roadmap.md
+// §10.17) : suggestions de valeurs apprises sur un attribut `string` marqué
+// `autosuggest: true`, triées par distance d'édition (rapidfuzz côté
+// backend) avec la saisie en cours `q`.
+export const apiSuggest = (metaClass: string, cls: string, attribute: string, q: string) =>
+  fetchJson<{ suggestions: string[] }>(
+    `${BASE}/suggest/${metaClass}/${cls}/${attribute}?q=${encodeURIComponent(q)}`
+  );
+
 // WRITE - Definitions
 export const apiWriteMetaClass = (data: MetaClassDefinition) =>
   fetchJsonAuth<{ status: string; action: string; meta_class: string }>(

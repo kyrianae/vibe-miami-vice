@@ -1033,7 +1033,7 @@ Conception à esquisser :
 
 Détail complet et suivi : `plan-mark3.md` action 19.
 
-## 10.17 Autosuggest : suggestions de valeurs apprises sur un attribut texte (conçu, pas implémenté — `plan-mark3.md` action 20)
+## 10.17 Autosuggest : suggestions de valeurs apprises sur un attribut texte (fait — `plan-mark3.md` action 20)
 
 > Demande utilisateur (2026-11-23), née du besoin de champs texte
 > répétitifs (ex. `ville`/`pays` de `batiment` §10.14,
@@ -1072,6 +1072,78 @@ Conception à esquisser :
   `application_versionnee.version`/`module_versionne.version`
   (explicitement demandés) — cohérent avec le pattern mais pas demandé
   nommément.
+
+> **Mise à jour (2026-11-24, fait)** : conception ci-dessus implémentée
+> sans écart majeur.
+> - `model/schema.json` : `"autosuggest": true` ajouté aux propriétés de
+>   la définition d'attribut (sibling de `separator`/`values`/
+>   `layer_map`), réservé documentairement au type `string` (pas de
+>   `required`/`allOf` dédié - champ optionnel, contrairement à `values`
+>   pour `select`).
+> - `backend/requirements.txt` : `rapidfuzz` ajouté.
+> - `GET /api/suggest/<meta_class>/<class>/<attribute>?q=<saisie>`
+>   ajoutée à `backend/routes/routes_read.py` : résout la définition
+>   d'attribut depuis `definition.data` (404 meta-classe/classe/attribut
+>   inconnu, 400 si pas `string`+`autosuggest`), `SELECT DISTINCT
+>   av.value_string` jointe `attribute_value`/`attribute`/`object` sur
+>   (meta_class, class, attribute), `valid_to IS NULL` + `deleted_at IS
+>   NULL`, RBAC tenant via `_tenant_read_filter` (même mécanisme que
+>   `list_objects`/`_build_object_payload`, pas de réimplémentation).
+>   Tri : `rapidfuzz.process.extract` (scorer `fuzz.ratio`) si `q` non
+>   vide, sinon les 10 premières valeurs distinctes telles quelles (pas
+>   de calcul de distance contre une chaîne vide). Réponse
+>   `{"suggestions": [...]}`.
+> - `frontend/src/api.ts` : `apiSuggest(metaClass, cls, attribute, q)`.
+> - `frontend/src/pages/NavigationPage.tsx` : nouveau composant partagé
+>   `AutosuggestInput` (champ texte + dropdown, fetch débouncé 300ms via
+>   `setTimeout`/`clearTimeout`, même esprit que le `setTimeout` déjà
+>   utilisé pour l'auto-dismiss des toasts) branché aux **deux**
+>   endroits d'édition (rappel explicite respecté, 3e fois après les
+>   actions 7/19) : formulaire modal (`attr.type === 'string' &&
+>   attr.autosuggest`, juste avant le fallback générique) et édition
+>   inline de cellule (`isInlineEditing && isAutosuggest`, même
+>   emplacement que les branches `select`/`datasource`/`boolean`
+>   dédiées) - `onCommit`/`onCancel` routés vers `saveInlineEdit`/
+>   `setInlineEdit(null)` côté inline, no-op côté modal (pas de
+>   sauvegarde par champ dans ce formulaire, l'envoi se fait
+>   globalement via `handleSave`).
+> - `frontend/src/pages/ConfigurationPage.tsx` : case à cocher
+>   « Suggestion auto (valeurs déjà saisies) » dans le fallback
+>   string/integer/float des options d'attribut, visible uniquement si
+>   `attr.type === 'string'`, persistée dans `attr.autosuggest`
+>   (`undefined` si décochée, pas `false` littéral - même convention que
+>   `constraint`/`sql_constraint` juste au-dessus).
+> - `frontend/src/types.ts` : `AttributeDefinition.autosuggest?: boolean`
+>   ajouté (nécessaire à la compilation TypeScript, fichier non listé
+>   explicitement dans le périmètre initial mais toujours mis à jour en
+>   miroir de `model/schema.json` pour chaque nouveau champ d'attribut
+>   depuis les actions 7/9/18/19).
+> - Démonstration manuelle réelle (`docker-compose`) : `autosuggest:
+>   true` activé sur `datacenter.localisation` (`model/itil_cmdb.json`)
+>   et `version_logicielle.environnement`
+>   (`model/ansible_inventory.json`) - persistés, `/api/init` rechargé.
+>   5 objets `datacenter` créés avec des valeurs proches de
+>   `localisation` (`Geneve`, `Geneva`, `Genève`, `Lausanne`, `Zurich`),
+>   une réécriture (`PUT /api/write/attribute/datacenter/176/
+>   localisation/Zurich%20Corrige`) pour vérifier l'exclusion de la
+>   valeur fermée. `GET /api/suggest/cmdb/datacenter/localisation?
+>   q=Geneve` renvoie `["Geneve","Geneva","Genève",...]` (tri par
+>   proximité, "Geneve" exact en tête), `q` vide renvoie les valeurs
+>   distinctes sans crash, `Zurich` (fermé) absent du résultat,
+>   `Zurich Corrige` (actif) présent. 400 confirmé sur un attribut
+>   `string` sans `autosuggest` (`nom`), 404 confirmé sur une classe
+>   inconnue. Objets de démonstration laissés en base (pattern déjà
+>   établi, pas de cleanup).
+> - Backend : 11 tests dédiés
+>   (`backend/tests/test_attribute_autosuggest.py` - 400/404, valeurs
+>   actives seulement, tri par distance, limite top 10, `q` vide, RBAC
+>   tenant, validité du schéma), 267 tests backend au total toujours au
+>   vert (aucune régression).
+> - Point ouvert reporté (pas traité ici, action 17 pas encore livrée à
+>   ce stade de la vague) : activer `autosuggest` sur `os.nom`/
+>   `os.version`/`application_versionnee.version` suppose des classes
+>   introduites par l'action 17 (extension CMDB), à reconsidérer une
+>   fois celle-ci faite.
 
 Détail complet et suivi : `plan-mark3.md` action 20.
 

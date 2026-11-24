@@ -23,6 +23,10 @@ export interface AttributeDefinition {
   // Sans objet pour les autres types. Voir getObjectEffectiveLayers dans
   // NavigationPage.tsx/DiagramPage.tsx pour le calcul du layer effectif.
   layer_map?: Record<string, string[]>;
+  // Suggestions de valeurs apprises (plan-mark3.md action 20, réservé au
+  // type 'string') : dropdown d'autocomplétion basé sur GET /api/suggest/...
+  // au lieu du champ texte générique. Sans objet pour les autres types.
+  autosuggest?: boolean;
 }
 
 export interface ClassDefinition {

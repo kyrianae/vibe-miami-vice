@@ -202,6 +202,31 @@ Aucun traitement spécial en lecture (`_build_object_payload`,
 quel, comme n'importe quel autre attribut `value_string` — contrairement à
 `secret` (masqué) ou `file`/`image`/`csv` (pointeur).
 
+## 3.2quinquies Extensions Mark 3 (suite) : champ `autosuggest` (ajout 2026-11-24, action 20)
+
+**Nouveau champ optionnel `"autosuggest": true`** (booléen) sur une
+définition d'attribut (`model/schema.json`), conception détaillée :
+§10.17 de [07-roadmap.md](07-roadmap.md). Réservé en intention au type
+`type: "string"` uniquement — **mais aucune contrainte JSON Schema**
+(`allOf`/`if-then`) n'empêche de le poser sur un attribut d'un autre type :
+pure convention documentaire, même esprit que `separator`/`values` déjà
+notés ainsi dans ce fichier (§3.2quater ci-dessus pour `values`/`classes`).
+Aucune garde serveur ne vérifie cette cohérence au chargement du modèle
+(`/api/init`) — seule la route `GET /api/suggest/...` la vérifie à l'usage,
+`abort(400)` si l'attribut existe mais n'est pas `string`+`autosuggest`
+(détail complet : §4.9 de [04-api-backend.md](04-api-backend.md)).
+
+Aucune nouvelle colonne SQL ni nouveau mécanisme de stockage : un attribut
+`autosuggest` reste un `string` ordinaire, stocké dans `value_string`
+comme n'importe quel autre attribut de ce type — seule la route de
+lecture `/api/suggest` ci-dessus interprète ce champ, l'écriture
+(`POST /api/write/object`/`PUT /api/write/attribute/...`) ne le consulte
+jamais.
+
+Démonstration manuelle réelle : `autosuggest: true` activé sur deux
+attributs existants, `datacenter.localisation` (`model/itil_cmdb.json`) et
+`version_logicielle.environnement` (`model/ansible_inventory.json`).
+
 ## 3.3 Fichiers de modèle fournis
 
 **`model/personnes.json`** — meta-classe `personne` :

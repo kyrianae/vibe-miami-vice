@@ -506,3 +506,48 @@ ci-dessus : aucune route binaire dédiée.
   types ; colonne « Options » affiche « Aucune option » (même branche que
   `file`/`image`/`secret`, aucun champ requis supplémentaire pour ce
   type).
+
+## 4.9 Autosuggest : suggestions de valeurs apprises (ajout 2026-11-24, plan-mark3.md action 20)
+
+Conception détaillée : §10.17 de [07-roadmap.md](07-roadmap.md).
+
+**`GET /api/suggest/<meta_class>/<class>/<attribute>?q=<saisie>`**
+(`suggest_attribute_values`, `backend/routes/routes_read.py`) — seule
+route dédiée à ce mécanisme, aucune écriture associée (l'attribut
+`autosuggest` transite par le JSON classique de `POST
+/api/write/object`/`PUT /api/write/attribute/...` comme n'importe quel
+autre attribut `string`, sans coercition particulière).
+
+- **Résolution de l'attribut** — la route relit `definition.data` pour le
+  triplet (meta_class, class, attribute) : `abort(404)` si la meta-classe,
+  la classe ou l'attribut n'est pas déclaré dans le modèle (même sémantique
+  « ne pas distinguer les cas » que les autres routes de lecture ciblées du
+  module, ex. `reveal_object_secret`, §4.7). `abort(400)` si l'attribut
+  existe mais n'est pas `type: "string"` ou n'a pas `autosuggest: true` sur
+  sa définition — seule route de ce module qui vérifie à l'usage la
+  cohérence du champ `autosuggest` (voir aussi §3.2quinquies de
+  [03-modele-donnees.md](03-modele-donnees.md) : aucune garde n'existe au
+  chargement du modèle).
+- **Valeurs candidates** — `SELECT DISTINCT av.value_string` jointe
+  `attribute_value`/`attribute`/`object` sur (meta_class, class,
+  attribute), `av.valid_to IS NULL` (valeurs **actives seulement** —
+  décision utilisateur, une faute de frappe corrigée depuis l'historique
+  n'est plus suggérée) et `o.deleted_at IS NULL`. RBAC tenant via
+  `_tenant_read_filter`, même mécanisme que `list_objects`/
+  `_build_object_payload` (pas de réimplémentation) : un tenant-admin ne
+  voit que les valeurs portées par des objets visibles dans son périmètre.
+- **Tri** — `rapidfuzz.process.extract` (scorer `fuzz.ratio`) entre `q`
+  (query param, défaut chaîne vide) et chaque valeur candidate distincte,
+  top `_SUGGEST_LIMIT` (constante en tête de fichier, valeur `10`) renvoyé.
+  `q` vide : pas de calcul de distance (comparer à une chaîne vide n'a pas
+  de sens de tri), les `_SUGGEST_LIMIT` premières valeurs distinctes sont
+  renvoyées telles quelles. Réponse `200` : `{"suggestions": [...]}`.
+- **IHM** (`frontend/src/pages/NavigationPage.tsx`, composant
+  `AutosuggestInput`) : détail complet §6.9 de
+  [05-frontend.md](05-frontend.md).
+- Limite connue acceptée (notée en revue, pas bloquante au volume actuel) :
+  aucun index SQL dédié sur `attribute_value.value_string`/`attribute.name`
+  pour cette requête, et aucun garde-fou de cardinalité sur le nombre de
+  valeurs distinctes passées à `rapidfuzz.process.extract` — même esprit
+  que la dette déjà assumée sur `datasource`/les jointures en fin de §4.7
+  (acceptable au volume actuel, à traiter avant un volume important).

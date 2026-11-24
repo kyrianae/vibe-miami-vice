@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo, type MouseEvent } from 'react';
-import { apiReadObjects, apiReadObject, apiWriteObject, apiWriteObjectCreateMultipart, apiWriteAttribute, apiDeleteObject, apiReadClasses, apiWriteObjectFile, apiReadObjectFileBlob, apiListLogos, apiSetObjectFileReference } from '../api';
+import { apiReadObjects, apiReadObject, apiWriteObject, apiWriteObjectCreateMultipart, apiWriteAttribute, apiDeleteObject, apiReadClasses, apiWriteObjectFile, apiReadObjectFileBlob, apiListLogos, apiSetObjectFileReference, apiSuggest } from '../api';
 import type { ObjectSummary, ObjectDetail, ClassInfo, AttributeDefinition, LogoEntry } from '../types';
 import type { AuthInfo } from '../auth';
 
@@ -182,6 +182,74 @@ function FileAttributeValueDisplay({ objectId, attrDef, value }: { objectId: num
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span>{filename}</span>
       <FileDownloadButton objectId={objectId} attribute={attrDef.name} version={version} filename={filename} />
+    </div>
+  );
+}
+
+// Champ texte + dropdown de suggestions apprises (plan-mark3.md action 20,
+// specifications/07-roadmap.md §10.17) : fetch débouncé sur GET /api/suggest
+// (même esprit setTimeout que addToast ci-dessus, pas de librairie de
+// debounce dédiée). Composant local partagé entre le formulaire modal et
+// l'édition inline de cellule (NavigationPage.tsx, même rappel explicite
+// qu'aux actions 7/19 : brancher les deux endroits d'édition).
+function AutosuggestInput({ value, onChange, onCommit, onCancel, metaClass, cls, attribute, inputProps }: {
+  value: string;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+  metaClass: string;
+  cls: string;
+  attribute: string;
+  inputProps?: React.InputHTMLAttributes<HTMLInputElement>;
+}) {
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!metaClass || !cls) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      apiSuggest(metaClass, cls, attribute, value)
+        .then((res) => setSuggestions(res.suggestions))
+        .catch(() => setSuggestions([]));
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [value, metaClass, cls, attribute]);
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        {...inputProps}
+        type="text"
+        value={value}
+        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => { setOpen(false); onCommit(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onCommit();
+          if (e.key === 'Escape') onCancel();
+        }}
+      />
+      {open && suggestions.length > 0 && (
+        <ul style={{
+          position: 'absolute', zIndex: 20, left: 0, right: 0, margin: 0, marginTop: 2,
+          padding: 0, listStyle: 'none', background: 'var(--color-bg-card)',
+          border: '1px solid var(--color-border)', borderRadius: 4, maxHeight: 160,
+          overflowY: 'auto', boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+        }}>
+          {suggestions.map((s) => (
+            <li
+              key={s}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onChange(s); setOpen(false); }}
+              style={{ padding: '6px 10px', cursor: 'pointer', fontSize: 13 }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(99,102,241,0.1)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = '')}
+            >{s}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -1412,6 +1480,29 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                   </div>
                 );
               }
+              if (attr.type === 'string' && attr.autosuggest) {
+                // Dropdown de suggestions apprises (plan-mark3.md action 20)
+                // au lieu du champ texte générique - onCommit/onCancel sont
+                // des no-op ici (pas de sauvegarde par champ dans ce
+                // formulaire, contrairement à l'édition inline de cellule
+                // ci-dessous, saveInlineEdit() ; l'envoi se fait globalement
+                // via handleSave()).
+                return (
+                  <div className="form-group" key={attr.name}>
+                    <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span></label>
+                    <AutosuggestInput
+                      value={newAttrs[attr.name] || ''}
+                      onChange={(v) => setNewAttrs({ ...newAttrs, [attr.name]: v })}
+                      onCommit={() => {}}
+                      onCancel={() => {}}
+                      metaClass={newMetaClass}
+                      cls={newClass}
+                      attribute={attr.name}
+                      inputProps={{ placeholder: attr.constraint ? `Format: ${attr.constraint}` : '' }}
+                    />
+                  </div>
+                );
+              }
               return (
                 <div className="form-group" key={attr.name}>
                   <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>({attr.type} — {attr.domain})</span></label>
@@ -1605,6 +1696,27 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                             const isSelect = attrDef?.type === 'select';
                             const isDatasource = attrDef?.type === 'datasource';
                             const isBoolean = attrDef?.type === 'boolean';
+                            const isAutosuggest = attrDef?.type === 'string' && !!attrDef?.autosuggest;
+
+                            if (isInlineEditing && isAutosuggest && attrDef) {
+                              return (
+                                <td key={name} style={{ padding: 2 }}>
+                                  <AutosuggestInput
+                                    value={inlineEdit.value}
+                                    onChange={(v) => setInlineEdit({ ...inlineEdit, value: v })}
+                                    onCommit={saveInlineEdit}
+                                    onCancel={() => setInlineEdit(null)}
+                                    metaClass={obj.meta_class}
+                                    cls={obj.class}
+                                    attribute={attrDef.name}
+                                    inputProps={{
+                                      autoFocus: true,
+                                      style: { width: '100%', padding: '4px 6px', fontSize: 13, background: 'var(--color-bg)', color: 'var(--color-text)', border: '2px solid var(--color-accent)', borderRadius: 4, outline: 'none' },
+                                    }}
+                                  />
+                                </td>
+                              );
+                            }
 
                             if (isInlineEditing && isDatasource) {
                               const candidates = getCandidates({ classes: attrDef?.classes, name: attrDef?.name }, obj.id);

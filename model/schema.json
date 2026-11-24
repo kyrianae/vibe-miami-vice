@@ -100,6 +100,10 @@
                                     },
                                     "description": "Liste fixe des valeurs autorisées, réservée au type 'select' (requis si type = select). La valeur stockée (value_string) doit appartenir à cette liste. Sans objet pour les autres types."
                                 },
+                                "autosuggest": {
+                                    "type": "boolean",
+                                    "description": "Suggestions de valeurs auto-apprises à partir des valeurs déjà saisies (actives uniquement) sur cet attribut, réservé au type 'string' (plan-mark3.md action 20, specifications/07-roadmap.md §10.17). Tri par distance d'édition (rapidfuzz) côté route GET /api/suggest/<meta_class>/<class>/<attribute>. Absent ou false = pas de suggestion (comportement actuel inchangé). Sans objet pour les autres types."
+                                },
                                 "layer_map": {
                                     "type": "object",
                                     "additionalProperties": {

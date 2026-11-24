@@ -2167,8 +2167,57 @@
   nouveau endpoint dans `backend/routes/routes_read.py` (ou nouveau
   module dédié), `frontend/src/pages/NavigationPage.tsx`,
   `frontend/src/pages/ConfigurationPage.tsx`, `frontend/src/api.ts`.
-- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
-  implémentée.
+- **Statut** : ✅ fait (2026-11-24, 2 itérations : worker implémentation
+  + worker sync doc).
+  - Fichiers touchés : `model/schema.json` (champ `autosuggest`
+    boolean, sans contrainte `allOf` restreignant au type `string` —
+    convention documentaire seule, comme `separator`/`values`),
+    `model/itil_cmdb.json` (`datacenter.localisation`),
+    `model/ansible_inventory.json`
+    (`version_logicielle.environnement`) — 2 attributs de démo
+    activés, choisis faute de `os.nom`/`application_versionnee.version`
+    pas encore existants (action 17 pas encore traitée à ce stade de
+    la vague) ; `backend/requirements.txt` (+rapidfuzz) ;
+    `backend/routes/routes_read.py` (route
+    `GET /api/suggest/<meta_class>/<class>/<attribute>?q=...`,
+    fonction `suggest_attribute_values`) ; nouveau
+    `backend/tests/test_attribute_autosuggest.py` (11 tests) ;
+    `frontend/src/api.ts` (`apiSuggest`), `frontend/src/types.ts`
+    (`AttributeDefinition.autosuggest`),
+    `frontend/src/pages/NavigationPage.tsx` (composant
+    `AutosuggestInput`, branché formulaire modal ET édition inline de
+    cellule — rappel respecté),
+    `frontend/src/pages/ConfigurationPage.tsx` (case à cocher
+    « Suggestion auto ») ; `specifications/07-roadmap.md` §10.17,
+    `specifications/04-api-backend.md` §4.9 (nouveau),
+    `specifications/03-modele-donnees.md` §3.2quinquies (nouveau),
+    `specifications/05-frontend.md` §6.9/§6.10 (étendus).
+  - Tests : 267/267 pytest (256 + 11 nouveaux) ; démo bout-en-bout
+    réelle sur stack docker-compose vivante (objets `datacenter`
+    créés, valeurs actives vs fermées `valid_to` vérifiées, 400/404
+    confirmés, RBAC tenant confirmé par le testeur ciblé) ;
+    `vite build` OK (591 modules) ; `tsc -b` : seules erreurs
+    préexistantes `DiagramPage.tsx` (dette echarts non liée à cette
+    action).
+  - Points acceptés sans correction (dette documentée, non
+    bloquante) : pas de contrainte JSON Schema empêchant
+    `autosuggest` sur un type non-`string` (convention documentaire
+    comme pour `separator`/`values`) ; pas d'index SQL dédié ni de
+    garde-fou de cardinalité sur `/api/suggest` (acceptable au volume
+    actuel) ; debounce frontend fait main sans `AbortController`
+    (race résiduelle cosmétique, UI only) ; `fuzz.ratio` sensible
+    casse/accents sans normalisation ; préfixe `/api/suggest/...` hors
+    du schéma `/api/read|write|delete|config` établi (purement
+    stylistique) ; gap pré-existant non lié à cette action —
+    `specifications/05-frontend.md` §6.10 ne documente toujours pas
+    `boolean` (action 19) dans sa colonne Options, signalé mais pas
+    corrigé ici (hors scope strict de l'action 20), à reconsidérer
+    pour l'action 24 (réorg doc).
+  - Rappel explicite pour la suite : quand l'action 17 (extension
+    CMDB) sera traitée dans cette même vague, reconsidérer
+    l'activation d'`autosuggest` sur `os.nom`/`os.version`/
+    `application_versionnee.version`/`module_versionne.version`
+    (classes pas encore créées à ce stade).
 
 ## 21. [Nouvelle fonctionnalité] Recherche globale
 
@@ -2403,7 +2452,7 @@
 | 17 | Extension du modèle CMDB embarqué | ⬜ à faire |
 | 18 | Layer dynamique piloté par un attribut select | ✅ fait |
 | 19 | Type d'attribut boolean | ✅ fait (constat rétroactif 2026-11-24) |
-| 20 | Autosuggest : suggestions de valeurs apprises sur un attribut texte | ⬜ à faire |
+| 20 | Autosuggest : suggestions de valeurs apprises sur un attribut texte | ✅ fait |
 | 21 | Recherche globale | ⬜ à faire |
 | 22 | [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique | ✅ fait |
 | 23 | [Dette documentaire] Enrichissement de `specifications/use case.md` | ⬜ à faire |
