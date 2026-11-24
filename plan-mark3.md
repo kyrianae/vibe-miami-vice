@@ -2264,8 +2264,114 @@
   routes_search.py`), nouveau `frontend/src/pages/RecherchePage.tsx`,
   `frontend/src/components/Navbar.tsx`, `frontend/src/App.tsx`,
   `frontend/src/api.ts`.
-- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
-  implémentée.
+- **Statut** : 🔄 en cours (2026-11-24) — implémentation faite (backend
+  `backend/routes/routes_search.py` + frontend `RecherchePage.tsx` +
+  intégrations `Navbar.tsx`/`App.tsx`/`api.ts`/`types.ts`), 8 tests
+  dédiés ajoutés (`backend/tests/test_search_action_21.py`, 275 tests
+  backend au total, tous verts), `tsc -b`/`vite build` sans nouvelle
+  erreur. En attente de revue croisée/arbitrage avant passage en ✅ fait
+  (détail complet : `specifications/07-roadmap.md` §10.18).
+
+## 21bis. [Sécurité, urgent] Unicité du nom d'attribut dans une classe + fuite de secret via `/api/suggest` et `/api/read/object`
+
+> Trouvé par `pessimiste` en revue croisée/revalidation de l'action 21
+> (2026-11-24), pas planifié à l'origine. Décision utilisateur
+> (2026-11-24) : traiter en urgence, avant de reprendre la file
+> 17/23/24/25.
+
+- **Problème** : aucune contrainte d'unicité sur `attributes[].name` au
+  sein d'une même classe (ni `model/schema.json` — pas de `uniqueItems`
+  sur `attributes` — ni `ConfigurationPage.tsx`, ni backend), et
+  `_check_class_name_unique` (`routes_write.py:1035`,
+  `class_names = {cls["class"] for cls in data["classes"] if
+  cls.get("class")}`) utilise un **set**, donc ne détecte même pas une
+  classe dupliquée **dans le même payload** d'un seul
+  `POST /api/write/metaclass`. Un attribut déclaré deux fois sur un même
+  nom — une fois `secret`, une fois non-secret (ou une classe déclarée
+  deux fois dans la même meta-classe, une occurrence secrète, l'autre
+  non) — est acceptée sans erreur (201) par l'API publique, exploitable
+  par n'importe quel tenant-admin dans son périmètre ou un global-admin,
+  **aucun accès SQL direct requis**.
+  Conséquences prouvées en live (revalidation action 21, avant son fix
+  n°3) :
+  1. **Le chemin d'écriture lui-même** (`routes_write.py`,
+     `_coerce_typed_value`/résolution de `attr_def`) s'arrête à la
+     **première** déclaration du nom rencontrée — si celle-ci est
+     `string` (non secret) et qu'une déclaration `secret` du même nom
+     existe plus loin, **la valeur est stockée en clair**, jamais
+     chiffrée, malgré la présence d'une déclaration `secret` sur ce nom
+     dans le même schéma. Pas un vecteur de lecture, un vecteur de
+     **stockage** incorrect — le trou le plus sérieux des trois.
+  2. **`GET /api/suggest/<meta>/<class>/<attribute>`** (action 20,
+     `routes_read.py`) résout le type attendu par la **première**
+     occurrence du nom dans `class_def["attributes"]` — si cette
+     première occurrence n'est pas `secret`, la route renvoie les
+     valeurs stockées (potentiellement en clair, cf. point 1) **sans
+     aucune authentification requise** (route de lecture anonyme par
+     design).
+  3. **`GET /api/read/object/<id>`** (`routes_read.py:232-234`,
+     `_build_object_payload`) : en cas de **classe déclarée deux fois**
+     dans la même meta-classe, la boucle `for c in ...: if c["class"] ==
+     cls: return {...}` s'arrête à la **première** occurrence trouvée —
+     si celle-ci ne déclare pas l'attribut comme `secret` (alors qu'une
+     2e occurrence de la même classe le fait), le masquage générique
+     (`"••••••••"`) ne s'applique jamais, la valeur ressort telle
+     quelle.
+  4. Même motif de résolution « première occurrence gagne », non vérifié
+     dans ce cycle mais très probablement affecté (même pattern de code) :
+     `backend/routes/routes_files.py:229-235` (`_lookup_attr_type`) et
+     un autre point de `routes_read.py:569`.
+  L'action 21 (recherche globale) avait le même angle mort, **déjà
+  corrigé** (3e itération, commit à venir) côté `/api/search`
+  spécifiquement — ce point couvre les autres routes déjà existantes
+  avant l'action 21, non concernées par ce fix.
+- **Correctif** (portée à confirmer/affiner à l'implémentation, mais
+  principe déjà clair) :
+  1. **Bloquer la cause racine à l'écriture** : ajouter une contrainte
+     d'unicité de `attributes[].name` au sein d'une classe — frontend
+     (`ConfigurationPage.tsx`, même niveau de validation bloquante que
+     l'action 22 pour `classes`/`values` vides) **et** backend
+     (`routes_write.py`, `write_class`/`write_metaclass`, avant
+     `jsonschema.validate`, même pattern que
+     `_check_class_name_unique` de l'action 22 mais pour les noms
+     d'attribut intra-classe). Idem pour une classe dupliquée dans la
+     même meta-classe (le `set` de `_check_class_name_unique` doit
+     détecter un doublon **dans le payload lui-même**, pas seulement
+     contre les autres meta-classes déjà en base).
+  2. **Fixer les résolutions « première occurrence gagne »** partout où
+     le type d'un attribut est résolu pour en tirer une décision de
+     sécurité (chiffrement à l'écriture, masquage à la lecture) : si un
+     nom a plusieurs déclarations dans le `data` stocké (données déjà en
+     base avant le correctif 1, migration non rétroactive), traiter
+     comme `secret` dès qu'**une seule** des déclarations l'est (deny
+     prioritaire, jamais allow par défaut) — cohérent avec le fix déjà
+     appliqué à `routes_search.py`
+     (`all_names[key] - secret_names_seen[key]`, à répliquer dans
+     `routes_write.py`, `routes_read.py` (`_build_object_payload`,
+     point de résolution ligne 569), `routes_read.py` (route suggest),
+     `routes_files.py` (`_lookup_attr_type`)).
+  3. Tests : réplication des scénarios déjà construits pour l'action 21
+     (attribut dupliqué secret+non-secret, classe dupliquée) sur
+     chacune des routes concernées — écriture (vérifie chiffrement, pas
+     stockage en clair), lecture objet (masquage), suggest (masquage/
+     refus), et le blocage à l'écriture du point 1 (contrainte
+     d'unicité, 400 si violée).
+  4. Pas de migration de données existantes dans cette action (aucune
+     donnée réelle de ce type trouvée en base de prod/démo à ce jour,
+     seulement des canaris de test créés puis nettoyés par pessimiste/
+     testeur) — si une telle donnée existait déjà, le point 2
+     (deny-prioritaire) la couvre déjà sans action supplémentaire.
+- **Effort** : moyen (plusieurs points de résolution à corriger avec le
+  même motif, mais le motif/fix est désormais bien identifié et déjà
+  prouvé fonctionnel sur `routes_search.py`).
+- **Fichiers** : `model/schema.json` (ou validation applicative,
+  `uniqueItems` JSON Schema ne suffit pas seul pour un message d'erreur
+  explicite), `frontend/src/pages/ConfigurationPage.tsx`,
+  `backend/routes/routes_write.py`, `backend/routes/routes_read.py`
+  (`_build_object_payload` + route suggest), `backend/routes/
+  routes_files.py` (`_lookup_attr_type`), nouveaux tests.
+- **Statut** : ⬜ à faire — **priorité immédiate**, à traiter avant de
+  reprendre 17/23/24/25.
 
 ## 22. [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique
 
@@ -2453,7 +2559,8 @@
 | 18 | Layer dynamique piloté par un attribut select | ✅ fait |
 | 19 | Type d'attribut boolean | ✅ fait (constat rétroactif 2026-11-24) |
 | 20 | Autosuggest : suggestions de valeurs apprises sur un attribut texte | ✅ fait |
-| 21 | Recherche globale | ⬜ à faire |
+| 21 | Recherche globale | 🔄 en cours |
+| 21bis | [Sécurité, urgent] Unicité nom d'attribut + fuite secret via `/api/suggest`/`/api/read/object` | ⬜ à faire — priorité immédiate |
 | 22 | [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique | ✅ fait |
 | 23 | [Dette documentaire] Enrichissement de `specifications/use case.md` | ⬜ à faire |
 | 24 | [Dette documentaire] Réorganisation de `specifications/07-roadmap.md` (sortir le livré) | ⬜ à faire |
