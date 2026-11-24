@@ -65,11 +65,23 @@ class FakeCursor:
             else:
                 new_id = max([r["id"] for r in self.store.values()], default=0) + 1
                 self.store[meta_class] = {"id": new_id, "data": json.loads(data_json)}
+        elif sql_norm.startswith("SELECT meta_class, data FROM definition WHERE meta_class !="):
+            # Unicité du nom de classe entre meta-classes (plan-mark3.md
+            # action 22, specifications/07-roadmap.md §10.19), scan de
+            # _check_class_name_unique dans routes_write.py.
+            (excluded,) = params
+            self._results = [
+                {"meta_class": mc, "data": row["data"]}
+                for mc, row in self.store.items() if mc != excluded
+            ]
         else:
             raise AssertionError(f"SQL non géré par FakeCursor : {sql_norm!r}")
 
     def fetchone(self):
         return self._result
+
+    def fetchall(self):
+        return getattr(self, "_results", None) or []
 
 
 class FakeConn:

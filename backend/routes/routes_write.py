@@ -869,6 +869,33 @@ def delete_object(object_id):
         raise e
 
 
+def _check_class_name_unique(conn, meta_class_name, class_names):
+    """Lève abort(409) si une classe de `class_names` appartient déjà à une
+    meta-classe différente de `meta_class_name` (plan-mark3.md action 22,
+    specifications/07-roadmap.md §10.19) : le nom de classe doit être unique
+    tous meta-classes confondues - une classe déjà présente dans la
+    meta-classe en cours d'édition (exclue via `meta_class != %s`) n'est pas
+    un conflit, c'est une mise à jour légitime. Ouvre son propre curseur
+    (RealDictCursor, lecture seule) plutôt que de réutiliser celui de
+    l'appelant, pour rester appelable depuis write_class et write_metaclass
+    sans contrainte sur le cursor_factory déjà ouvert à l'appel.
+    """
+    if not class_names:
+        return
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT meta_class, data FROM definition WHERE meta_class != %s",
+            (meta_class_name,)
+        )
+        for row in cur.fetchall():
+            other_meta = row["meta_class"]
+            other_data = row["data"] or {}
+            for cls in other_data.get("classes", []):
+                other_class_name = cls.get("class")
+                if other_class_name is not None and other_class_name in class_names:
+                    abort(409, description=f"La classe '{other_class_name}' existe déjà dans la meta-classe '{other_meta}'")
+
+
 @write_bp.route("/api/write/class", methods=["POST"])
 def write_class():
     """Ajoute ou met à jour une classe dans une meta-classe existante.
@@ -926,6 +953,13 @@ def write_class():
             classes.append(new_class)
 
         data["classes"] = classes
+
+        # Unicité du nom de classe (plan-mark3.md action 22, specifications/
+        # 07-roadmap.md §10.19) : le remplacement en place ci-dessus (voir
+        # `replaced`) couvre déjà la mise à jour légitime au sein de CETTE
+        # meta-classe - il reste à vérifier qu'aucune AUTRE meta-classe ne
+        # porte déjà une classe de ce nom.
+        _check_class_name_unique(conn, meta_class_name, {new_class["class"]})
 
         try:
             jsonschema.validate(instance=data, schema=load_schema())
@@ -993,6 +1027,13 @@ def write_metaclass():
 
         if isinstance(data["version"], float):
             abort(400, description=f"champ 'version' invalide : doit être un entier, reçu un nombre à virgule ({data['version']!r})")
+
+        # Unicité du nom de classe (plan-mark3.md action 22, specifications/
+        # 07-roadmap.md §10.19) : même contrôle que write_class, à l'échelle
+        # de toutes les classes remplacées ici. `meta_class_name` exclut déjà
+        # la meta-classe en cours d'édition (mise à jour légitime).
+        class_names = {cls["class"] for cls in data["classes"] if cls.get("class")}
+        _check_class_name_unique(conn, meta_class_name, class_names)
 
         try:
             jsonschema.validate(instance=data, schema=load_schema())

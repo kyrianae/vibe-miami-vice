@@ -1154,7 +1154,7 @@ Conception à esquisser :
 
 Détail complet et suivi : `plan-mark3.md` action 21.
 
-## 10.19 Validation création de classe : meta_class auto, nom de classe unique (conçu, pas implémenté — `plan-mark3.md` action 22)
+## 10.19 Validation création de classe : meta_class auto, nom de classe unique (implémenté — `plan-mark3.md` action 22)
 
 > Demande utilisateur (2026-11-23) : dans `ConfigurationPage.tsx`, si
 > `meta_class` est laissé vide à la création, le prendre égal au nom de
@@ -1162,40 +1162,45 @@ Détail complet et suivi : `plan-mark3.md` action 21.
 > `handleSave`, ligne ~316-319) ; vérifier que la classe n'existe pas
 > déjà ; le nom de classe doit être unique.
 
-Grounding code : `handleSave` (`ConfigurationPage.tsx:315-389`) bloque
-aujourd'hui si `metaClassName.trim()` est vide (toast d'erreur, pas de
-sauvegarde) — aucun défaut automatique. `allClassNames` (ligne ~137,
-déjà calculé à partir de `allClasses` + `classDefs` courants) donne
-déjà la liste de tous les noms de classe existants, réutilisable pour
-la vérification d'unicité sans nouvel appel réseau. Aucun contrôle
-d'unicité de nom de classe visible côté backend
-(`backend/routes/routes_write.py` `write_class`/`write_metaclass`) à
-ce jour — la table `object` porte `meta_class`+`class` séparément, pas
-de contrainte d'unicité sur `class` seul.
+Grounding code (avant implémentation) : `handleSave`
+(`ConfigurationPage.tsx:315-389`) bloquait si `metaClassName.trim()`
+était vide (toast d'erreur, pas de sauvegarde) — aucun défaut
+automatique. Aucun contrôle d'unicité de nom de classe côté backend
+(`backend/routes/routes_write.py` `write_class`/`write_metaclass`) —
+la table `object` porte `meta_class`+`class` séparément, pas de
+contrainte d'unicité sur `class` seul.
 
-Conception à esquisser :
-- **meta_class auto** : si `metaClassName` vide, le défaut = nom de la
-  classe. ⚠️ Point ouvert, pas tranché par l'utilisateur : un
-  formulaire peut porter **plusieurs** classes (`classDefs`, tableau) —
-  quel nom de classe sert de défaut si `metaClassName` est vide et
-  qu'il y a 2+ classes dans le formulaire ? Recommandé : n'autoriser le
-  défaut automatique que si **une seule** classe est présente dans le
-  formulaire, sinon garder le blocage actuel (nom de meta-classe requis
-  explicitement dès qu'il y a ambiguïté).
-- **Vérification d'existence / unicité du nom de classe** : comparer
-  chaque nom de `cleanClasses` à `allClassNames` (classes d'**autres**
-  meta-classes déjà chargées) avant sauvegarde — bloquant avec message
-  explicite si collision détectée hors du périmètre de la meta-classe
-  en cours d'édition (une classe déjà présente **dans** la meta-classe
-  actuellement éditée n'est pas un conflit, c'est une mise à jour
-  légitime).
-- ⚠️ Point ouvert, à trancher à l'implémentation : cette vérification
-  reste-t-elle **uniquement frontend** (simple garde UX, contournable
-  par un appel direct à `/api/write/metaclass`) ou doit-elle aussi être
-  appliquée côté backend (`write_class`/`write_metaclass`) pour être
-  une vraie garantie ? Recommandé : les deux — frontend pour l'UX
-  immédiate (cohérent avec le pattern déjà établi à l'action 13 pour
-  `classes`/`values` vides), backend pour la garantie réelle (sinon
-  « doit être unique » reste une simple convention non appliquée).
+Les deux points ouverts ont été tranchés (recommandations retenues) et
+implémentés :
+- **meta_class auto** : si `metaClassName` est vide, le défaut = nom de
+  la classe, **uniquement si une seule classe réelle** (`cleanClasses`)
+  est présente dans le formulaire ; sinon (0 ou 2+ classes), le
+  blocage explicite est conservé tel quel (nom de meta-classe requis
+  dès qu'il y a ambiguïté). Implémenté dans `handleSave`
+  (`ConfigurationPage.tsx`) : construction de `cleanClasses` déplacée
+  avant le test de `metaClassName` vide (il faut connaître le nombre de
+  classes réelles pour décider du défaut), nom effectif stocké dans
+  `effectiveMetaClassName` (utilisé pour le payload envoyé à
+  `apiWriteMetaClass`), et `setMetaClassName(...)` appelé en parallèle
+  pour que l'UI reflète la valeur déduite avant le toast de succès.
+- **Vérification d'existence / unicité du nom de classe, frontend ET
+  backend** (les deux retenus, pas seulement une garde UX) :
+  - Frontend (`ConfigurationPage.tsx`, `handleSave`) : set scopé
+    `otherClassNames` construit à partir de `allClasses` (classes
+    backend), filtré sur `c.meta_class !== selectedMetaClass` — **pas**
+    réutilisation de `allClassNames` (ligne ~137), qui fusionne aussi
+    `classDefs` courant et retrouverait donc toujours une classe du
+    formulaire (faux conflit garanti). Collision bloquante avec toast
+    explicite nommant la classe en conflit ; une classe déjà présente
+    dans la meta-classe en cours d'édition n'est pas un conflit (mise à
+    jour légitime).
+  - Backend (`backend/routes/routes_write.py`) : nouvelle fonction
+    `_check_class_name_unique(conn, meta_class_name, class_names)` —
+    scan `SELECT meta_class, data FROM definition WHERE meta_class !=
+    %s`, `abort(409)` si une classe de `class_names` apparaît dans une
+    autre meta-classe. Appelée depuis `write_class` et
+    `write_metaclass`, juste avant `jsonschema.validate`, en plus des
+    contrôles RBAC existants (`_check_existing_class_tenant_scope`,
+    `_check_class_tenant_write_permission`), inchangés.
 
 Détail complet et suivi : `plan-mark3.md` action 22.

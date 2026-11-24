@@ -118,6 +118,16 @@ class FakeCursor:
             else:
                 self.rowcount = 0
 
+        elif sql_norm.startswith("SELECT meta_class, data FROM definition WHERE meta_class !="):
+            # Unicité du nom de classe entre meta-classes (plan-mark3.md
+            # action 22, specifications/07-roadmap.md §10.19), scan de
+            # _check_class_name_unique dans routes_write.py.
+            (excluded,) = params
+            self._results = [
+                {"meta_class": mc, "data": row["data"]}
+                for mc, row in self.db.definitions.items() if mc != excluded
+            ]
+
         elif sql_norm.startswith("SELECT id, tenants, deleted_at FROM object WHERE id"):
             obj = self.db.objects.get(params[0])
             self._result = (obj["id"], obj["tenants"], obj["deleted_at"]) if obj else None
@@ -637,6 +647,124 @@ def test_write_metaclass_valid_schema_accepted(client, db_and_ctx):
         ],
     })
     assert resp.status_code == 201, resp.get_json()
+
+
+# ---------------------------------------------------------------------
+# 7bis. Unicité du nom de classe entre meta-classes (plan-mark3.md action 22,
+#    specifications/07-roadmap.md §10.19) : _check_class_name_unique,
+#    partagée par write_class et write_metaclass. Un nom de classe déjà
+#    présent dans une AUTRE meta-classe est un conflit (409, message nommant
+#    la classe et la meta-classe en conflit) ; le remplacement d'une classe
+#    au sein de SA PROPRE meta-classe (meta_class_name exclu du scan SQL
+#    `WHERE meta_class != %s`) reste une mise à jour légitime, pas un 409.
+# ---------------------------------------------------------------------
+
+def test_write_metaclass_class_name_conflict_with_other_metaclass_rejected(client, db_and_ctx):
+    db = db_and_ctx
+    db.seed_definition("alpha", [
+        {"class": "foo", "attributes": [{"domain": "d", "name": "n", "type": "string"}]},
+    ])
+
+    resp = client.post("/api/write/metaclass", json={
+        "meta_class": "beta",
+        "classes": [
+            {"class": "foo", "attributes": [{"domain": "d", "name": "n", "type": "string"}]},
+        ],
+    })
+    assert resp.status_code == 409
+    body = resp.get_data(as_text=True)
+    assert "foo" in body
+    assert "alpha" in body
+    assert "beta" not in db.definitions
+
+
+def test_write_metaclass_replace_within_same_metaclass_not_a_conflict(client, db_and_ctx):
+    db = db_and_ctx
+    db.seed_definition("gamma", [
+        {"class": "foo", "attributes": [{"domain": "d", "name": "n", "type": "string"}]},
+    ])
+
+    resp = client.post("/api/write/metaclass", json={
+        "meta_class": "gamma",
+        "classes": [
+            {"class": "foo", "attributes": [{"domain": "d", "name": "n2", "type": "string"}]},
+        ],
+    })
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["action"] == "updated"
+    classes = db.definitions["gamma"]["data"]["classes"]
+    assert [a["name"] for a in classes[0]["attributes"]] == ["n2"]
+
+
+def test_write_class_name_conflict_with_other_metaclass_rejected(client, db_and_ctx):
+    db = db_and_ctx
+    db.seed_definition("alpha2", [
+        {"class": "foo2", "attributes": [{"domain": "d", "name": "n", "type": "string"}]},
+    ])
+    db.seed_definition("beta2", [
+        {"class": "bar2", "attributes": [{"domain": "d", "name": "n", "type": "string"}]},
+    ])
+
+    resp = client.post("/api/write/class", json={
+        "meta_class": "beta2",
+        "class": {"class": "foo2", "attributes": [{"domain": "d", "name": "n", "type": "string"}]},
+    })
+    assert resp.status_code == 409
+    body = resp.get_data(as_text=True)
+    assert "foo2" in body
+    assert "alpha2" in body
+    # Pas d'assertion sur l'état de db.definitions["beta2"] ici : le
+    # FakeCursor renvoie la même référence de dict que celle stockée côté
+    # "DB" (pas de copie au SELECT), donc le `classes.append(...)` fait par
+    # write_class avant l'abort(409) est visible en mémoire même si
+    # l'UPDATE SQL réel n'a jamais lieu (artefact du harnais de test, sans
+    # équivalent avec un vrai psycopg2/Postgres qui désérialise une copie
+    # fraîche à chaque SELECT) - non représentatif du comportement réel.
+
+
+def test_write_class_replace_within_same_metaclass_not_a_conflict(client, db_and_ctx):
+    db = db_and_ctx
+    db.seed_definition("delta2", [
+        {"class": "foo3", "attributes": [{"domain": "d", "name": "n", "type": "string"}]},
+    ])
+
+    resp = client.post("/api/write/class", json={
+        "meta_class": "delta2",
+        "class": {"class": "foo3", "attributes": [{"domain": "d", "name": "n2", "type": "string"}]},
+    })
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["action"] == "updated"
+    classes = db.definitions["delta2"]["data"]["classes"]
+    assert [a["name"] for a in classes[0]["attributes"]] == ["n2"]
+
+
+def test_write_class_malformed_other_class_in_unrelated_metaclass_does_not_crash(client, db_and_ctx):
+    """Correction arbitrage plan-mark3.md action 22, point 2 :
+    _check_class_name_unique utilisait `cls["class"]` sans garde - une
+    classe malformée (sans clé "class") présente dans une meta-classe SANS
+    RAPPORT avec l'écriture en cours faisait planter en 500 (KeyError) une
+    écriture par ailleurs valide sur une autre meta-classe. `.get("class")`
+    + garde `is not None` corrige ça : la meta-classe malformée est ignorée
+    silencieusement par le scan, l'écriture valide aboutit normalement.
+
+    Important : "zeta" (la meta-classe éditée) doit déjà exister, sinon
+    write_class renvoie 404 avant même d'atteindre _check_class_name_unique
+    et le test ne couvrirait pas du tout le chemin corrigé."""
+    db = db_and_ctx
+    db.seed_definition("epsilon", [
+        {"attributes": [{"domain": "d", "name": "n", "type": "string"}]},  # pas de clé "class"
+    ])
+    db.seed_definition("zeta", [
+        {"class": "existing4", "attributes": [{"domain": "d", "name": "n", "type": "string"}]},
+    ])
+
+    resp = client.post("/api/write/class", json={
+        "meta_class": "zeta",
+        "class": {"class": "foo4", "attributes": [{"domain": "d", "name": "n", "type": "string"}]},
+    })
+    assert resp.status_code == 201, resp.get_json()
+    classes = db.definitions["zeta"]["data"]["classes"]
+    assert sorted(c["class"] for c in classes) == ["existing4", "foo4"]
 
 
 # ---------------------------------------------------------------------

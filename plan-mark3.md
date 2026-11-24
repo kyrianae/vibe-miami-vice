@@ -2250,8 +2250,26 @@
 - **Fichiers** : `frontend/src/pages/ConfigurationPage.tsx`,
   potentiellement `backend/routes/routes_write.py` si le contrôle
   backend est retenu.
-- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
-  implémentée.
+- **Statut** : ✅ fait (2026-11-24). Les deux points tranchés sont
+  implémentés : (a) `meta_class` vide → défaut = nom de classe si une
+  seule classe réelle dans le formulaire, sinon blocage inchangé ; (b)
+  unicité du nom de classe vérifiée côté frontend
+  (`ConfigurationPage.tsx`, `handleSave`) ET côté backend
+  (`routes_write.py`, `_check_class_name_unique`, appelée dans
+  `write_class` et `write_metaclass`, réponse 409 en cas de collision
+  cross-meta-class). 5 tests dédiés ajoutés dans
+  `backend/tests/test_model_driven_typing.py` (collision cross-meta-
+  classe rejetée, mise à jour intra-meta-classe acceptée — pour
+  `write_class` et `write_metaclass` — + non-crash sur classe
+  malformée). 2 itérations : itération 1 (implémentation initiale),
+  itération 2 (ajout des tests dédiés + fix défensif
+  `cls.get("class")` suite à l'analyse croisée pessimiste/candide).
+  testeur-global : vert (256/256 backend, aucune régression, build
+  frontend sans nouvelle erreur). 2 points de dette acceptés sans
+  correction (documentés, pas bloquants) : TOCTOU théorique sur le
+  contrôle d'unicité (pas de `FOR UPDATE`, risque faible sur écritures
+  de schéma rares) ; pas de détection de doublon de nom de classe au
+  sein du même formulaire soumis (préexistant, hors périmètre).
 
 ## 23. [Dette documentaire] Enrichissement de `specifications/use case.md`
 
@@ -2387,7 +2405,7 @@
 | 19 | Type d'attribut boolean | ✅ fait (constat rétroactif 2026-11-24) |
 | 20 | Autosuggest : suggestions de valeurs apprises sur un attribut texte | ⬜ à faire |
 | 21 | Recherche globale | ⬜ à faire |
-| 22 | [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique | ⬜ à faire |
+| 22 | [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique | ✅ fait |
 | 23 | [Dette documentaire] Enrichissement de `specifications/use case.md` | ⬜ à faire |
 | 24 | [Dette documentaire] Réorganisation de `specifications/07-roadmap.md` (sortir le livré) | ⬜ à faire |
 | 25 | Clôture de Mark 3 → ouverture de Mark 4 | ⬜ à faire |

@@ -316,11 +316,10 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
 
   // --- Save ---
   const handleSave = async () => {
-    if (!metaClassName.trim()) {
-      addToast('error', 'Le nom de la meta-classe est requis');
-      return;
-    }
-    // Clean up: remove empty classes array items, clean attributes
+    // Clean up: remove empty classes array items, clean attributes. Déplacé
+    // avant le test de `metaClassName` vide (plan-mark3.md action 22,
+    // specifications/07-roadmap.md §10.19) : il faut connaître le nombre de
+    // classes réelles du formulaire pour décider du défaut auto ci-dessous.
     const cleanClasses: ClassDefinition[] = classDefs
       .filter((c) => c.class.trim())
       .map((c) => {
@@ -360,6 +359,22 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
         return def;
       });
 
+    // meta_class auto-déduite (plan-mark3.md action 22, specifications/
+    // 07-roadmap.md §10.19) : si le nom de meta-classe est vide, on le
+    // déduit du nom de la classe UNIQUEMENT si le formulaire ne porte
+    // qu'une seule classe réelle (cleanClasses) - sinon ambiguïté (0 ou 2+
+    // classes), on garde le blocage explicite déjà en place.
+    let effectiveMetaClassName = metaClassName.trim();
+    if (!effectiveMetaClassName) {
+      if (cleanClasses.length === 1) {
+        effectiveMetaClassName = cleanClasses[0].class;
+        setMetaClassName(effectiveMetaClassName);
+      } else {
+        addToast('error', 'Le nom de la meta-classe est requis');
+        return;
+      }
+    }
+
     // Validation front légère : le schéma JSON backend exige juste la
     // présence des clés 'classes'/'values' (required), pas qu'elles soient
     // non vides - un tableau vide passerait donc la validation silencieusement
@@ -381,7 +396,28 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
       }
     }
 
-    const data: MetaClassDefinition = { meta_class: metaClassName, classes: cleanClasses };
+    // Unicité du nom de classe (plan-mark3.md action 22, specifications/
+    // 07-roadmap.md §10.19) : une classe de cleanClasses ne doit pas déjà
+    // exister dans une AUTRE meta-classe que celle en cours d'édition. Set
+    // scopé construit ici (allClassNames, ligne ~137, ne convient pas : il
+    // fusionne aussi classDefs courant, donc une classe du formulaire s'y
+    // retrouverait toujours - faux conflit garanti). Quand selectedMetaClass
+    // est null (création), aucune exclusion n'a lieu. Garde-fou UX - le
+    // contrôle réel (contournement direct de l'API) est fait côté backend,
+    // voir _check_class_name_unique dans routes_write.py.
+    const otherClassNames = new Set(
+      allClasses
+        .filter((c) => c.meta_class !== selectedMetaClass)
+        .map((c) => c.class)
+    );
+    for (const c of cleanClasses) {
+      if (otherClassNames.has(c.class)) {
+        addToast('error', `La classe "${c.class}" existe déjà dans une autre meta-classe`);
+        return;
+      }
+    }
+
+    const data: MetaClassDefinition = { meta_class: effectiveMetaClassName, classes: cleanClasses };
 
     try {
       const res = await apiWriteMetaClass(data);
