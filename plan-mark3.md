@@ -2545,7 +2545,16 @@
   l'intention d'origine.
 - **Effort** : faible (doc only).
 - **Fichiers** : `specifications/use case.md`.
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-25). `specifications/use case.md` passé
+  de 92 à 267 lignes. Nouveaux cas d'usage ajoutés pour l'action 17
+  (cluster/organisation/localisation/besoin/cartographie applicative/
+  réseau DNS) et l'action 21 (recherche globale). Structure
+  « accessible maintenant » / « roadmap » conservée. 1 itération de
+  correction après analyse croisée candide/pessimiste : ajout du cas
+  d'usage recherche globale manquant + précision de l'absence de
+  jointure `entree_dns`. testeur factuel : 24/24 PASS. testeur-global :
+  vert (stack 6 services up, 299/299 tests, `tsc -b` sans nouvelle
+  erreur).
 
 ## 24. [Dette documentaire] Réorganisation de `specifications/07-roadmap.md` — sortir le livré vers un emplacement fonctionnel
 
@@ -2655,6 +2664,6 @@
 | 21 | Recherche globale | ✅ fait |
 | 21bis | [Sécurité, urgent] Unicité nom d'attribut + fuite secret via `/api/suggest`/`/api/read/object` | ✅ fait |
 | 22 | [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique | ✅ fait |
-| 23 | [Dette documentaire] Enrichissement de `specifications/use case.md` | ⬜ à faire |
+| 23 | [Dette documentaire] Enrichissement de `specifications/use case.md` | ✅ fait |
 | 24 | [Dette documentaire] Réorganisation de `specifications/07-roadmap.md` (sortir le livré) | ⬜ à faire |
 | 25 | Clôture de Mark 3 → ouverture de Mark 4 | ⬜ à faire |
