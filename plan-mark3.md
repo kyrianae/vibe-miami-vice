@@ -2117,8 +2117,27 @@
 - **Fichiers** : `model/schema.json`, `backend/routes/
   routes_write.py`, `frontend/src/pages/NavigationPage.tsx`,
   `frontend/src/pages/ConfigurationPage.tsx`, `frontend/src/types.ts`.
-- **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
-  implémentée.
+- **Statut** : ✅ fait — **constat rétroactif (2026-11-24)**, pas de
+  cycle orchestrateur tracé pour cette action : le Statut était resté
+  à ⬜ alors que le code livre déjà intégralement le correctif décrit
+  ci-dessus (implémentée dans une session parallèle, même schéma que la
+  note de l'action 16 sur `specifications/`). Vérifié avant de
+  poursuivre le plan plutôt que de prendre le Statut pour argent
+  comptant : `model/schema.json` porte `"boolean"` dans l'enum
+  `attributes[].type` (commentaire explicite action 19) ;
+  `backend/routes/routes_write.py:412-433` valide/convertit
+  `true`/`false` en `value_string`, `abort(400)` sinon ; `frontend/src/
+  types.ts` et `ConfigurationPage.tsx` (`ATTR_TYPES`, ligne 29) incluent
+  `boolean` ; `NavigationPage.tsx` a bien les deux branches de rendu
+  case-à-cocher (formulaire **et** édition inline de cellule, lignes
+  688/878/1394/1607 — le rappel explicite de ne pas reproduire l'oubli
+  de l'action 7 a été respecté) ; `backend/tests/
+  test_attribute_type_boolean.py` existe ; `specifications/
+  03-modele-donnees.md` §3.2quater et `specifications/
+  04-api-backend.md` §4.8 documentent déjà le type. Suite de tests
+  rejouée pour confirmer : `SCHEMA_PATH=.../model/schema.json
+  .venv/bin/pytest backend/tests/ -q` → **251/251 passés**. Aucun
+  changement de code nécessaire, bookkeeping du plan seul mis à jour.
 
 ## 20. [Nouvelle fonctionnalité] Autosuggest : suggestions de valeurs apprises sur un attribut texte
 
@@ -2234,6 +2253,108 @@
 - **Statut** : ⬜ à faire — conception tranchée (2026-11-23), pas encore
   implémentée.
 
+## 23. [Dette documentaire] Enrichissement de `specifications/use case.md`
+
+> Demande utilisateur (2026-11-24) : « ajoute [au plan] : ajouter les use
+> case mieux que ça » — notée directement dans le tableau récapitulatif
+> sans section dédiée au moment de la formulation ; section écrite ici
+> en clôturant le bookkeeping du plan (même convention que les autres
+> actions).
+
+- **Problème** : `specifications/use case.md` (92 lignes) a été
+  re-rédigé le 2026-11-23 et revu contre le code réel jusqu'à l'action
+  20 (fusion des entrées dupliquées du brouillon initial, split
+  « accessible maintenant » / « roadmap »), mais reste un document
+  court et volontairement haut niveau — l'utilisateur juge qu'il peut
+  être enrichi (« mieux que ça »), sans préciser plus avant ce qui
+  manque précisément.
+- **Correctif** : relecture du code réel à l'état courant (y compris les
+  actions 17/20/21/22 une fois livrées par ce même cycle de plan,
+  cf. ordre d'exécution ci-dessous) et de `tocheck.md`, puis
+  enrichissement du document : plus de cas d'usage couverts, des
+  parcours concrets plus détaillés (pas seulement une liste de
+  prérequis livrés), en conservant la structure « accessible dès
+  maintenant » vs « roadmap (prérequis manquants) » déjà en place et la
+  règle déjà respectée de vérifier contre le code, pas seulement contre
+  l'intention d'origine.
+- **Effort** : faible (doc only).
+- **Fichiers** : `specifications/use case.md`.
+- **Statut** : ⬜ à faire.
+
+## 24. [Dette documentaire] Réorganisation de `specifications/07-roadmap.md` — sortir le livré vers un emplacement fonctionnel
+
+> Demande utilisateur (2026-11-24) : « enlever ou déplacer ce qui est
+> implémenté de la roadmap et le déplacer dans fonctionnel ou autre
+> (emplacement adéquat) » — notée directement dans le tableau
+> récapitulatif sans section dédiée au moment de la formulation ;
+> section écrite ici en clôturant le bookkeeping du plan.
+
+- **Problème** : `specifications/07-roadmap.md` (1201 lignes) mélange,
+  dans une même numérotation §10.x, des sections marquées « fait »
+  (la grande majorité à ce stade — 10.2 à 10.13, 10.15, 10.16, 10.18
+  une fois cette vague terminée) et les sections encore réellement
+  ouvertes (10.13 outil d'ingestion = action 11, volontairement non
+  traitée ; 10.14 CMDB étendu tant que l'action 17 n'est pas livrée ;
+  10.19 tant que l'action 22 n'est pas livrée) — un lecteur qui veut
+  savoir « qu'est-ce qui reste à faire » doit lire 1200 lignes et
+  trier lui-même par la mention « fait »/« pas fait » dans chaque
+  titre de section.
+- **Correctif** : pour chaque section §10.x **déjà marquée « fait »**
+  au moment de l'exécution de cette action, extraire/distiller son
+  contenu hors de `07-roadmap.md` vers l'emplacement le plus adéquat —
+  l'utilisateur a explicitement laissé le choix ouvert (« fonctionnel ou
+  autre, emplacement adéquat ») plutôt que d'imposer `01-fonctionnelle.md` :
+  - `specifications/01-fonctionnelle.md` (actuellement 15 lignes,
+    description haut niveau du projet datant d'avant Mark 1, encore
+    cite seulement `personnes.json`/`reseau.json` comme exemples) est
+    le candidat naturel pour un **catalogue de fonctionnalités livrées**
+    en vue d'ensemble, mais ne doit pas dupliquer le détail technique
+    déjà écrit par les actions 6/16 dans `03-modele-donnees.md`/
+    `04-api-backend.md`/`05-frontend.md` — ces 3 fichiers restent la
+    référence technique, `07-roadmap.md`/`01-fonctionnelle.md` ne font
+    que pointer vers eux une fois la section déplacée.
+  - Ne garder dans `07-roadmap.md` que les sections encore réellement
+    ouvertes au moment de l'exécution (dont, au minimum, 10.13 —
+    action 11, volontairement jamais traitée par ce plan) et les
+    décisions de conception encore utiles comme repères historiques
+    (ex. 10.1 « décisions tranchées pour mémoire »).
+  - Mettre à jour `specifications/README.md` (mapping des sections) en
+    conséquence.
+- **Exécution** : à faire en dernier parmi les actions de cette vague
+  (après 17/20/21/22/23), pour refléter l'état final réellement livré
+  plutôt que de trier deux fois.
+- **Effort** : faible à moyen (doc only, mais gros fichier, nombreuses
+  sections à trier et à ne pas dupliquer).
+- **Fichiers** : `specifications/07-roadmap.md`,
+  `specifications/01-fonctionnelle.md` (ou autre fichier retenu à
+  l'implémentation), potentiellement `03-modele-donnees.md`/
+  `04-api-backend.md`/`05-frontend.md` si un complément manque encore,
+  `specifications/README.md`.
+- **Statut** : ⬜ à faire.
+
+## 25. Clôture de Mark 3 → ouverture de Mark 4
+
+> Demande utilisateur (2026-11-24) : « tout faire sauf 11, fermer ce
+> plan et passer au mark4 » — notée directement dans le tableau
+> récapitulatif ; confirmée en toutes lettres par l'instruction
+> « continue le plan, sauf 11 » du 2026-11-24 qui déclenche l'exécution
+> de toute cette vague (actions 17, 19 [constat rétroactif ✅], 20, 21,
+> 22, 23, 24 ci-dessus).
+
+- **Correctif** : une fois les actions 17/20/21/22/23/24 closes (19
+  déjà ✅ par constat rétroactif), appliquer le pattern « Mark N » déjà
+  établi au passage Mark 1 → Mark 2 et Mark 2 → Mark 3 : renommer ce
+  fichier en conservant tout l'historique, annoter l'action 11 (seule
+  action encore ⬜ à la clôture, **volontairement non traitée** par
+  consigne utilisateur explicite — pas un oubli) en
+  `⬜ **reporté → voir plan-mark4.md**`, ajouter une section « Clôture
+  de Mark 3 » résumant ce qui a été livré vs. reporté, puis créer
+  `plan-mark4.md` reprenant le contenu technique complet (Problème/
+  Correctif/Effort/Fichiers) de l'action 11 comme première action de
+  Mark 4 avec un Statut `⬜ à faire` propre.
+- **Statut** : ⬜ à faire — dernière étape de cette vague, une fois
+  17/20/21/22/23/24 closes.
+
 ## Récapitulatif d'avancement
 
 > Tableau à tenir à jour en même temps que le champ **Statut** de chaque
@@ -2255,7 +2376,7 @@
 | 10b | IHM lecture seule d'un dashboard existant | ✅ fait |
 | 10c | Édition des tabs dans l'IHM | ✅ fait |
 | 10d | Sélection des sous-objets affichés par tab | ✅ fait |
-| 11 | Outil d'ingestion avec binding | ⬜ à faire |
+| 11 | Outil d'ingestion avec binding | ⬜ à faire — **volontairement non traitée** (consigne utilisateur 2026-11-24 : « sauf 11 »), reportée → voir action 25 |
 | 12 | Réorganisation de backend/ en packages (auth, data, files, routes, tests) | ✅ fait |
 | 13 | IHM de configuration : types d'attribut manquants (file/image/csv/select/secret/datasource) | ✅ fait |
 | 14 | Layers sur les classes et filtre IHM/diagramme | ✅ fait |
@@ -2263,9 +2384,10 @@
 | 16 | [Dette documentaire] Synchronisation specifications/ avec actions 7-14 | ✅ fait |
 | 17 | Extension du modèle CMDB embarqué | ⬜ à faire |
 | 18 | Layer dynamique piloté par un attribut select | ✅ fait |
-| 19 | Type d'attribut boolean | ⬜ à faire |
+| 19 | Type d'attribut boolean | ✅ fait (constat rétroactif 2026-11-24) |
 | 20 | Autosuggest : suggestions de valeurs apprises sur un attribut texte | ⬜ à faire |
 | 21 | Recherche globale | ⬜ à faire |
-| 22 | ajouter les use case mieux que ca | a faire|
-| 22 | enlever ou deplacer ce aui est implementé de la roadmap et le deplacer dasn fonctionnel ou autre (emplacement adequat) | a faire|
-| 23 | tout faire sauf 11 fermer ce plan et passer au mark4 | a faire |
+| 22 | [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique | ⬜ à faire |
+| 23 | [Dette documentaire] Enrichissement de `specifications/use case.md` | ⬜ à faire |
+| 24 | [Dette documentaire] Réorganisation de `specifications/07-roadmap.md` (sortir le livré) | ⬜ à faire |
+| 25 | Clôture de Mark 3 → ouverture de Mark 4 | ⬜ à faire |
