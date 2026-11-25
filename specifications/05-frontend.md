@@ -204,6 +204,42 @@ Graphe interactif (bibliothèque **ECharts**, composant `series: graph` ou
   `displayname` étant renvoyé par l'API, les étiquettes des nœuds utilisent
   le gabarit `displayname` quand une classe en définit un, sinon le
   fallback (concaténation du domaine `details`).
+- **Liens transitifs du graphe au filtrage** (`plan-mark2.md` action 10) —
+  quand un filtre de classe masque un nœud intermédiaire d'une chaîne de
+  jointures (A→B→C, B masqué), le lien logique A→C est reconstitué plutôt
+  que simplement perdu, dans le `useMemo` de calcul de `graphData` :
+  - **Graphe d'adjacence complet** construit d'abord à partir de `details`
+    (TOUS les objets chargés, pas seulement `filteredObjects`) — condition
+    nécessaire pour pouvoir traverser un nœud masqué.
+  - **`resolveVisibleTargets(hiddenId, visitedOnPath, remainingHiddenDepth,
+    budget)`** : depuis un nœud masqué, suit récursivement ses arêtes
+    sortantes jusqu'à atteindre des nœuds visibles. `visitedOnPath`
+    (un `Set` passé par traversée, pas un état partagé) empêche de boucler
+    sur un cycle réel du modèle (ex. `groupe.membres` → `groupe`,
+    jointure récursive) — même principe que la protection anti-cycle déjà
+    en place côté backend pour `deref`/`depth`.
+  - **Garde-fous de volume**, posés en conception (compromis arbitraire,
+    pas calculés depuis une mesure de performance) : `MAX_HIDDEN_CHAIN_DEPTH`
+    (= 2) borne le nombre de nœuds masqués consécutifs traversés pour
+    reconstituer un seul lien transitif — au-delà, un lien reconstitué sur
+    une trop longue chaîne masquée perd son sens visuel ;
+    `MAX_RECONSTRUCTED_EDGES_PER_HIDDEN_NODE` (= 20) plafonne le nombre
+    total d'arêtes reconstituées traversant un même nœud masqué donné
+    (toutes arêtes entrantes confondues), pour éviter une explosion
+    combinatoire sur un nœud à fort fan-in/fan-out.
+  - **Construction en 2 passes**, pour un dédoublonnage indépendant de
+    l'ordre d'itération SQL : passe 1 — nœuds + arêtes directes pour tous
+    les objets visibles, remplit entièrement `addedDirectLinks` ; les
+    arêtes vers une cible masquée sont seulement collectées
+    (`hiddenEdgesToProcess`), pas encore traitées. Passe 2 — pour chaque
+    arête collectée, appelle `resolveVisibleTargets` et ajoute un lien
+    reconstitué par cible atteinte, **sauf** si un lien direct existe déjà
+    pour la même paire source/cible (`addedDirectLinks`, pas de pointillé
+    redondant superposé à un trait plein) ou si ce lien reconstitué a déjà
+    été ajouté (`addedReconstructedLinks`).
+  - Rendu visuel distinct : trait pointillé (`lineStyle: { type: 'dashed'
+    }`), sans label d'attribut (contrairement à un lien direct, qui
+    affiche le nom de l'attribut de jointure).
 
 ## 6.5 Thèmes
 
@@ -359,9 +395,8 @@ ET édition inline de cellule (les deux, contrairement à `file`/`image`/
 §6.10) gère les 3 types dans `ATTR_TYPES` et leur colonne « Options »
 dédiée — voir ci-dessous.
 
-**Autosuggest** (ajout 2026-11-24, `plan-mark3.md` action 20, conception
-détaillée : §10.17 de [07-roadmap.md](07-roadmap.md)) — composant partagé
-`AutosuggestInput` (`pages/NavigationPage.tsx`) : champ texte + dropdown
+**Autosuggest** (ajout 2026-11-24, `plan-mark3.md` action 20) — composant
+partagé `AutosuggestInput` (`pages/NavigationPage.tsx`) : champ texte + dropdown
 de suggestions, fetch débouncé (300ms, `setTimeout`/`clearTimeout`, même
 esprit que le `setTimeout` déjà utilisé pour l'auto-dismiss des toasts) sur
 `apiSuggest(metaClass, cls, attribute, q)` (`src/api.ts`) à chaque frappe.
@@ -403,8 +438,7 @@ Colonne « Options » de l'éditeur d'attribut, par type :
   dans le fallback `string`/`integer`/`float` des options d'attribut mais
   uniquement si `attr.type === 'string'`. Ne crée pas un 12e type :
   `autosuggest` reste un champ optionnel sur le type `string` existant
-  (détail complet : §6.9 ci-dessus, §10.17 de
-  [07-roadmap.md](07-roadmap.md)).
+  (détail complet : §6.9 ci-dessus).
 
 **Validation front bloquante** (extension jugée légitime en cours de
 revue, comble un vrai trou backend) : empêche la sauvegarde si un attribut
@@ -553,6 +587,33 @@ orthogonal au filtre `meta_class`/`class` existant (mono-sélection) :
   `classes` que sur changement de page (`useEffect` dépendant de `page`),
   donc un layer ajouté sur `ConfigurationPage.tsx` n'apparaît dans les
   chips qu'après un changement de page.
+- **Layer dynamique piloté par un attribut `select`** (ajout 2026-11-23,
+  `plan-mark3.md` action 18, champ `layer_map` : §3.2sexies de
+  [03-modele-donnees.md](03-modele-donnees.md)) — `isClassVisibleForLayers`
+  ci-dessus reste un filtre par **classe** (`def.layers` statique) ; pour
+  filtrer des **objets** réels dont le layer dépend de la valeur courante
+  d'un de leurs attributs, une fonction dédiée
+  `getObjectEffectiveLayers(classDef, detail)` (dupliquée verbatim dans
+  `NavigationPage.tsx` et `DiagramPage.tsx`, même dette de duplication
+  déjà acceptée pour `isClassVisibleForLayers`) calcule l'union de
+  `classDef.layers` et, pour chaque attribut `select` de la classe portant
+  un `layer_map`, des layers mappés à la valeur courante de l'objet sur cet
+  attribut (`detail.attributes.find(a => a.name === attrDef.name)
+  ?.values[0]`, première valeur — convention déjà en place pour tout
+  attribut mono-valué). Le résultat (`string[]`) est ensuite passé à
+  `isClassVisibleForLayers({ layers: effectiveLayers }, selectedLayers)`,
+  qui reste inchangée.
+  - **Repli** : si `detail` n'est pas encore chargé (concerne surtout
+    `NavigationPage.tsx`, chargement lazy par groupe), la fonction renvoie
+    `classDef.layers` statique seul, sans bloquer/attendre — le filtre se
+    recalcule automatiquement dès que le détail arrive en cache
+    (`filtered`/`filteredObjects` dépendent de `detailCache`/`details`).
+  - Points d'appel : `NavigationPage.tsx` (juste avant
+    `isClassVisibleForLayers` dans le filtre d'objets) et
+    `DiagramPage.tsx` (même emplacement, dans le `useMemo` de
+    `graphData`/`filteredObjects`) — la Sidebar (arbre meta_class/layer)
+    n'est **pas** concernée : elle liste des classes, pas des objets, un
+    layer dynamique par objet n'a pas de sens à ce niveau.
 
 ## 6.13 Restructuration IHM (ajout 2026-11-23, `plan-mark3.md` action 15)
 
@@ -622,8 +683,7 @@ orthogonal au filtre `meta_class`/`class` existant (mono-sélection) :
 | 'navigation' | 'diagramme' | 'dashboard' | 'recherche'`), accessible via
 un 5e bouton Navbar (« Recherche », même niveau que Diagramme/Dashboard,
 aucune restriction RBAC). Consomme `GET /api/search` (détail complet :
-§4.10 de [04-api-backend.md](04-api-backend.md), conception §10.18 de
-[07-roadmap.md](07-roadmap.md)).
+§4.10 de [04-api-backend.md](04-api-backend.md)).
 
 - **Formulaire** : champ texte + 2 switches désactivés par défaut
   (`fuzzy`, `history`), réutilisant le style `rw-switch`/`rw-label`/
@@ -676,5 +736,4 @@ aucune restriction RBAC). Consomme `GET /api/search` (détail complet :
   `is_current` inclus/`SearchFacetCount`/`SearchClassFacetCount`/
   `SearchAttributeFacetCount`).
 
-Détail complet et suivi : `plan-mark3.md` action 21, §10.18 de
-[07-roadmap.md](07-roadmap.md).
+Détail complet et suivi : `plan-mark3.md` action 21.

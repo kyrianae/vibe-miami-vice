@@ -2605,7 +2605,29 @@
   l'implémentation), potentiellement `03-modele-donnees.md`/
   `04-api-backend.md`/`05-frontend.md` si un complément manque encore,
   `specifications/README.md`.
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-25). Catalogue fonctionnel créé dans
+  `specifications/01-fonctionnelle.md` (§1.1, 15 thèmes).
+  `specifications/07-roadmap.md` réduit de 1605 à ~180 lignes : §10.1/
+  §10.5/§10.13 gardés intacts (décisions historiques, partitionnement
+  non implémenté, action 11 non traitée), les 18 autres sections
+  réduites à des stubs renvoyant vers le catalogue fonctionnel et le
+  détail technique (03/04/05-....md). 5 compléments techniques ajoutés
+  avant la coupe, pour ne perdre aucune information : suppression/purge
+  (§4.11 de `04-api-backend.md`), bullet 409 `_check_class_name_unique`
+  (§4.4), fermeture transitive du graphe Diagramme (§6.4 de
+  `05-frontend.md`), champ `layer_map` (§3.2sexies de
+  `03-modele-donnees.md`), `getObjectEffectiveLayers` (§6.12 de
+  `05-frontend.md`). `specifications/README.md` mis à jour (index). 2
+  itérations : itération 1 (restructuration complète + revue croisée
+  testeur/analyste, 2 points trouvés) ; itération 2 (corrections +
+  revalidation, 2 cas supplémentaires de rattrapage trouvés, même
+  défaut, même traitement) — au total : ajout de la documentation
+  `default_layers` manquante (route + RBAC, oubliée après la 1re coupe)
+  et nettoyage de 17 références vestigiales « conception détaillée :
+  §10.X » devenues des boucles mortes depuis la coupe (dans
+  `04-api-backend.md`, `05-frontend.md`, `03-modele-donnees.md`,
+  `specifications/use case.md`, `02-architecture.md`). `testeur-global` :
+  OK (299/299 tests backend, stack vivante, aucun lien/ancre cassé).
 
 ## 25. Clôture de Mark 3 → ouverture de Mark 4
 
@@ -2665,5 +2687,5 @@
 | 21bis | [Sécurité, urgent] Unicité nom d'attribut + fuite secret via `/api/suggest`/`/api/read/object` | ✅ fait |
 | 22 | [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique | ✅ fait |
 | 23 | [Dette documentaire] Enrichissement de `specifications/use case.md` | ✅ fait |
-| 24 | [Dette documentaire] Réorganisation de `specifications/07-roadmap.md` (sortir le livré) | ⬜ à faire |
+| 24 | [Dette documentaire] Réorganisation de `specifications/07-roadmap.md` (sortir le livré) | ✅ fait |
 | 25 | Clôture de Mark 3 → ouverture de Mark 4 | ⬜ à faire |

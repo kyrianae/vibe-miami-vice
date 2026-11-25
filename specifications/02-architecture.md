@@ -98,8 +98,7 @@ Restent à la racine de `backend/` (pas de package dédié) :
   dynamiquement depuis `SECRET_ENCRYPTION_KEY`) — jugé module générique de
   chiffrement sans lien direct avec un seul des 4 domaines de packages
   (`auth`/`data`/`files`/`routes`), donc non déplacé. Détail complet :
-  §4.7 de [04-api-backend.md](04-api-backend.md) et §10.10 de
-  [07-roadmap.md](07-roadmap.md).
+  §4.7 de [04-api-backend.md](04-api-backend.md).
 
 Chaque `routes/routes_*.py` fait `import app` en tête de module (le
 `WORKDIR` du conteneur et la racine `backend/` du dépôt placent `app.py`

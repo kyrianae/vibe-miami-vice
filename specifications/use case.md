@@ -176,7 +176,8 @@ via `ConfigurationPage.tsx`).
   une valeur donnée, quelle que soit la classe (ex. un numéro de série
   recherché aussi bien dans `materiel` que dans un futur inventaire
   hardware), sans naviguer classe par classe. Détail de conception
-  complet : `specifications/07-roadmap.md` §10.18.
+  complet : `specifications/04-api-backend.md` §4.10,
+  `specifications/05-frontend.md` §6.14.
 
 - **Outil de gestion de ticket avec CI large** — `model/ticketing.json`
   déjà livré avec `statut`/`priorite` en type `select` (action 7).

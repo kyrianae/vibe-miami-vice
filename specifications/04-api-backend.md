@@ -169,6 +169,12 @@ Corps : `{"meta_class": str, "class": {"class": str, "attributes": [...]}}`.
   les clés `class`/`attributes`.
 - `404` si la meta-classe `meta_class` n'existe pas encore dans `definition`
   (message : « ...Créez-la d'abord avec /api/write/metaclass »).
+- `409` si le nom de la classe existe déjà dans une **autre** meta-classe
+  que `meta_class` (`_check_class_name_unique`, plan-mark3.md action 22,
+  §10.19) — vérifié avant le contrôle d'unicité d'attribut ci-dessous ;
+  une classe du même nom déjà présente dans CETTE même meta-classe n'est
+  pas un conflit (c'est le remplacement en place décrit plus bas, mise à
+  jour légitime).
 - `409` si `class.attributes` contient deux déclarations du même nom
   (`_check_attribute_names_unique`, plan-mark3.md action 21bis — cause
   racine d'une incohérence de chiffrement/masquage si l'une des deux
@@ -192,7 +198,11 @@ fichiers `model/*.json`, sans la clé `$schema`).
   ci-dessous, qui ne compare qu'aux AUTRES meta-classes déjà en base) ; puis
   `409` si l'une des classes du payload contient deux attributs du même nom
   (`_check_attribute_names_unique`, même action, même contrôle que
-  `POST /api/write/class` ci-dessus).
+  `POST /api/write/class` ci-dessus) ; puis `409` si le nom d'une classe du
+  payload existe déjà dans une **autre** meta-classe que `meta_class`
+  (`_check_class_name_unique`, plan-mark3.md action 22, §10.19 — même
+  contrôle que `POST /api/write/class`, appliqué ici à l'ensemble des noms
+  de classes du payload à la fois, vérifié en dernier des trois).
 - Si la meta-classe existe déjà, son `data` est **entièrement remplacé**
   (toutes les classes précédemment définies pour cette meta-classe sont
   perdues si elles ne sont pas réincluses dans `classes`) ; sinon une
@@ -390,8 +400,7 @@ rejouée côté `PUT /api/write/attribute/<cls>/<id>/<attribute>/<value>`
 reste une chaîne scalaire ordinaire sans risque d'injecter un pointeur
 arbitraire.
 
-**`secret`** (action 8, conception détaillée : §10.10 de
-[07-roadmap.md](07-roadmap.md)) :
+**`secret`** (action 8) :
 - **Écriture** — `_coerce_typed_value` chiffre la valeur reçue (Fernet,
   `backend/secret_crypto.py`, clé lue dynamiquement depuis
   `SECRET_ENCRYPTION_KEY`) avant stockage dans `value_string` ; `abort(500)`
@@ -447,8 +456,7 @@ arbitraire.
   jamais une déclaration non-secrète trouvée en premier qui laisserait
   passer un stockage en clair ou une valeur non masquée.
 
-**`datasource`** (action 9, conception détaillée : §10.11 de
-[07-roadmap.md](07-roadmap.md)) :
+**`datasource`** (action 9) :
 - **Écriture** — `_coerce_typed_value` attend un identifiant d'objet entier
   (ou une chaîne numérique), `abort(400)` sinon (y compris un flottant non
   entier, ex. `3.5`). Stocké dans `value_string` (jamais la colonne
@@ -483,8 +491,7 @@ arbitraire.
 
 ## 4.8 Type `boolean` (ajout 2026-11-23, `plan-mark3.md` action 19)
 
-**`boolean`** (action 19, conception détaillée : §10.16 de
-[07-roadmap.md](07-roadmap.md)) — type scalaire le plus simple du jeu
+**`boolean`** (action 19) — type scalaire le plus simple du jeu
 actuel, transite lui aussi par le JSON classique de `POST
 /api/write/object` (coercition dans `_coerce_typed_value`,
 `backend/routes/routes_write.py`), comme `select`/`secret`/`datasource`
@@ -543,8 +550,6 @@ ci-dessus : aucune route binaire dédiée.
 
 ## 4.9 Autosuggest : suggestions de valeurs apprises (ajout 2026-11-24, plan-mark3.md action 20)
 
-Conception détaillée : §10.17 de [07-roadmap.md](07-roadmap.md).
-
 **`GET /api/suggest/<meta_class>/<class>/<attribute>?q=<saisie>`**
 (`suggest_attribute_values`, `backend/routes/routes_read.py`) — seule
 route dédiée à ce mécanisme, aucune écriture associée (l'attribut
@@ -592,8 +597,6 @@ autre attribut `string`, sans coercition particulière).
   (acceptable au volume actuel, à traiter avant un volume important).
 
 ## 4.10 Recherche globale (ajout 2026-11-23/24, `plan-mark3.md` action 21)
-
-Conception détaillée : §10.18 de [07-roadmap.md](07-roadmap.md).
 
 **`GET /api/search?q=<texte>&fuzzy=<bool>&history=<bool>`**
 (`search_objects`, nouveau module `backend/routes/routes_search.py`,
@@ -682,3 +685,158 @@ confondues par contenu d'attribut (`attribute_value.value_string`).
   `fuzzy=false` ou aucune suggestion au-dessus du seuil).
 - **IHM** (`frontend/src/pages/RecherchePage.tsx`) : détail complet §6.14
   de [05-frontend.md](05-frontend.md).
+
+## 4.11 Suppression et purge (cycle de vie objets/schéma, `plan-mark2.md` actions 6.1-6.4)
+
+Deux suppressions bien distinctes coexistent dans l'API : suppression
+**logique** d'un objet (réversible le temps d'une période de grâce, suivie
+d'une purge physique différée) et suppression **physique** du schéma
+(classe ou meta-classe entière, immédiate, sans effet sur les objets déjà
+créés — aucune FK entre `object` et `definition`, §3.4 de
+[03-modele-donnees.md](03-modele-donnees.md)). Les quatre routes
+mutantes ci-dessous (`/api/delete/...` et `/api/purge`) exigent toutes un
+Bearer JWT valide (`401` sans token/token invalide, `backend/auth/auth.py`,
+`_PROTECTED_PREFIXES`/`_PROTECTED_EXACT_PATHS`) — à la différence des
+routes de lecture, ouvertes par défaut — en plus du contrôle de rôle
+décrit route par route.
+
+**`DELETE /api/delete/object/<int:object_id>`** (`backend/routes/
+routes_write.py`) — suppression logique d'un objet.
+- RBAC : `403` tenant-readonly systématique ; tenant-admin `403` si
+  l'objet est hors de son périmètre tenant ; global-admin toujours
+  autorisé.
+- `404` si l'objet n'existe pas ou est déjà supprimé logiquement
+  (`deleted_at` non NULL) — même sémantique « ne pas distinguer les cas »
+  que le reste de l'API.
+- Verrou `SELECT ... FOR UPDATE` (exclusif, pas `FOR NO KEY UPDATE` comme
+  ailleurs dans ce module) pris sur la ligne `object` dès la lecture :
+  bloque toute insertion concurrente d'une jointure vers cet objet
+  (`FOR SHARE` côté `_apply_attribute_diff`) pendant la suppression. Un
+  deadlock PostgreSQL reste possible dans de rares cas (attente croisée
+  avec une écriture concurrente fermant un autre lien vers le même objet) :
+  rattrapé par un handler dédié → `409` « Conflit d'écriture concurrente,
+  réessayez » plutôt qu'un 500/hang.
+- Effets, dans une seule transaction : pose `object.deleted_at = now()` ;
+  ferme (`valid_to = now()`) tous les `attribute_value` actifs de l'objet
+  lui-même ; ferme en cascade — **scopée au périmètre tenant de l'acteur**,
+  sans restriction pour global-admin — les `attribute_value.joint_id`
+  d'autres objets qui pointaient vers celui-ci (jointures entrantes) ;
+  ferme de la même façon les valeurs de type `datasource` (`value_string =
+  str(object_id)`) qui pointaient dessus, chaque candidat étant revérifié
+  contre le modèle (classe source + attribut réellement déclaré
+  `datasource` ciblant la classe de l'objet supprimé) avant fermeture —
+  `value_string` n'étant pas une clé étrangère SQL, un simple filtre sur la
+  valeur ne suffirait pas à distinguer un vrai pointeur d'une coïncidence
+  de texte avec un attribut `select`/`string` sans rapport.
+- Limite connue acceptée : aucun avertissement n'est émis si l'objet
+  supprimé porte un fichier (ex. logo) actuellement référencé par d'autres
+  objets via un pointeur `ref:...` (§4.6) — la suppression logique (et la
+  purge éventuelle plus tard) ne casse rien côté fichier
+  (`sweep_orphan_files` reste référence-consciente), mais l'acteur n'est
+  pas prévenu que son logo « survit » ailleurs.
+- Réponse `200` : `{"status":"ok","id":int,"deleted_at":"<iso8601>"}`.
+
+**`DELETE /api/delete/class/<string:meta_class>/<string:cls>`**
+(`backend/routes/routes_admin.py`) — suppression physique d'une classe du
+schéma.
+- RBAC : `403` tenant-readonly ; tenant-admin restreint à ses propres
+  classes (`_check_existing_class_tenant_scope`, même garde que le
+  remplacement d'une classe existante dans `write_class`, §4.4) ;
+  global-admin sans restriction.
+- `404` si la meta-classe ou la classe n'existe pas.
+- Verrou `SELECT ... FOR UPDATE` sur la ligne `definition` dès la lecture,
+  maintenu jusqu'au commit — empêche un `write_metaclass` concurrent
+  d'ajouter une classe hors périmètre tenant qui échapperait à la garde
+  RBAC ci-dessus.
+- Retire la classe du tableau `definition.data.classes` et persiste ; **ne
+  touche jamais** aux objets déjà créés sous cette classe (`object`/
+  `attribute`/`attribute_value` restent intacts).
+- Réponse `200` : `{"status":"ok","class":str}`.
+
+**`DELETE /api/delete/metaclass/<string:meta_class>`** (`backend/routes/
+routes_admin.py`) — suppression physique d'une meta-classe entière.
+- RBAC : même garde que `delete_class` ci-dessus, appliquée à **chaque**
+  classe existante de la meta-classe (un tenant-admin ne peut pas
+  supprimer une meta-classe contenant une classe hors de son périmètre —
+  au moins aussi strict qu'un remplacement complet via `write_metaclass`).
+- `404` si la meta-classe n'existe pas.
+- `DELETE FROM definition WHERE meta_class = ...` — suppression SQL réelle
+  de la ligne `definition`, sans effet sur les objets déjà créés (même
+  raison que `delete_class`).
+- Réponse `200` : `{"status":"ok","meta_class":str}`.
+
+**`POST /api/purge`** (`backend/routes/routes_admin.py`) — purge physique
+différée, réservée **strictement global-admin** (`403` sinon, y compris
+tenant-admin — opération transversale à tous les tenants, aucun scoping
+possible).
+- Relit `app_config.purge_grace_period_days` **à chaque appel** (jamais
+  une constante chargée une fois au démarrage), pour qu'un changement
+  administrateur (route ci-dessous) soit pris en compte sans redémarrage.
+  `abort(500)` si la clé est absente de `app_config` (ne devrait pas
+  arriver, seedée par `sql/init.sql`).
+- Candidats : objets avec `deleted_at` non NULL et antérieur à
+  `now() - <grace_days> jours`.
+- Ordre impératif, même transaction : `DELETE FROM attribute_value WHERE
+  joint_id IN (candidats)` **puis** `DELETE FROM object WHERE id IN
+  (candidats)` — deux requêtes séparées (pas un seul `WITH` multi-CTE :
+  PostgreSQL ne garantit pas d'ordre d'exécution entre plusieurs
+  sous-requêtes de modification d'un même `WITH` sans dépendance de
+  données explicite entre elles). Sans cette garde, une ligne
+  `attribute_value` déjà historiquement fermée mais oubliée verrait son
+  `joint_id` mis à `NULL` par le `ON DELETE SET NULL` au moment du `DELETE
+  FROM object`, violant la contrainte `CHECK` de `attribute_value` (§3.4 de
+  [03-modele-donnees.md](03-modele-donnees.md)).
+- Même garde-fou deadlock que `delete_object` ci-dessus → `409` si détecté.
+- Réponse `200` : `{"status":"ok","purged":int}` (nombre d'objets
+  physiquement supprimés).
+
+**`GET`/`PUT /api/config/purge_grace_period_days`** (`backend/routes/
+routes_admin.py`) — lecture/écriture de la période de grâce, réservées
+strictement global-admin (`403` sinon, y compris tenant-admin) ; ces deux
+méthodes du même chemin sont protégées **par chemin seul** (`401` sans
+token, même pour un `GET`) — à la différence de
+`/api/config/default_layers` (documentée juste ci-dessous), volontairement
+laissée ouverte en lecture anonyme.
+- `GET` : `{"value": int}`, lu depuis la table `app_config` (clé
+  `purge_grace_period_days`, seedée à **30** jours par `sql/init.sql`).
+- `PUT` : corps `{"value": N}` ; `400` si absent, si `N` n'est pas un
+  entier strictement positif — un booléen est explicitement rejeté avant
+  le cast (`bool` étant une sous-classe de `int` en Python, `int(True) ==
+  1` serait sinon accepté silencieusement), de même qu'un flottant non
+  entier ; `0` et les valeurs négatives sont également `400` (purgeraient
+  immédiatement ou jamais).
+
+**`GET`/`PUT /api/config/default_layers`** (`backend/routes/
+routes_admin.py`) — lecture/écriture de la liste des layers par défaut
+(`plan-mark3.md` action 18), toujours proposés dans l'UI même si aucune
+classe du modèle ne les référence encore (layer = pure métadonnée
+d'affichage, pas un mécanisme RBAC/sécurité, cf. `frontend/src/types.ts`,
+commentaire au-dessus de `ClassDef.layers`). RBAC volontairement
+**asymétrique** entre les deux méthodes de ce même chemin, à la différence
+de `purge_grace_period_days` ci-dessus :
+- `GET` : **aucun check d'auth/admin**, lecture ouverte même anonyme — ce
+  chemin est volontairement absent de `_PROTECTED_EXACT_PATHS`/
+  `_PROTECTED_PREFIXES` (`backend/auth/auth.py`), qui protègent par chemin
+  seul (donc les deux méthodes à la fois) : l'y ajouter forcerait un `401`
+  systématique même sur le `GET` sans token, cassant la lecture anonyme
+  requise par `Sidebar.tsx`. Réponse : `{"value": string[]}`, lu depuis
+  `app_config` (clé `default_layers`, valeur JSON — liste de strings —
+  seedée par `sql/init.sql` à `["applicatif","infra","organisationnel",
+  "fonctionnel","metier"]`). `500` si la clé est absente de `app_config`
+  (ne devrait pas arriver).
+- `PUT` : réservé **strictement global-admin**, mais contrôlé uniquement
+  dans le handler (`ctx.is_global_admin`), pas par le chemin — donc `403`
+  sans droit/token, jamais `401` (différence assumée vis-à-vis de
+  `purge_grace_period_days`, pas un oubli). Corps `{"value": [...]}` ;
+  `400` si absent, si `value` n'est pas une liste, si la liste est vide, ou
+  si un seul élément n'est pas une chaîne non vide après `trim()` (rejet
+  immédiat de tout l'appel, pas un filtrage silencieux des éléments
+  invalides) ; déduplication des chaînes trim (ordre de première
+  apparition conservé, pas de tri alphabétique — le tri est fait côté
+  frontend). Réponse `200` : `{"status":"ok","value": string[]}` (liste
+  nettoyée/dédoublonnée persistée).
+- Consommé côté frontend par `Sidebar.tsx` (`apiGetDefaultLayers`, union
+  avec les layers des classes chargées pour calculer la liste de layers
+  disponibles) et `ConfigurationPage.tsx` (`apiGetDefaultLayers`/
+  `apiSetDefaultLayers`, lecture/édition de la liste, même union pour le
+  registre de layers connus affiché à l'utilisateur).

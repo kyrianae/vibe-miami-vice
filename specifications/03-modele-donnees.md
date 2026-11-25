@@ -181,8 +181,7 @@ confirme que tous les `model/*.json` du dépôt, celui-ci inclus, passent.
 
 ## 3.2quater Extensions Mark 3 (suite) : type `boolean` (ajout 2026-11-23, action 19)
 
-**`attributes[].type` étendu à `"boolean"`** (action 19, conception
-détaillée : §10.16 de [07-roadmap.md](07-roadmap.md)) — case à cocher
+**`attributes[].type` étendu à `"boolean"`** (action 19) — case à cocher
 simple, type le plus simple du jeu actuel aux côtés de
 `string`/`integer`/`float` : aucun champ requis supplémentaire sur la
 définition d'attribut (contrairement à `select`/`joint-*`/`datasource`),
@@ -209,8 +208,7 @@ quel, comme n'importe quel autre attribut `value_string` — contrairement à
 ## 3.2quinquies Extensions Mark 3 (suite) : champ `autosuggest` (ajout 2026-11-24, action 20)
 
 **Nouveau champ optionnel `"autosuggest": true`** (booléen) sur une
-définition d'attribut (`model/schema.json`), conception détaillée :
-§10.17 de [07-roadmap.md](07-roadmap.md). Réservé en intention au type
+définition d'attribut (`model/schema.json`). Réservé en intention au type
 `type: "string"` uniquement — **mais aucune contrainte JSON Schema**
 (`allOf`/`if-then`) n'empêche de le poser sur un attribut d'un autre type :
 pure convention documentaire, même esprit que `separator`/`values` déjà
@@ -231,6 +229,53 @@ Démonstration manuelle réelle : `autosuggest: true` activé sur deux
 attributs existants, `datacenter.localisation` (`model/itil_cmdb.json`) et
 `version_logicielle.environnement` (`model/ansible_inventory.json`).
 
+## 3.2sexies Extensions Mark 3 (suite) : champ `layer_map` — layer dynamique piloté par un attribut `select` (ajout 2026-11-23, action 18)
+
+**Nouveau champ optionnel `"layer_map"`** (objet `{valeur: [layers]}`) sur
+une définition d'attribut de type `"select"` (`model/schema.json`).
+Motivation (besoin `serveur.type`, §3.3 ci-dessous) : le champ `layers`
+d'une classe (§3.2ter) est **statique**, posé une fois pour toutes sur la
+classe — il ne peut pas représenter un objet dont le layer effectif dépend
+de la valeur courante d'un de ses attributs (ex. un `serveur` de
+`type: "vm"` ne doit pas porter le layer `physique`, contrairement à un
+`serveur` de `type: "physique"`).
+
+- Clés censées être un sous-ensemble des `values` déclarées sur le même
+  attribut `select` — **non vérifié strictement** par le schéma JSON
+  (`additionalProperties` ouvert sur l'objet `layer_map`, aucune
+  contrainte croisée avec `values`). Chaque clé associe une valeur
+  possible à une liste de layers (même taxonomie texte libre que
+  `ClassDefinition.layers`, action 14).
+- La seule **présence** du champ marque l'attribut comme pilotant le layer
+  effectif de l'objet — pas de flag booléen séparé redondant (même
+  convention que `values` requis sur `select` sans flag « a des valeurs »
+  à côté).
+- Sans objet pour tout autre type que `select` ; aucune contrainte `allOf`
+  dédiée dans `model/schema.json` ne l'impose (pure convention
+  documentaire, même statut que `autosuggest` ci-dessus) — rien n'empêche
+  de le poser sur un attribut d'un autre type, mais lui seul (via
+  `getObjectEffectiveLayers` côté frontend, voir ci-dessous) le lit.
+- **Calcul du layer effectif d'un objet** = union du `layers` statique de
+  sa classe et, pour chaque attribut `select` de la classe portant un
+  `layer_map`, des layers mappés à la valeur courante de l'objet sur cet
+  attribut (repli sur `layers` statique seul si aucune valeur ne mappe,
+  ou si l'attribut n'a pas encore de valeur posée). Calcul **100%
+  frontend** (`getObjectEffectiveLayers`, dupliquée dans
+  `NavigationPage.tsx`/`DiagramPage.tsx`, détail complet : §6.12 de
+  [05-frontend.md](05-frontend.md)) — aucun changement backend, cohérent
+  avec le principe déjà posé à l'action 14 (le filtre `layers` est un
+  filtre d'affichage, jamais un mécanisme RBAC/sécurité).
+- Exemple réel du dépôt (`model/itil_cmdb.json`, classe `serveur`) :
+  attribut `type` (`select`, `values: ["physique", "vm"]`) porte
+  `layer_map: {"physique": ["physique"]}` ; le `layers` statique de
+  `serveur` ne porte plus que `["reseau"]` — le tag `physique` est
+  entièrement piloté par la valeur de `type`, pour qu'un serveur `vm` ne
+  soit jamais compté comme `physique` par le filtre.
+- Aucune nouvelle colonne SQL ni nouveau mécanisme de stockage : la valeur
+  de l'attribut `select` lui-même reste stockée normalement dans
+  `attribute_value.value_string` (§3.2ter) ; `layer_map` ne vit que dans
+  `definition.data` (le schéma), jamais dans une ligne d'instance.
+
 ## 3.3 Fichiers de modèle fournis
 
 **`model/organisation.json`** — meta-classe `organisation` (action 17,
@@ -245,7 +290,123 @@ supprimés) :
 **`model/reseau.json`** — meta-classe `element_avec_ip` :
 - `addresse_ip` : `adresse_ip` (string, `constraint` = regex IPv4, `sql_constraint: "UNIQUE VALUE"` — non appliquée par le code, voir §8), `vlan` (`joint-1-1` → `vlan`, action 17).
 - `vlan` : `nom` (string), `definition` (string, regex CIDR), `membres` (`joint-1-n` → `addresse_ip`).
-- `zone_reseau`, `equipement_reseau`, `entree_dns` : nouvelles classes réseau action 17 (détail complet : §10.14 de [07-roadmap.md](07-roadmap.md)).
+- `zone_reseau` (`nom`, `niveau_securite`, layers `infra`/`reseau`/`securite`),
+  `equipement_reseau` (`nom`, `type` select `routeur`/`switch`/`firewall`,
+  `zone` joint-1-1 → `zone_reseau`, layers `infra`/`reseau`),
+  `entree_dns` (`nom`, `type` select `A`/`CNAME`/`MX`/`TXT`/`NS`, `cible`,
+  `zone_dns`, layers `infra`/`reseau`) : nouvelles classes réseau action 17.
+  Pas de classe `subnet` séparée : `vlan.definition` porte déjà le CIDR, un
+  `vlan` **est** le subnet dans ce modèle (point vérifié explicitement en
+  conception, pour éviter un doublon).
+
+**`model/itil_cmdb.json`** — meta-classe `cmdb` (extension action 17 des
+classes `datacenter`/`serveur`/`application`/`service_metier`/
+`fournisseur`/`contrat_support` déjà fournies avant cette action) :
+- `datacenter` : `nom`, `localisation` (string, `autosuggest`). Layers
+  `physique`.
+- `baie_serveur` 🆕 : `nom`, `datacenter` (joint-1-1 → `datacenter`),
+  `position_rack`. Layers `infra`/`physique`. Reste rattachée à
+  `datacenter` (pas à `salle` de `model/localisation.json` ci-dessous —
+  changement envisagé en conception puis non retenu à l'implémentation).
+- `serveur` : `nom`, `type` 🆕 (`select`, `physique`/`vm`, porte
+  `layer_map: {"physique": ["physique"]}` — §3.2sexies, layer dynamique),
+  `ip` (string, regex IPv4), `environnement` (string), `datacenter`
+  (joint-1-1), `logo` 🆕 (`image`, domaine `display`, convention logo
+  d'objet §3.2bis), `monitoring` 🆕 (`datasource`, classes autorisées
+  `["query"]`), `actif` 🆕 (`boolean`), `hyperviseur` 🆕 (joint-1-1 →
+  `hyperviseur` de `model/cluster.json` ci-dessous, pertinent si
+  `type=vm`), `os` 🆕 (joint-1-1 → `os` ci-dessous). Layers `reseau` —
+  **le layer statique `physique` a été retiré** de cette classe au profit
+  du `layer_map` sur `type` (sinon l'union statique+dynamique aurait
+  rendu tout serveur, y compris les VM, visible sous le filtre
+  `physique`).
+- `os` 🆕 : `nom` (string, `autosuggest`), `type` (`select`,
+  `linux`/`windows`), `architecture` (`select`, `32`/`64`/`arm`),
+  `version`, `code_version` (string), `active` (`boolean`). Layers
+  `infra`.
+- `application` : `nom`, `version`, `serveurs` (joint-1-n → `serveur`),
+  `base_de_donnees` (joint-1-1), `modules` 🆕 (joint-1-n → `module`).
+- `module` 🆕 : `nom`, `application` (joint-1-1). Layers `applicatif`.
+- `container` 🆕 : `nom`, `image` (string), `namespace_kubernetes`
+  (joint-1-1). Layers `applicatif`/`infra`.
+- `namespace_kubernetes` 🆕 : `nom`, `kube` (joint-1-1 → `kube`, voir
+  `model/cluster.json` ci-dessous). Layers `applicatif`/`infra`.
+- `interface` 🆕 : `nom`, `type` (`select`,
+  `REST`/`SOAP`/`file`/`queue`/`db`), `application` (joint-1-1,
+  propriétaire du contrat exposé). Layers `applicatif`/`fonctionnel`.
+- `flux_donnee` 🆕 : `nom`, `type_donnee` (string), `interface_source`/
+  `interface_cible` (joint-1-1 → `interface` chacun — passe par le
+  contrat exposé plutôt qu'un lien direct `application`→`application`).
+  Layers `fonctionnel`/`metier`.
+- `application_versionnee` 🆕 : `application` (joint-1-1), `version`
+  (string, `autosuggest`), `modules_versionnes` (joint-1-n →
+  `module_versionne`). Layers `applicatif`. ⚠️ Chevauchement repéré, non
+  résolu : `model/ansible_inventory.json` porte déjà `version_logicielle`
+  (`version`/`environnement`/`date_deploiement`/`application`), rôle
+  proche — les deux coexistent sans fusion (voir aussi
+  [`use case.md`](use%20case.md)).
+- `module_versionne` 🆕 : `module` (joint-1-1), `version` (string,
+  `autosuggest`). Layers `applicatif`. Chaîne de résolution complète :
+  `application` →1-n→ `application_versionnee` →1-n→ `module_versionne`
+  →1-1→ `module` →1-1→ `application`.
+- `materiel` 🆕 : `nom`, `type` (`select`,
+  `poste`/`imprimante`/`peripherique` — classe générique+`type` retenue
+  plutôt qu'une classe par type de matériel), `numero_serie`,
+  `personne_affectee` (joint-1-1 → `personne_physique`), `salle`
+  (joint-1-1 → `salle` de `model/localisation.json` ci-dessous). Layers
+  `infra`/`physique`.
+- `service_metier`, `fournisseur`, `contrat_support` : classes
+  préexistantes, inchangées par l'action 17.
+
+**`model/cluster.json`** 🆕 (action 17) — meta-classe `cluster` :
+- `kube` : `nom`, `version`, `namespace_defaut`. Layers `infra`.
+- `hyperviseur` : `nom`, `type` (string libre, ex. vmware/proxmox),
+  `capacite_cpu`/`capacite_ram` (integer). Layers `infra`.
+- `cluster_applicatif` : `nom`, `vip` (joint-1-1 → `addresse_ip` de
+  `model/reseau.json`, pas un string brut), `application` (joint-1-1),
+  `serveurs` (joint-1-n → `serveur`). Layers `applicatif`/`infra`. Décision
+  de conception explicite : 2 classes distinctes `kube`/`hyperviseur`
+  plutôt qu'une classe générique `cluster`+`type`, pour pouvoir rattacher
+  des VMs à un hyperviseur et des déploiements à un cluster Kubernetes
+  sans confondre les deux modèles de rattachement.
+
+**`model/localisation.json`** 🆕 (action 17) — meta-classe `localisation` :
+- `batiment` : adresse structurée en 7 champs string (`numero`,
+  `type_voie`, `nom_voie`, `pays`, `code_postal`, `ville`,
+  `suffixe_ville`) plutôt qu'un champ libre unique.
+- `etage` : `nom`, `batiment` (joint-1-1).
+- `salle` : `nom`, `etage` (joint-1-1).
+- Layers `infra` pour les trois classes.
+
+**`model/besoin.json`** 🆕 (action 17) — meta-classe `besoin`, une seule
+classe `besoin` : `nom`, `description`, `emerge_par`/`couvert_par`
+(domaine `requirement`, joint-1-n, ciblant exactement `["serveur",
+"application", "cluster_applicatif", "kube", "hyperviseur", "materiel",
+"interface", "module"]` — les CI techniques, pas la totalité des classes
+du modèle). Layers `fonctionnel`/`metier`.
+
+**Retouches action 17 sur des meta-classes existantes** :
+- `model/ticketing.json` (`ticket.ci_concerne.classes`) étendu à
+  `["serveur", "application", "service_metier", "baie_serveur", "os",
+  "module", "container", "namespace_kubernetes", "interface",
+  "flux_donnee", "application_versionnee", "module_versionne",
+  "materiel"]` (les 3 classes d'origine + les classes CMDB/hardware de
+  `itil_cmdb.json` ajoutées ci-dessus, pas les classes de
+  `cluster.json`/`reseau.json`).
+- `model/planning.json` (`tache.assigne_a.classes`) élargi à
+  `["personne_physique", "groupe"]` — une tâche assignable à une personne
+  **ou** une équipe.
+
+Dette assumée, non traitée par l'action 17 : `POST /api/init`
+(`backend/routes/routes_init.py`) ne supprime jamais une ligne
+`definition` dont le fichier modèle source a disparu — une base déjà
+initialisée avec les anciens `organigramme.json`/`personnes.json` et
+réinitialisée avec `organisation.json` sans ménage manuel garde en base
+les anciennes lignes `meta_class = 'organigramme'`/`'personne'` en
+doublon des classes désormais dans `organisation` (observé sur la DB dev
+de ce projet, résolu par un nettoyage SQL manuel ponctuel, pas par un
+mécanisme générique — aucune route de suppression/renommage de
+meta-classe n'existe pour ce cas).
 
 ## 3.4 Tables PostgreSQL (`sql/init.sql`)
 
