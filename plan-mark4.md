@@ -343,10 +343,12 @@
   déclenché par le rendu de la Sidebar/Configuration qui liste toutes les
   classes du système (pas seulement celles du modèle de démo) — sans
   impact, confirmé par l'analyse critique.
-- **Statut** : 🔄 en cours — implémentation faite (modèle chargé, 18 objets
-  réels créés en base, 3 captures PNG réelles produites, doc rédigée) ;
-  passage orchestrateur (testeur/pessimiste/candide/testeur-global) restant
-  avant passage à ✅.
+- **Statut** : ✅ fait — 2 itérations (1 correction : garde-fou
+  `RuntimeError` sur sélecteurs DOM manquants dans
+  `tools/screenshot_demo.py`, scope du sélecteur meta-classe, correction
+  d'accents sur 2 objets + régénération de 2 PNG, traçabilité du cache
+  d'icônes) ; testeur-global OK (299/299 tests backend, build frontend
+  conforme à la dette préexistante documentée, stack vivante vérifiée).
 
 ## 3b. [Documentation] Mode d'emploi illustré — exemple 2 : architecture applicative / bus Kafka
 
