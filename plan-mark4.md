@@ -101,6 +101,56 @@
     stade — à réévaluer si la densité perçue revient une fois Mark 4
     suffisamment avancé.
 
+## 1b. [Nouvelle fonctionnalité] Monitoring visuel de l'activité des agents Claude via Prometheus
+
+> Demande utilisateur (2026-11-25), suite directe de l'action 1 :
+> `claude_agent{agent="..."} 0|1` (exporter `tools/claude-agent-exporter/`,
+> commit `892fc55`) existe et a été vérifié fonctionnel en requêtant
+> Prometheus directement (`/api/v1/query`), mais reste un signal brut sans
+> présentation visuelle. **Problème déjà observé par l'utilisateur** :
+> la métrique reste à 0 la plupart du temps à l'œil nu.
+- **Problème** : deux volets.
+  1. Pas de tableau de bord visuel — la métrique n'existe qu'en requête
+     brute Prometheus, aucun dashboard (Grafana ou autre) ne la présente.
+  2. **Bug/limite déjà constatée** : en usage normal, la métrique affiche
+     quasi tout le temps `0` à l'instant où on regarde. Cause probable
+     (pas encore confirmée formellement) : chaque sous-agent ne reste
+     « actif » que par rafales courtes (quelques secondes à quelques
+     minutes), et la fenêtre de fraîcheur actuelle de l'exporter
+     (`FRESH_SECONDS=20`, `tools/claude-agent-exporter/exporter.sh`)
+     retombe à 0 dès que l'agent cesse d'écrire dans son transcript — un
+     coup d'œil ponctuel sur la valeur **instantanée** tombe donc presque
+     toujours entre deux rafales. Vérifié techniquement fonctionnel au
+     moment du test (bascule 0→1→0 observée sur un agent `testeur` de
+     test), donc pas un exporter cassé — plutôt un problème de
+     présentation/lecture (valeur instantanée peu informative) qu'un bug
+     de collecte.
+- **Correctif** : à concevoir précisément à l'implémentation, pistes déjà
+  identifiées :
+  1. **Dashboard Grafana** (service `grafana` à ajouter à
+     `docker-compose.yml`, pas encore présent — seuls `prometheus`/
+     `node-exporter` existent) avec Prometheus en datasource, un panel en
+     **graphe temporel** (pas une simple jauge/valeur instantanée) pour
+     chaque type d'agent — un graphe sur une fenêtre de temps (ex. 1h)
+     rend les rafales courtes visibles sous forme de pics, même si la
+     valeur *actuelle* au moment de regarder est 0.
+  2. Éventuellement compléter la jauge 0/1 par une métrique
+     complémentaire moins binaire — ex. un compteur cumulatif
+     `claude_agent_activations_total{agent="..."}` (incrémenté à chaque
+     transition 0→1 détectée par l'exporter) pour voir « combien de fois
+     cet agent a tourné récemment », pas seulement « tourne-t-il
+     maintenant ».
+  3. Revoir si `FRESH_SECONDS`/`INTERVAL` (actuellement 20s/15s) sont les
+     bonnes valeurs une fois un vrai dashboard en place pour juger de la
+     lisibilité réelle.
+- **Effort** : moyen (nouveau service Grafana + dashboard JSON + éventuelle
+  métrique complémentaire).
+- **Fichiers** : `docker-compose.yml` (service `grafana` + volume
+  provisioning), nouveau dossier de provisioning Grafana (datasource +
+  dashboard), `tools/claude-agent-exporter/exporter.sh` (si la métrique
+  complémentaire du point 2 est retenue).
+- **Statut** : ⬜ à faire.
+
 ## 2. [Nouvelle fonctionnalité] Ajout de Selenium pour les tests IHM
 
 > Demande utilisateur (2026-11-25) — marquée « à discuter » par
