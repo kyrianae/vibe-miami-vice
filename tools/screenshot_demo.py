@@ -143,25 +143,31 @@ def main():
     print("token present after reload:", evaluate(cdp, "!!localStorage.getItem('miami-vice-auth-token')"))
 
     label = {"configuration": "Configuration", "navigation": "Navigation", "diagramme": "Diagramme"}[args.page]
-    print("click nav:", evaluate(cdp, f"""
+    result = evaluate(cdp, f"""
     (function() {{
       const b = [...document.querySelectorAll('nav.navbar button')].find(x => x.textContent.trim() === '{label}');
       if (!b) return 'NOT_FOUND';
       b.click();
       return 'clicked:' + b.textContent;
     }})()
-    """))
+    """)
+    print("click nav:", result)
+    if isinstance(result, str) and result.startswith("NOT_FOUND"):
+        raise RuntimeError(result)
     time.sleep(1.0)
 
-    print("click meta:", evaluate(cdp, f"""
+    result = evaluate(cdp, f"""
     (function() {{
-      const badges = [...document.querySelectorAll('.badge-meta')];
+      const badges = [...document.querySelectorAll('.sidebar .badge-meta')];
       const b = badges.find(x => x.textContent.trim() === {json.dumps(args.meta_class)});
       if (!b) return 'NOT_FOUND meta, available=' + badges.map(x=>x.textContent).join(',');
       b.parentElement.click();
       return 'clicked meta ' + {json.dumps(args.meta_class)};
     }})()
-    """))
+    """)
+    print("click meta:", result)
+    if isinstance(result, str) and result.startswith("NOT_FOUND"):
+        raise RuntimeError(result)
     time.sleep(1.2)
 
     if args.page == "configuration":
@@ -172,7 +178,7 @@ def main():
         # region + note + bouteille), la carte voulue n'est pas forcément
         # dans le viewport de 900px : scrollIntoView sur son badge-class.
         if args.cls:
-            print("scroll to class card:", evaluate(cdp, f"""
+            result = evaluate(cdp, f"""
             (function() {{
               const badges = [...document.querySelectorAll('.main-content .badge-class')];
               const b = badges.find(x => x.textContent.trim() === {json.dumps(args.cls)});
@@ -180,14 +186,17 @@ def main():
               b.closest('.card').scrollIntoView({{block: 'start'}});
               return 'scrolled to class card ' + {json.dumps(args.cls)};
             }})()
-            """))
+            """)
+            print("scroll to class card:", result)
+            if isinstance(result, str) and result.startswith("NOT_FOUND"):
+                raise RuntimeError(result)
             time.sleep(0.8)
     elif args.cls:
         # Page navigation : pas besoin de narrower via la Sidebar (son arbre
         # meta_class est replié par défaut, le badge-class n'y est donc pas
         # rendu) - un simple scroll jusqu'au groupe de la classe visée dans
         # la liste déjà affichée (non narrowée) suffit et est plus robuste.
-        print("scroll to class group:", evaluate(cdp, f"""
+        result = evaluate(cdp, f"""
         (function() {{
           const badges = [...document.querySelectorAll('.main-content .badge-class')];
           const b = badges.find(x => x.textContent.trim() === {json.dumps(args.cls)});
@@ -195,7 +204,10 @@ def main():
           b.closest('.card').scrollIntoView({{block: 'start'}});
           return 'scrolled to class group ' + {json.dumps(args.cls)};
         }})()
-        """))
+        """)
+        print("scroll to class group:", result)
+        if isinstance(result, str) and result.startswith("NOT_FOUND"):
+            raise RuntimeError(result)
         time.sleep(0.8)
 
     if args.page == "diagramme":
