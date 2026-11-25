@@ -1,0 +1,92 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "demo_vin",
+    "classes": [
+        {
+            "class": "cepage",
+            "displayname": "{{nom}}",
+            "layers": ["demo"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "region",
+            "displayname": "{{nom}}",
+            "layers": ["demo"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "note",
+            "displayname": "{{descripteur}}",
+            "layers": ["demo"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "descripteur",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "bouteille",
+            "displayname": "{{nom}}",
+            "layers": ["demo"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "cepage",
+                    "type": "joint-1-1",
+                    "classes": ["cepage"]
+                },
+                {
+                    "domain": "details",
+                    "name": "millesime",
+                    "type": "integer"
+                },
+                {
+                    "domain": "origine",
+                    "name": "producteur",
+                    "type": "string"
+                },
+                {
+                    "domain": "origine",
+                    "name": "appellation",
+                    "type": "string"
+                },
+                {
+                    "domain": "complement",
+                    "name": "region",
+                    "type": "joint-1-1",
+                    "classes": ["region"]
+                },
+                {
+                    "domain": "complement",
+                    "name": "prix_eur",
+                    "type": "float"
+                },
+                {
+                    "domain": "degustation",
+                    "name": "notes",
+                    "type": "joint-1-n",
+                    "classes": ["note"]
+                }
+            ]
+        }
+    ]
+}

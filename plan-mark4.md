@@ -232,34 +232,132 @@
 
 ## 3. [Documentation] Mode d'emploi illustré avec captures d'écran, basé sur des modèles de démonstration
 
-> Demande utilisateur (2026-11-25). L'utilisateur suggère lui-même que ce
-> point pourrait être scindé en plusieurs morceaux une fois détaillé —
-> non tranché, à décider à l'implémentation plutôt qu'imposé ici.
+> Demande utilisateur (2026-11-25). L'utilisateur suggérait lui-même que ce
+> point pourrait être scindé en plusieurs morceaux une fois détaillé — ce
+> découpage a été tranché à l'implémentation (même logique que l'action 10
+> de `finished plan/plan-mark3.md`, scindée en 10a-10d).
+
+> **Scission actée** (2026-11-25) : cette action 3 est scindée en **3a**
+> (modèle de démo « bouteille de vin » + captures Configuration/
+> Navigation/Diagramme), **3b** (modèle technique « architecture
+> applicative / bus Kafka » + captures), **3c** (modèle organisationnel
+> « holding/organigramme » + captures) et **3d** (assemblage final de la
+> documentation : intro, conclusion, cohérence d'ensemble, sync specs si
+> besoin). Voir les 4 sous-actions dédiées ci-dessous — cette action 3
+> n'est plus directement actionnable telle quelle.
 
 - **Problème** : pas de documentation « mode d'emploi » illustrée montrant
   concrètement comment modéliser et utiliser le produit de bout en bout.
-- **Correctif** : construire au moins 2 modèles de démonstration contrastés
-  et illustrer leur usage par des captures d'écran réelles, montrant la
-  création d'instances d'objets des deux côtés (modélisation en
-  `ConfigurationPage.tsx` et saisie/consultation en `NavigationPage.tsx`) :
-  1. **Exemple simple, grand public** : bouteille de vin — attributs
-     cépage, année, cave/vigneron, AOC...
-  2. **Exemple technique/professionnel** : architecture applicative —
-     2-3 applications reliées par un bus Kafka central, avec des types de
-     données (datatype1/datatype2), producteurs/consommateurs, base de
-     données, frontend/backend, VMs, et éventuellement redondance +
-     reverse proxy/load balancer. Ajouter 3-4 objets réels et montrer la
-     création d'une instance de chaque côté.
-  3. **Exemple organisationnel** : organigramme d'une holding avec 2-3
-     sociétés et des structures de 5 à 10 personnes chacune, sur 2-3
-     niveaux hiérarchiques.
+- **Correctif** : renvoi à 3a/3b/3c/3d ci-dessous (pas de duplication du
+  contenu ici).
 - **Effort** : moyen à élevé (plusieurs modèles de démo complets + captures
-  d'écran réelles pour chacun) — l'utilisateur suggère un découpage possible
-  en plusieurs actions une fois le périmètre exact précisé.
-- **Fichiers** : nouveaux modèles de démo (`model/*.json` dédiés, hors des
-  modèles déjà livrés en Mark 3), nouveau contenu de documentation
-  (emplacement à déterminer — probablement un nouveau fichier
-  `specifications/` ou un dossier dédié `doc/`).
+  d'écran réelles pour chacun) — réparti sur les 4 sous-actions.
+- **Fichiers** : voir chaque sous-action.
+- **Statut** : 🔀 scindée (2026-11-25) — voir 3a-3d.
+
+## 3a. [Documentation] Mode d'emploi illustré — exemple 1 : bouteille de vin
+
+> Sous-action issue de la scission de l'action 3 (2026-11-25).
+
+- **Problème** : pas d'illustration de bout en bout, avec captures d'écran
+  réelles, de la modélisation d'une classe simple grand public et de la
+  création d'instances.
+- **Correctif** : nouveau modèle de démo `model/demo_vin.json` (meta-classe
+  `demo_vin`), 4 classes : `bouteille` (attributs `nom`, `cepage` en
+  `joint-1-1` vers la classe `cepage`, `millesime`, `producteur`,
+  `appellation`, `region` en `joint-1-1` vers la classe `region`,
+  `prix_eur`, `notes` en `joint-1-n` vers la classe `note`), plus les 3
+  classes de référence `cepage`/`region`/`note` (un seul attribut `nom`/
+  `nom`/`descripteur`). Cépage/région/notes modélisés en jointures plutôt
+  qu'en texte libre délibérément : seules les jointures produisent des
+  arêtes dans la vue graphe de `DiagramPage.tsx` — un attribut string plat
+  n'y produit aucun lien visuellement exploitable. Chargé réellement via
+  `POST /api/init` sur la stack docker-compose vivante, authentifié
+  `testuser`/global-admin (password grant Keycloak direct, client
+  `miami-vice-direct`). 4 bouteilles créées via `POST /api/write/object`
+  (Château Margaux 2015, Domaine Leflaive Puligny-Montrachet 2019, Domaine
+  Zind-Humbrecht Riesling 2020, Chateauneuf-du-Pape Vieilles Vignes 2018),
+  reliées à des objets `cepage`/`region`/`note` également créés réellement
+  (Château Margaux 2015 porte 3 notes de dégustation, pour illustrer le
+  `joint-1-n`). 3 captures d'écran réelles (PNG, via Chrome headless piloté
+  en CDP — voir note technique `doc/mode-emploi.md`) : Configuration (classe
+  `bouteille` + son attribut `cepage` en jointure), Navigation (table
+  `bouteille` avec jointures résolues en displayname) et Diagramme (graphe
+  des relations bouteille → cépage/région/notes). Documentation dans
+  `doc/mode-emploi.md`, section « Exemple 1 : bouteille de vin ».
+- **Effort** : faible/moyen (un modèle de démo + données + captures, pattern
+  réutilisable tel quel pour 3b/3c).
+- **Fichiers** : `model/demo_vin.json` (nouveau), `tools/screenshot_demo.py`
+  (nouveau, script générique de capture CDP réutilisé par 3b/3c),
+  `doc/mode-emploi.md` (nouveau), `doc/demo-vin/configuration.png`,
+  `doc/demo-vin/navigation.png`, `doc/demo-vin/diagramme.png` (nouveaux).
+- **Statut** : 🔄 en cours — implémentation faite (modèle chargé, 18 objets
+  réels créés en base, 3 captures PNG réelles produites, doc rédigée) ;
+  passage orchestrateur (testeur/pessimiste/candide/testeur-global) restant
+  avant passage à ✅.
+
+## 3b. [Documentation] Mode d'emploi illustré — exemple 2 : architecture applicative / bus Kafka
+
+> Sous-action issue de la scission de l'action 3 (2026-11-25).
+
+- **Problème** : pas d'illustration de bout en bout d'un modèle technique/
+  professionnel plus riche que l'exemple grand public de 3a.
+- **Correctif** : nouveau modèle de démo (`model/demo_kafka.json` ou nom
+  équivalent) : 2-3 applications reliées par un bus Kafka central, types de
+  données (datatype1/datatype2), producteurs/consommateurs, base de
+  données, frontend/backend, VMs, et éventuellement redondance + reverse
+  proxy/load balancer. Chargement réel via `/api/init`, 3-4 objets réels
+  créés via l'API, captures d'écran réelles Configuration/Navigation (et
+  Diagramme si les relations s'y prêtent, même raisonnement qu'en 3a :
+  préférer des jointures à du texte libre pour que le graphe soit
+  exploitable). Nouvelle section « Exemple 2 » ajoutée à
+  `doc/mode-emploi.md`, réutilisation de `tools/screenshot_demo.py`.
+- **Effort** : moyen (modèle plus riche que 3a, mêmes outils réutilisés).
+- **Fichiers** : nouveau modèle de démo (`model/demo_*.json`), nouveau
+  dossier de captures (ex. `doc/demo-kafka/`), section ajoutée à
+  `doc/mode-emploi.md`.
+- **Statut** : ⬜ à faire.
+
+## 3c. [Documentation] Mode d'emploi illustré — exemple 3 : organigramme d'une holding
+
+> Sous-action issue de la scission de l'action 3 (2026-11-25).
+
+- **Problème** : pas d'illustration de bout en bout d'un modèle
+  organisationnel (hiérarchie de personnes/sociétés).
+- **Correctif** : nouveau modèle de démo (`model/demo_organigramme.json` ou
+  nom équivalent) : organigramme d'une holding avec 2-3 sociétés et des
+  structures de 5 à 10 personnes chacune, sur 2-3 niveaux hiérarchiques.
+  Chargement réel via `/api/init`, objets réels créés via l'API
+  (sociétés + personnes + rattachements hiérarchiques, modélisés en
+  jointures), captures d'écran réelles Configuration/Navigation/Diagramme.
+  Nouvelle section « Exemple 3 » ajoutée à `doc/mode-emploi.md`,
+  réutilisation de `tools/screenshot_demo.py`.
+- **Effort** : moyen (volume d'objets plus important que 3a/3b : plusieurs
+  sociétés × 5-10 personnes).
+- **Fichiers** : nouveau modèle de démo (`model/demo_*.json`), nouveau
+  dossier de captures (ex. `doc/demo-organigramme/`), section ajoutée à
+  `doc/mode-emploi.md`.
+- **Statut** : ⬜ à faire.
+
+## 3d. [Documentation] Mode d'emploi illustré — assemblage final
+
+> Sous-action issue de la scission de l'action 3 (2026-11-25), dépend de
+> 3a/3b/3c (les 3 exemples doivent être livrés avant l'assemblage final).
+
+- **Problème** : une fois les 3 exemples (3a/3b/3c) rédigés indépendamment,
+  `doc/mode-emploi.md` a besoin d'une introduction cohérente, d'une
+  conclusion, et d'une relecture de cohérence d'ensemble (terminologie,
+  style, liens entre sections) — pas garanti automatiquement par 3 passages
+  indépendants.
+- **Correctif** : rédaction de l'introduction et de la conclusion de
+  `doc/mode-emploi.md`, relecture de cohérence des 3 sections existantes,
+  et synchronisation de `specifications/*.md` si les 3 exemples ont
+  collectivement rendu une partie de la doc existante incohérente (sinon,
+  le dire explicitement plutôt que de l'oublier).
+- **Effort** : faible (relecture + rédaction, pas de nouveau modèle ni
+  nouvelle capture).
+- **Fichiers** : `doc/mode-emploi.md`, potentiellement
+  `specifications/*.md`.
 - **Statut** : ⬜ à faire.
 
 ## 4. [Nouvelle fonctionnalité] Champ conditionnel : affichage indexé sur une autre valeur ou un calcul
