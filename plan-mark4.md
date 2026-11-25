@@ -176,6 +176,40 @@
   fois la vue temporelle en place, à reconsidérer seulement si la
   résolution 15s s'avère insuffisante en usage réel.
 
+## 1c. [Nouvelle fonctionnalité] Métrique de tokens consommés par agent
+
+> Demande utilisateur (2026-11-25), suite directe de l'action 1b : avoir
+> une idée du nombre de tokens utilisés par les agents dans les
+> métriques, éventuellement le nombre global, affiché via un `rate()`
+> plutôt qu'une valeur brute instantanée.
+
+- **Problème** : `claude_agent` (action 1b) donne un signal d'activité
+  0/1, mais aucune métrique n'expose le volume de tokens réellement
+  consommé par type d'agent.
+- **Correctif** : `tools/claude-agent-exporter/exporter.sh` étendu —
+  nouvelle métrique `claude_agent_tokens_total{agent="..."}` (compteur
+  Prometheus), somme de `message.usage.output_tokens` sur l'ensemble des
+  messages assistant de chaque transcript, agrégée par type d'agent
+  (`jq`, installé une fois au démarrage du conteneur via `apk add`).
+  Dashboard Grafana : panel `timeseries` sur
+  `rate(claude_agent_tokens_total[5m])` (débit tokens/s par agent, vue
+  graphe comme demandé) + panel `stat` sur `sum(claude_agent_tokens_total)`
+  (total cumulé tous agents confondus).
+- **Effort** : faible (extension du script existant + 2 panels
+  supplémentaires sur le dashboard déjà en place).
+- **Fichiers** : `tools/claude-agent-exporter/exporter.sh`,
+  `grafana/dashboards/claude-agents.json`.
+- **Statut** : ✅ fait (2026-11-25). Vérifié en conditions réelles :
+  valeurs plausibles pour cette session marathon au moment du test
+  (`worker` 2,8M, `orchestrateur` 1,3M, `pessimiste` ~1M, total global
+  6,66M), dashboard rechargé automatiquement (4 panels confirmés via
+  l'API Grafana), requête `rate()` et `sum()` toutes deux testées
+  directement contre Prometheus. **Approximation documentée** (dans le
+  `HELP` de la métrique elle-même) : somme des `output_tokens`
+  uniquement — n'inclut pas les tokens d'entrée/cache, ne reproduit pas
+  l'accounting interne exact du harnais (le chiffre `subagent_tokens`
+  vu dans les rapports de fin de tâche d'un agent peut différer).
+
 ## 2. [Nouvelle fonctionnalité] Ajout de Selenium pour les tests IHM
 
 > Demande utilisateur (2026-11-25) — marquée « à discuter » par
