@@ -119,6 +119,28 @@ services:
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
       - '--collector.textfile.directory=/textfile_collector'
 
+  # Dashboard Grafana (action 1b, plan-mark4.md) pour suivre visuellement
+  # l'activité des agents Claude (métrique `claude_agent`, voir
+  # claude-agent-exporter ci-dessous) — panel state-timeline, pas une
+  # jauge instantanée, pour que les rafales courtes d'activité restent
+  # visibles même quand la valeur au moment présent est 0. Provisioning
+  # automatique (datasource Prometheus + dashboard), accès anonyme Viewer
+  # activé (cohérent avec Prometheus déjà sans auth dans cette stack dev).
+  grafana:
+    image: grafana/grafana:11.3.1
+    ports:
+      - "3002:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
   # Métrique `claude_agent{agent="..."} 0|1` par type d'agent Claude Code
   # (worker/testeur/pessimiste/candide/orchestrateur/testeur-global),
   # exposée via le textfile collector de node-exporter ci-dessus. Signal
@@ -174,3 +196,4 @@ volumes:
   ldapdata:
   ldapconfig:
   claude-agent-metrics:
+  grafana-data:
