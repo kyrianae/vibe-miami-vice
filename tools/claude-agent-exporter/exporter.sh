@@ -30,7 +30,7 @@
 #     `orchestrateur` instance if one is fresh, since its description
 #     usually names the plan action directly, e.g. "Orchestrate action
 #     3: illustrated demo docs"), else the most recently modified fresh
-#     agent of any type. "idle" if nothing is fresh right now. Exists so
+#     agent of any type. "en attente" if nothing is fresh right now. Exists so
 #     the dashboard shows something readable immediately, not just a
 #     0/1 grid — label cardinality grows over time as task text changes
 #     (acceptable at this project's scale, not meant for a high-churn
@@ -159,7 +159,7 @@ while true; do
   done
 
   if [ -z "$best_desc" ]; then
-    task_label="idle"
+    task_label="en attente"
   else
     task_label=$(escape_label "$best_desc")
   fi
