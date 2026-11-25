@@ -149,7 +149,32 @@
   provisioning), nouveau dossier de provisioning Grafana (datasource +
   dashboard), `tools/claude-agent-exporter/exporter.sh` (si la métrique
   complémentaire du point 2 est retenue).
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-25). Service `grafana` ajouté
+  (`docker-compose.yml`, image `grafana/grafana:11.3.1`, port `3002`
+  côté hôte — `3001` déjà occupé par autre chose sur la machine, `3000`
+  déjà pris par `frontend` ; accès anonyme Viewer activé, cohérent avec
+  Prometheus déjà sans auth dans cette stack dev). Provisioning
+  automatique : datasource Prometheus (`grafana/provisioning/
+  datasources/prometheus.yml`, uid `prometheus`) + dashboard
+  `grafana/dashboards/claude-agents.json` (« Claude Agents Activity »,
+  `refresh: 10s` comme demandé) — 2 panels **state-timeline** (« multi
+  state ») : un en vue temporelle sur les 15 dernières minutes (résout le
+  point 2 du problème — les rafales d'activité restent visibles même
+  quand la valeur instantanée repasse à 0), un en état instantané par
+  agent. Vérifié en conditions réelles : dashboard accessible via l'API
+  Grafana (`/api/search`, `/api/dashboards/uid/claude-agents`,
+  2 panels confirmés, `refresh: "10s"` confirmé), datasource proxy
+  fonctionnelle en anonyme (`/api/datasources/proxy/uid/prometheus/...`).
+  **Cause du point 2 confirmée et résolue** : dispatch d'un agent
+  `candide` de test (vrai sous-agent, pas une simulation) — la requête
+  **instantanée** est bien retombée à `0` dès la fin du burst (confirmant
+  le diagnostic initial), mais la même série en **range query** sur les
+  90 dernières secondes montre bien le point `1` dans l'historique — donc
+  la vue temporelle du dashboard (pas une simple jauge) résout bien le
+  problème signalé. Pas de métrique complémentaire `_activations_total`
+  ajoutée (point 2 du correctif, optionnel) — jugée non nécessaire une
+  fois la vue temporelle en place, à reconsidérer seulement si la
+  résolution 15s s'avère insuffisante en usage réel.
 
 ## 2. [Nouvelle fonctionnalité] Ajout de Selenium pour les tests IHM
 

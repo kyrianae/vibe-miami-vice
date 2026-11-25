@@ -6,7 +6,7 @@
 | # | Action | Statut |
 |---|--------|--------|
 | 1 | Optimisation de la configuration des agents et de la verbosité docs/plan | ✅ fait |
-| 1b | Monitoring visuel de l'activité des agents Claude via Prometheus | ⬜ à faire |
+| 1b | Monitoring visuel de l'activité des agents Claude via Prometheus | ✅ fait |
 | 2 | Ajout de Selenium pour les tests IHM | ⬜ à discuter |
 | 3 | Mode d'emploi illustré avec captures d'écran (modèles de démo) | ⬜ à faire |
 | 4 | Champ conditionnel (affichage indexé sur une autre valeur/calcul) | ⬜ démarche interactive requise |
