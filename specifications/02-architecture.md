@@ -160,6 +160,49 @@ Réinitialisation complète : `docker-compose down -v` (supprime aussi le
 volume `pgdata`, donc force le script `sql/init.sql` à se rejouer au
 prochain démarrage) puis `docker-compose up -d`.
 
+## 6. Observabilité : Prometheus, Grafana, métriques d'activité des agents Claude
+
+> Ajouté 2026-11-25, `plan-mark4.md` actions 1 et 1b.
+
+Services supplémentaires de `docker-compose.yml`, sans lien avec le
+fonctionnel CMDB de l'application (`backend`/`frontend`/`db`) — de
+l'outillage pour l'équipe de développement elle-même :
+
+- **`prometheus`** (`:9090`) + **`node-exporter`** — préparés à l'origine
+  comme brique de test réelle pour le type d'attribut `datasource`
+  (`plan-mark3.md` action 9, `model/datasource.json`). `node-exporter`
+  n'expose son port (`9100`) qu'à l'intérieur du réseau Docker du
+  compose, pas sur l'hôte — accessible via Prometheus (`:9090`,
+  interrogeable directement via son API, `/api/v1/query`).
+- **`claude-agent-exporter`** (pas de port exposé, interne uniquement) :
+  petit script POSIX sh autonome (`tools/claude-agent-exporter/
+  exporter.sh`, aucun appel LLM), qui scrute toutes les 15s les horodatages
+  des fichiers transcript des sous-agents Claude Code
+  (`~/.claude/projects/*/subagents/*.jsonl`, monté en lecture seule) comme
+  signal approximatif d'activité (« ce type d'agent a écrit dans son
+  transcript il y a moins de 20s = actif »), et écrit une métrique
+  Prometheus au format textfile (`claude_agent{agent="worker|testeur|
+  pessimiste|candide|orchestrateur|testeur-global"} 0|1`). `node-exporter`
+  expose ce fichier via son collecteur textfile
+  (`--collector.textfile.directory`), sans modification de
+  `prometheus/prometheus.yml` nécessaire (`node-exporter` déjà une cible
+  de scrape existante).
+- **`grafana`** (`:3002` côté hôte — `3000`/`3001` déjà pris par
+  `frontend`/un autre processus de la machine ; accès anonyme en Viewer,
+  cohérent avec Prometheus déjà sans authentification dans cette stack
+  dev) : dashboard « Claude Agents Activity » provisionné automatiquement
+  au démarrage (`grafana/provisioning/`, `grafana/dashboards/
+  claude-agents.json`) — 2 panels **state-timeline** (rafraîchissement
+  10s) : un sur les 15 dernières minutes (vue temporelle, montre les
+  rafales d'activité même quand la valeur instantanée est retombée à 0 —
+  limite constatée et documentée d'une simple jauge instantanée), un en
+  état courant par type d'agent.
+
+Limite assumée du signal (pas un vrai « appel LLM en cours », il n'existe
+pas d'API externe pour ça) : une fenêtre de fraîcheur basée sur le mtime du
+transcript, donc approximative mais suffisante pour un suivi visuel
+d'activité de l'équipe d'agents sur ce projet.
+
 ## 7. LDAP (désactivé)
 
 `docker-compose.yml` définit deux services **entièrement commentés** :
