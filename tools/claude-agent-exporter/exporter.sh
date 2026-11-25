@@ -1,18 +1,35 @@
 #!/bin/sh
-# Writes a Prometheus textfile metric `claude_agent{agent="<type>"} 0|1`
-# for each known Claude Code subagent type, based on how recently its
-# transcript file was modified under ~/.claude/projects/*/subagents/ —
-# a proxy for "currently working", not an exact "LLM call in flight"
-# signal (there is no such API). A type counts as active (1) if at
-# least one of its agent instances has a transcript modified within
-# FRESH_SECONDS; otherwise 0. Runs forever, rewriting the file every
-# INTERVAL seconds (atomic write: temp file + rename).
+# Writes 2 Prometheus textfile metrics per known Claude Code subagent
+# type, based on ~/.claude/projects/*/subagents/ transcripts (mounted
+# read-only) — no LLM call, pure filesystem inspection:
+#
+#   claude_agent{agent="<type>"} 0|1
+#     Proxy for "currently working": 1 if at least one instance of this
+#     type has a transcript modified within FRESH_SECONDS, else 0. Not an
+#     exact "LLM call in flight" signal — a recency heuristic.
+#
+#   claude_agent_tokens_total{agent="<type>"} <cumulative output tokens>
+#     Sum of every assistant message's `message.usage.output_tokens`
+#     across ALL transcripts classified as this type (not just fresh
+#     ones) — a monotonically growing counter as new agent runs add
+#     messages, suitable for rate()/increase() in Grafana/PromQL. Does
+#     NOT include input/cache tokens (those aren't newly generated
+#     content) — an approximation of "tokens produced by this agent",
+#     not the harness's own internal accounting.
+#
+# Runs forever, rewriting the file every INTERVAL seconds (atomic
+# write: temp file + rename).
 set -eu
 
 PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-/claude-projects}"
 OUT_FILE="${OUT_FILE:-/metrics/claude_agents.prom}"
 FRESH_SECONDS="${FRESH_SECONDS:-20}"
 INTERVAL="${INTERVAL:-15}"
+
+# jq is needed to sum output_tokens across a transcript reliably
+# (grep/sed would double count or miss nested usage blocks). Installed
+# once at container start, not on every loop iteration.
+command -v jq >/dev/null 2>&1 || apk add --no-cache jq >/dev/null 2>&1
 
 # Classify from the human-readable `description` field written at
 # dispatch time (e.g. "Pessimiste action 22 class validation"). Order
@@ -48,13 +65,11 @@ classify_by_agent_type() {
 while true; do
   now=$(date +%s)
   w=0; te=0; pe=0; ca=0; orc=0; tg=0
+  tok_w=0; tok_te=0; tok_pe=0; tok_ca=0; tok_orc=0; tok_tg=0
 
   for meta in $(find "$PROJECTS_DIR" -name 'agent-*.meta.json' 2>/dev/null); do
     jsonl="${meta%.meta.json}.jsonl"
     [ -f "$jsonl" ] || continue
-    mtime=$(stat -c %Y "$jsonl" 2>/dev/null) || continue
-    age=$(( now - mtime ))
-    [ "$age" -le "$FRESH_SECONDS" ] || continue
 
     desc=$(sed -n 's/.*"description":"\([^"]*\)".*/\1/p' "$meta" | head -1)
     desc_lc=$(printf '%s' "$desc" | tr '[:upper:]' '[:lower:]')
@@ -64,14 +79,33 @@ while true; do
       atype=$(sed -n 's/.*"agentType":"\([^"]*\)".*/\1/p' "$meta" | head -1)
       label=$(classify_by_agent_type "$atype")
     fi
+    [ -n "$label" ] || continue
 
+    # Activity gauge: only counts if recently modified.
+    mtime=$(stat -c %Y "$jsonl" 2>/dev/null) || mtime=0
+    age=$(( now - mtime ))
+    if [ "$age" -le "$FRESH_SECONDS" ]; then
+      case "$label" in
+        worker) w=1 ;;
+        testeur) te=1 ;;
+        pessimiste) pe=1 ;;
+        candide) ca=1 ;;
+        orchestrateur) orc=1 ;;
+        testeur-global) tg=1 ;;
+      esac
+    fi
+
+    # Token counter: summed over the whole transcript, every cycle
+    # (cumulative across this agent's full history on disk, not just
+    # the fresh window above).
+    file_tokens=$(jq -s '[.[] | .message.usage.output_tokens? // 0] | add // 0' "$jsonl" 2>/dev/null) || file_tokens=0
     case "$label" in
-      worker) w=1 ;;
-      testeur) te=1 ;;
-      pessimiste) pe=1 ;;
-      candide) ca=1 ;;
-      orchestrateur) orc=1 ;;
-      testeur-global) tg=1 ;;
+      worker) tok_w=$((tok_w + file_tokens)) ;;
+      testeur) tok_te=$((tok_te + file_tokens)) ;;
+      pessimiste) tok_pe=$((tok_pe + file_tokens)) ;;
+      candide) tok_ca=$((tok_ca + file_tokens)) ;;
+      orchestrateur) tok_orc=$((tok_orc + file_tokens)) ;;
+      testeur-global) tok_tg=$((tok_tg + file_tokens)) ;;
     esac
   done
 
@@ -85,6 +119,14 @@ while true; do
     echo "claude_agent{agent=\"candide\"} $ca"
     echo "claude_agent{agent=\"orchestrateur\"} $orc"
     echo "claude_agent{agent=\"testeur-global\"} $tg"
+    echo "# HELP claude_agent_tokens_total Cumulative output tokens generated, summed across all transcripts on disk for this agent type. Approximation (output tokens only, not input/cache) — use rate()/increase() for a tokens/s view."
+    echo "# TYPE claude_agent_tokens_total counter"
+    echo "claude_agent_tokens_total{agent=\"worker\"} $tok_w"
+    echo "claude_agent_tokens_total{agent=\"testeur\"} $tok_te"
+    echo "claude_agent_tokens_total{agent=\"pessimiste\"} $tok_pe"
+    echo "claude_agent_tokens_total{agent=\"candide\"} $tok_ca"
+    echo "claude_agent_tokens_total{agent=\"orchestrateur\"} $tok_orc"
+    echo "claude_agent_tokens_total{agent=\"testeur-global\"} $tok_tg"
   } > "$tmp"
   mv "$tmp" "$OUT_FILE"
 
