@@ -1419,7 +1419,14 @@
 - **Fichiers** : `specifications/07-roadmap.md` (§10.13, conception déjà
   écrite) ; fichiers d'implémentation réels à déterminer à
   l'implémentation (rien n'est codé).
-- **Statut** : ⬜ à faire — priorité 5, choix utilisateur 2026-11-22.
+- **Statut** : ⬜ **reporté → voir `plan-mark4.md` action 1** (2026-11-25,
+  clôture de Mark 3). Volontairement jamais traitée dans ce plan —
+  consigne utilisateur explicite du 2026-11-24 (« continue le plan,
+  sauf 11 »), confirmée en toutes lettres à la clôture (action 25 :
+  « tout faire sauf 11, fermer ce plan et passer au mark4 »). Reprise
+  telle quelle (même Problème/Correctif/Effort/Fichiers, conception
+  §10.13 toujours valable) comme première action de `plan-mark4.md`,
+  avec un Statut `⬜ à faire` propre.
 
 ## 12. [Dette technique] Réorganisation de backend/ en packages (auth, data, files, routes, tests)
 
@@ -2649,8 +2656,78 @@
   `plan-mark4.md` reprenant le contenu technique complet (Problème/
   Correctif/Effort/Fichiers) de l'action 11 comme première action de
   Mark 4 avec un Statut `⬜ à faire` propre.
-- **Statut** : ⬜ à faire — dernière étape de cette vague, une fois
-  17/20/21/22/23/24 closes.
+- **Statut** : ✅ fait (2026-11-25). Les 6 actions prérequises
+  (17/20/21/22/23/24, + 21bis ajoutée en cours de vague pour un correctif
+  sécurité urgent) sont closes — détail de chacune dans sa propre section
+  ci-dessus et dans la table récapitulative. Action 11 annotée
+  `⬜ reporté → voir plan-mark4.md action 1` dans sa section et dans la
+  table (jamais supprimée, conformément à la règle de ne pas effacer
+  silencieusement du contenu). Section « Clôture de Mark 3 » ajoutée
+  juste après la table récapitulative, résumant le bilan complet de ce
+  document. `plan-mark4.md` créé en reprenant intégralement le contenu
+  technique de l'action 11 comme action 1, Statut `⬜ à faire` propre —
+  **en préservant tel quel** le contenu que l'utilisateur y avait déjà
+  déposé de son côté (3 points de brainstorming antérieurs à cette
+  clôture, non touchés, non reformulés). Ce fichier `plan-mark3.md`
+  déplacé vers `finished plan/plan-mark3.md` (archive historique, lecture
+  seule désormais) juste après le commit de clôture.
+
+## Clôture de Mark 3
+
+> Rédigée à la clôture de l'action 25 (2026-11-25), même format que la
+> clôture de Mark 2 en fin de `finished plan/plan-mark2.md`.
+
+**Bilan** : 26 actions numérotées (1 à 25, plus 10a-10d et 21bis), **25
+closes** (✅ fait ou 🔀 scindée en sous-actions elles-mêmes closes), **1
+reportée** (action 11, volontairement — consigne utilisateur explicite,
+jamais un oubli). Couverture large : découpage backend en modules puis en
+packages, stockage de fichiers et types d'attribut riches (file/image/csv/
+select/secret/datasource/boolean), logos/icônes, versionnage de modèle,
+dashboards configurables (10a-10d), layers statiques et dynamiques, IHM de
+configuration complète (11 puis 12 types), restructuration de la navigation,
+autosuggest, recherche globale, extension massive du CMDB embarqué (cluster/
+organisation/localisation/besoin), validation de création de classe, et 2
+vagues de synchronisation documentaire (actions 6/16) plus une réorganisation
+complète de `specifications/07-roadmap.md` vers un catalogue fonctionnel
+(action 24).
+
+**Incidents de sécurité trouvés et corrigés pendant cette clôture** (à
+retenir comme précédent pour les prochaines marks) : l'action 21 (recherche
+globale) a révélé, en 4 itérations de revue croisée, une fuite de secret
+contournable via une classe/attribut retiré du modèle courant — corrigée en
+SQL `EXISTS` positif plutôt qu'en `NOT EXISTS` négatif. La revue de cette
+correction a elle-même révélé une fuite plus large (même cause racine —
+absence de contrainte d'unicité sur `attributes[].name` dans une classe)
+touchant `/api/suggest`, `/api/read/object` et le chemin d'écriture lui-même
+(stockage en clair) — traitée en urgence comme action 21bis, avec
+l'autorisation explicite de l'utilisateur d'aller au-delà du plafond habituel
+de 2 itérations d'un cycle orchestrateur vu l'enjeu. Lesson retenue :
+`_check_class_name_unique` (action 22) protège l'unicité de nom de **classe**
+entre meta-classes, mais rien ne protège l'unicité de nom d'**attribut** au
+sein d'une classe ni les classes dupliquées dans une même meta-classe — ce
+point est désormais corrigé (deny-priority partout où un type d'attribut sert
+une décision de sécurité), mais reste un rappel pour toute nouvelle
+fonctionnalité qui résout un type d'attribut par nom.
+
+**Dette explicitement acceptée, non traitée, à garder en tête pour une
+future mark** (signalée en détail dans les sections d'action correspondantes,
+pas répétée ici) : chevauchement `application_versionnee`/
+`ansible_inventory.version_logicielle` (action 17) ; absence de contrainte
+d'unicité de nom d'attribut au **chemin d'écriture lui-même** pour le cas où
+une classe/meta-classe serait de nouveau dupliquée après le fix de l'action
+21bis (le fix couvre la résolution de type, pas la prévention de la
+duplication à la source autrement que par le blocage déjà en place) ;
+quelques limites de perf/UX mineures documentées dans les actions 20/21
+(absence d'index dédié sur `/api/suggest`/`/api/search`, debounce sans
+`AbortController`).
+
+**Reporté vers Mark 4** : action 11 (outil d'ingestion avec binding),
+reprise à l'identique comme première action de `plan-mark4.md`.
+
+**Convention de clôture suivie** : pattern « Mark N » déjà établi au passage
+Mark 1 → Mark 2 et Mark 2 → Mark 3 — ce fichier est déplacé en archive
+(`finished plan/plan-mark3.md`), `plan-mark4.md` devient le plan actif à la
+racine du dépôt.
 
 ## Récapitulatif d'avancement
 
@@ -2673,7 +2750,7 @@
 | 10b | IHM lecture seule d'un dashboard existant | ✅ fait |
 | 10c | Édition des tabs dans l'IHM | ✅ fait |
 | 10d | Sélection des sous-objets affichés par tab | ✅ fait |
-| 11 | Outil d'ingestion avec binding | ⬜ à faire — **volontairement non traitée** (consigne utilisateur 2026-11-24 : « sauf 11 »), reportée → voir action 25 |
+| 11 | Outil d'ingestion avec binding | ⬜ **reporté → voir `plan-mark4.md` action 1** — volontairement non traitée (consigne utilisateur 2026-11-24 : « sauf 11 ») |
 | 12 | Réorganisation de backend/ en packages (auth, data, files, routes, tests) | ✅ fait |
 | 13 | IHM de configuration : types d'attribut manquants (file/image/csv/select/secret/datasource) | ✅ fait |
 | 14 | Layers sur les classes et filtre IHM/diagramme | ✅ fait |
@@ -2688,4 +2765,4 @@
 | 22 | [Dette technique / validation] Création de classe : meta_class auto-déduite, nom de classe unique | ✅ fait |
 | 23 | [Dette documentaire] Enrichissement de `specifications/use case.md` | ✅ fait |
 | 24 | [Dette documentaire] Réorganisation de `specifications/07-roadmap.md` (sortir le livré) | ✅ fait |
-| 25 | Clôture de Mark 3 → ouverture de Mark 4 | ⬜ à faire |
+| 25 | Clôture de Mark 3 → ouverture de Mark 4 | ✅ fait |
