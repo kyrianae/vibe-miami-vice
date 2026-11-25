@@ -111,11 +111,33 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      - claude-agent-metrics:/textfile_collector:ro
     command:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
       - '--path.rootfs=/rootfs'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.textfile.directory=/textfile_collector'
+
+  # Métrique `claude_agent{agent="..."} 0|1` par type d'agent Claude Code
+  # (worker/testeur/pessimiste/candide/orchestrateur/testeur-global),
+  # exposée via le textfile collector de node-exporter ci-dessus. Signal
+  # approximatif (mtime récent des transcripts ~/.claude/.../subagents/),
+  # pas un vrai "appel LLM en cours" — il n'existe pas d'API externe pour
+  # ça. Script autonome, aucun coût LLM, cadence réelle de 15s (voir
+  # tools/claude-agent-exporter/exporter.sh).
+  claude-agent-exporter:
+    image: alpine:3.20
+    command: ["sh", "/app/exporter.sh"]
+    environment:
+      CLAUDE_PROJECTS_DIR: /claude-projects
+      OUT_FILE: /metrics/claude_agents.prom
+      FRESH_SECONDS: "20"
+      INTERVAL: "15"
+    volumes:
+      - ./tools/claude-agent-exporter:/app:ro
+      - ${HOME}/.claude/projects:/claude-projects:ro
+      - claude-agent-metrics:/metrics
 
   # ldap:
   #   image: osixia/openldap:1.5.0
@@ -151,3 +173,4 @@ volumes:
   pgdata:
   ldapdata:
   ldapconfig:
+  claude-agent-metrics:
