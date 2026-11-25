@@ -15,7 +15,6 @@
       }
     ]
   },
-  "description": "",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -156,8 +155,8 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 4,
-        "w": 24,
+        "h": 6,
+        "w": 12,
         "x": 0,
         "y": 9
       },
@@ -193,6 +192,69 @@
         }
       ],
       "title": "État instantané par agent",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "name",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.3.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "claude_current_task",
+          "instant": true,
+          "legendFormat": "{{task}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Tâche en cours",
       "type": "stat"
     },
     {
@@ -260,7 +322,7 @@
         "h": 7,
         "w": 17,
         "x": 0,
-        "y": 13
+        "y": 15
       },
       "id": 3,
       "options": {
@@ -318,10 +380,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
+        "h": 7,
         "w": 7,
         "x": 17,
-        "y": 13
+        "y": 15
       },
       "id": 4,
       "options": {
@@ -356,40 +418,6 @@
       ],
       "title": "Total tokens générés (cumulé, tous agents)",
       "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 20 },
-      "id": 5,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "textMode": "name",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.3.1",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "claude_current_task",
-          "instant": true,
-          "legendFormat": "{{task}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Tâche en cours",
-      "type": "stat"
     }
   ],
   "preload": false,
@@ -407,6 +435,6 @@
   "timezone": "browser",
   "title": "Claude Agents Activity Perso",
   "uid": "ag5cdhxrs7ojkf",
-  "version": 1,
+  "version": 5,
   "weekStart": ""
 }
