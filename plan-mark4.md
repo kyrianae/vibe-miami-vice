@@ -3,128 +3,249 @@
 > **Mark 4** : fait suite à [`finished plan/plan-mark3.md`](finished%20plan/plan-mark3.md)
 > (clos le 2026-11-25). Une seule action était reportée de Mark 3 — l'action
 > 11 (outil d'ingestion avec binding), volontairement non traitée sur
-> demande explicite de l'utilisateur. Sa conception complète est reprise en
-> annexe de ce fichier (tout en bas) à titre de référence historique — **pas
-> comme une action validée** : le point 6 ci-dessous (ajouté par
-> l'utilisateur) demande explicitement une démarche interactive avant de la
-> formaliser.
->
-> Le contenu qui suit (points 0 à 6) est le brouillon de travail déposé
-> directement par l'utilisateur dans ce fichier pendant que Mark 3 se
-> clôturait — **conservé mot pour mot, rien reformulé ni étoffé**. Plusieurs
-> points sont explicitement marqués comme nécessitant une « démarche
-> interactive » (points 3, 4, 6) : conformément à la convention établie,
-> cela signifie poser des questions à l'utilisateur pour définir le point
-> avant de l'implémenter — pas concevoir seul puis faire valider.
+> demande explicite de l'utilisateur. Reprise ci-dessous comme action 7.
 
-0)
-Optimisation travail 
+> **Suivi d'avancement** : mêmes conventions que Mark 1/2/3 — chaque action
+> porte un champ **Statut** (⬜ à faire / 🔄 en cours / ✅ fait / ⬜ démarche
+> interactive requise) mis à jour au fur et à mesure, avec une date et un
+> résumé de ce qu'ont confirmé `worker`/`testeur`/`pessimiste`/`candide`/
+> `testeur-global`. Le tableau récapitulatif en fin de document doit rester
+> synchronisé. Toute décision qui annule/remplace un contenu déjà écrit ici
+> doit être annotée explicitement (pas supprimée silencieusement).
 
-analyse la conf des agents
-le configuaiton est elle coherente; eut elle etre optimiser 
-chacun devarit etre dasn le top 01 de son metier 
+> **Démarche interactive** : quand une action porte ce statut, elle n'a
+> volontairement pas été conçue dans ce document — avant de l'implémenter,
+> poser des questions à l'utilisateur pour définir les points ouverts
+> (plutôt que concevoir seul puis faire valider). C'est le cas des actions
+> 4, 5 et 7 ci-dessous.
 
-et succintement les docs et plan 
-sont ils trop verbeux, ou dense , ou parasité par des inforamation historique ce qui alourdi les traitements  ?
+> **En attente** : ajouter ici chaque nouvelle demande (bug, feature,
+> évolution) au même format (Problème / Correctif / Effort / Fichiers /
+> Statut), avec un numéro d'action, dès qu'elle est formulée.
 
-100% of your usage came from subagent-heavy sessions
-Each subagent runs its own requests. Be deliberate about spawning them — and consider configuring a cheaper model for simpler subagents.
-47% of your usage was at >150k context
-Longer sessions are more expensive even when cached. /compact mid-task, /clear when switching to new tasks.
-29% of your usage came from sessions active for 8+ hours
-These are often background/loop sessions. Continuous usage can add up quickly so make sure it is intentional.
-20% of your usage came from subagents under "general-purpose"
-If this runs frequently, consider configuring its subagents with a cheaper model or tightening their prompts.
-Subagents
-% of usage
-general-purpose
-20%
-worker
-17%
-orchestrateur
-10%
-pessimiste
-7%
-testeur
-4%
-candide
-2%
-testeur-global
-2%
+## 1. [Dette technique / outillage] Optimisation de la configuration des agents et de la verbosité docs/plan
 
-peux tu configurer les modelesde chaque agent ?
+> Demande utilisateur (2026-11-25), posée en brouillon pendant la clôture
+> de Mark 3, avec les chiffres d'usage Claude Code suivants à l'appui :
+> 100% de l'usage vient de sessions à forte charge de sous-agents ; 47% à
+> plus de 150k de contexte ; 29% de sessions actives 8h+ ; 20% de
+> sous-agents catégorisés "general-purpose". Répartition par agent : 20%
+> general-purpose, 17% worker, 10% orchestrateur, 7% pessimiste, 4%
+> testeur, 2% candide, 2% testeur-global.
 
+- **Problème** : deux volets distincts posés par l'utilisateur.
+  1. Configuration des agents (`.claude/agents/*.md`) : est-elle cohérente ?
+     peut-elle être optimisée ? Chaque agent devrait être « top 0,1% » de
+     son métier (prompts/outils bien ciblés pour son rôle précis, pas de
+     sur-périmètre). Question explicite : peut-on configurer un modèle
+     différent par agent (ex. un modèle moins cher pour les agents au
+     rôle simple comme `testeur`/`candide`, un modèle plus capable pour
+     `orchestrateur`/`pessimiste`) ?
+  2. Documentation et plans (`specifications/*.md`, `plan-mark*.md`) :
+     sont-ils trop verbeux, trop denses, ou parasités par de l'information
+     historique qui alourdit inutilement la lecture par les agents à
+     chaque cycle ?
+- **Correctif** : à déterminer à l'implémentation — commence par un audit
+  (lecture des 6 fichiers `.claude/agents/*.md` + un échantillon de
+  `specifications/*.md`/`plan-mark*.md`) avant de proposer des
+  changements concrets. Pistes déjà identifiées en cours de route (Mark 3,
+  non closes ici, juste des précédents à connaître) : l'action 24 de
+  Mark 3 a déjà extrait la majorité du détail historique de
+  `specifications/07-roadmap.md` vers un catalogue fonctionnel plus
+  compact — ce travail de « dé-verbosification » est donc déjà engagé sur
+  un fichier, reste à évaluer les autres. Sur le `model`/modèle de coût
+  par agent : vérifier le paramètre `model` disponible en frontmatter des
+  définitions d'agent avant de choisir une répartition.
+- **Effort** : faible à moyen pour l'audit, variable pour les correctifs
+  selon ce qu'il révèle.
+- **Fichiers** : `.claude/agents/*.md`, potentiellement
+  `specifications/*.md`/`plan-mark4.md` lui-même si jugé trop dense à son
+  tour.
+- **Statut** : ⬜ à faire.
 
+## 2. [Nouvelle fonctionnalité] Ajout de Selenium pour les tests IHM
 
-1)
-ajout de selenium pour tests ihm 
-a discuter
+> Demande utilisateur (2026-11-25) — marquée « à discuter » par
+> l'utilisateur lui-même : pas encore une décision ferme d'implémenter,
+> à confirmer avant de lancer le cycle complet.
 
-2)
-ajout documentation mode d emploi avec snapshot
-dans un premier temps creation de modele 
-exemple bouteille de vin 
-avec attribut cepage annee 
-cave / vigneron 
-AOC .... 
+- **Problème** : aucun test IHM automatisé/scripté dans le projet
+  aujourd'hui (confirmé à plusieurs reprises pendant Mark 3 — les
+  vérifications frontend se limitent à `tsc -b`/`vite build` et, quand
+  l'environnement le permet, un rendu DOM statique via Chrome headless,
+  jamais un scénario de clics réels scripté).
+- **Correctif** : à discuter avec l'utilisateur avant de concevoir quoi
+  que ce soit — portée exacte (quels parcours couvrir en priorité),
+  outil (Selenium nommément demandé, à confirmer vs. une alternative déjà
+  plus légère comme Playwright si pertinent pour ce projet), intégration
+  CI éventuelle.
+- **Effort** : à évaluer après discussion.
+- **Fichiers** : à déterminer.
+- **Statut** : ⬜ à discuter (pas encore à faire).
 
-et autre exemple 
-plus technique ou professionnel 
-derveur appli ( 2 3 appli avec un kafka au milieu avec de la data , datatype1 datatype2 consommateur producteur db fronten backend des vm peut etre de la redondance et de reverse proxy ou loadbalancer)
-ajouter 3 4 objets et montrer el a creation d une instance d objet de chaque coté
+## 3. [Documentation] Mode d'emploi illustré avec captures d'écran, basé sur des modèles de démonstration
 
-un orgnaigramme d une holding a 2 3 societe et des structure de 5 10 personne chacune a 23 niveaux 
+> Demande utilisateur (2026-11-25). L'utilisateur suggère lui-même que ce
+> point pourrait être scindé en plusieurs morceaux une fois détaillé —
+> non tranché, à décider à l'implémentation plutôt qu'imposé ici.
 
-peut etre splitter ce point en plusieurs morceaux 
+- **Problème** : pas de documentation « mode d'emploi » illustrée montrant
+  concrètement comment modéliser et utiliser le produit de bout en bout.
+- **Correctif** : construire au moins 2 modèles de démonstration contrastés
+  et illustrer leur usage par des captures d'écran réelles, montrant la
+  création d'instances d'objets des deux côtés (modélisation en
+  `ConfigurationPage.tsx` et saisie/consultation en `NavigationPage.tsx`) :
+  1. **Exemple simple, grand public** : bouteille de vin — attributs
+     cépage, année, cave/vigneron, AOC...
+  2. **Exemple technique/professionnel** : architecture applicative —
+     2-3 applications reliées par un bus Kafka central, avec des types de
+     données (datatype1/datatype2), producteurs/consommateurs, base de
+     données, frontend/backend, VMs, et éventuellement redondance +
+     reverse proxy/load balancer. Ajouter 3-4 objets réels et montrer la
+     création d'une instance de chaque côté.
+  3. **Exemple organisationnel** : organigramme d'une holding avec 2-3
+     sociétés et des structures de 5 à 10 personnes chacune, sur 2-3
+     niveaux hiérarchiques.
+- **Effort** : moyen à élevé (plusieurs modèles de démo complets + captures
+  d'écran réelles pour chacun) — l'utilisateur suggère un découpage possible
+  en plusieurs actions une fois le périmètre exact précisé.
+- **Fichiers** : nouveaux modèles de démo (`model/*.json` dédiés, hors des
+  modèles déjà livrés en Mark 3), nouveau contenu de documentation
+  (emplacement à déterminer — probablement un nouveau fichier
+  `specifications/` ou un dossier dédié `doc/`).
+- **Statut** : ⬜ à faire.
 
-3)
-champ conditionnel 
-indexer l affichage d un champ sur la valeur d un autre ou sur calcul 
-faire une demarche interactive pour la definition 
+## 4. [Nouvelle fonctionnalité] Champ conditionnel : affichage indexé sur une autre valeur ou un calcul
 
-4)
-sur les secret ajouter un bouton oeil dasn l ihm qui permet de le voir 
-cela amene a une authent a definir avec une demarche interactive pour voir ce qu il est possible de faire avec keycloack 
-definir qui peut voir quoi dqns la configuraiton de la classe ? peut etre 
+> Demande utilisateur (2026-11-25), née du constat qu'aucun mécanisme ne
+> permet aujourd'hui de conditionner l'affichage d'un attribut à la valeur
+> d'un autre attribut ou à un calcul.
 
-5)
-ex choix de salle : choix en cascad Salle batiment etage
-la salle a tous les element chaine d enfant 
-attention a suppression d un element
+- **Problème** : pas de mécanisme de champ conditionnel dans le modèle
+  dynamique — tous les attributs déclarés sur une classe sont toujours
+  affichés, jamais indexés sur la valeur d'un autre attribut de l'objet
+  ni sur un calcul dérivé.
+- **Correctif** : **non conçu ici** — l'utilisateur a explicitement demandé
+  une démarche interactive pour définir ce point (voir note en tête de
+  document). Avant toute conception : poser des questions sur, a minima —
+  quelle syntaxe pour la condition (référence à un autre attribut de la
+  même classe uniquement, ou aussi à des attributs joints ?), un calcul
+  signifie quoi exactement ici (expression simple sur des attributs
+  numériques, ou plus large ?), ce mécanisme s'applique-t-il au formulaire
+  de saisie, à l'affichage en lecture, aux deux ?, interaction avec les
+  mécanismes déjà existants qui conditionnent un affichage (`layer_map`
+  de Mark 3 action 18, qui indexe déjà un *layer* — pas un *champ* — sur
+  la valeur d'un attribut `select`).
+- **Effort** : à évaluer après la démarche interactive.
+- **Fichiers** : à déterminer.
+- **Statut** : ⬜ démarche interactive requise (pas encore conçu).
 
-| 6 | Outil d'ingestion avec binding | ⬜ à faire avec demarche interactive  |
+## 5. [Nouvelle fonctionnalité] Révélation d'un secret dans l'IHM (bouton œil) + permissions de visibilité par classe
 
----
+> Demande utilisateur (2026-11-25), qui note elle-même que ce point en
+> amène un autre, plus large, à trancher aussi en démarche interactive.
 
-## Annexe — conception antérieure de l'action 11 de `plan-mark3.md` (référence historique, pas une action validée)
+- **Problème** : un attribut `secret` (Mark 3 action 8) est aujourd'hui
+  masqué en lecture générique, avec une route *reveal* dédiée réservée
+  strictement au global-admin (pas d'exposition dans l'IHM standard).
+  L'utilisateur veut un bouton « œil » dans `NavigationPage.tsx` pour le
+  révéler directement, ce qui soulève une question plus large : qui a le
+  droit de voir quoi, et comment le définir finement (par classe, par
+  attribut, par rôle) ?
+- **Correctif** : **non conçu ici** — démarche interactive requise sur
+  deux volets distincts signalés par l'utilisateur lui-même :
+  1. Jusqu'où élargir le droit de reveal au-delà du global-admin actuel
+     (Mark 3 action 8) — quels rôles, et comment l'exprimer dans le
+     modèle RBAC existant (`backend/auth/rbac.py`) ?
+  2. Ce que Keycloak permet concrètement de faire ici (rôles/scopes
+     disponibles dans le royaume déjà configuré,
+     `keycloak/miami-vice-realm.json`) — à explorer avant de s'engager sur
+     un mécanisme précis.
+  Question ouverte notée par l'utilisateur, « peut-être » : définir qui
+  peut voir quoi directement dans la configuration de la classe
+  (`ConfigurationPage.tsx`) plutôt que globalement.
+- **Effort** : à évaluer après la démarche interactive — potentiellement
+  élevé si un nouveau mécanisme de permission fine est retenu.
+- **Fichiers** : à déterminer (probablement `backend/auth/rbac.py`,
+  `backend/routes/routes_read.py` route reveal existante, `frontend/src/
+  pages/NavigationPage.tsx`, `frontend/src/pages/ConfigurationPage.tsx`,
+  potentiellement `keycloak/miami-vice-realm.json`).
+- **Statut** : ⬜ démarche interactive requise (pas encore conçu).
 
-> Reprise intégrale, sans changement, du contenu technique écrit dans
-> `plan-mark3.md` (actions close le 2026-11-25) pour ne pas perdre le
-> travail de conception déjà fait — conformément à la règle du plan de ne
-> jamais supprimer silencieusement du contenu. **Ne pas considérer comme
-> prête à implémenter telle quelle** : le point 6 ci-dessus demande
-> explicitement une démarche interactive avec l'utilisateur avant de
-> formaliser cette action pour de bon — ces questions n'ont pas encore été
-> posées.
+## 6. [Nouvelle fonctionnalité] Sélection en cascade Salle → Bâtiment → Étage
+
+> Demande utilisateur (2026-11-25), exemple concret donné : choix en
+> cascade salle/bâtiment/étage dans un formulaire, avec vigilance sur la
+> suppression d'un élément de la chaîne.
+
+- **Problème** : les classes `salle`/`etage`/`batiment` (Mark 3 action 17,
+  `model/localisation.json`) existent et sont chaînées par jointures
+  (`salle.etage` → `etage.batiment`), mais aucun mécanisme d'IHM ne
+  propose une sélection en cascade (choisir d'abord un bâtiment, puis un
+  étage filtré sur ce bâtiment, puis une salle filtrée sur cet étage) —
+  aujourd'hui chaque jointure se sélectionne indépendamment dans
+  `NavigationPage.tsx`, sans narrowing successif.
+- **Correctif** : à concevoir à l'implémentation — sélecteur en cascade
+  générique ou spécifique à cette chaîne salle/bâtiment/étage (à trancher
+  selon la réutilisabilité souhaitée pour d'autres chaînes similaires du
+  modèle, ex. `baie_serveur`/`datacenter`). **Point de vigilance
+  explicitement signalé par l'utilisateur** : attention au comportement à
+  la suppression d'un élément de la chaîne (supprimer un bâtiment doit
+  avoir un comportement défini et assumé sur ses étages/salles
+  rattachés — cohérence à vérifier avec le mécanisme de suppression en
+  cascade déjà existant par ailleurs dans le projet, ex.
+  `test_delete_object_cascade_scoped_to_tenant_for_tenant_admin`).
+- **Effort** : moyen (UI de sélection en cascade + vérification du
+  comportement de suppression en chaîne).
+- **Fichiers** : `frontend/src/pages/NavigationPage.tsx`, potentiellement
+  `backend/routes/routes_write.py` (`delete_object`) si le comportement de
+  suppression en cascade doit être adapté.
+- **Statut** : ⬜ à faire.
+
+## 7. [Nouvelle fonctionnalité] Outil d'ingestion avec binding
+
+> Reportée de `plan-mark3.md` action 11 (volontairement jamais traitée
+> dans Mark 3, consigne explicite de l'utilisateur : « continue le plan,
+> sauf 11 »). L'utilisateur a demandé, à la clôture de Mark 3, une
+> démarche interactive avant de la formaliser pour de bon — la conception
+> d'origine ci-dessous est reprise **à titre de référence historique
+> uniquement**, pas comme un correctif validé prêt à implémenter.
 
 - **Problème** : pas d'outil générique de mapping champs source →
   attributs.
-- **Correctif envisagé à l'époque** (conception `specifications/
-  07-roadmap.md` §10.13, document toujours présent, pas supprimé) :
+- **Conception antérieure (Mark 3, non validée, à revisiter)** :
   définition d'un mapping/binding (format probablement JSON) décrivant
   source → champ → attribut cible d'une classe ; réutilisation du type
-  `csv` existant (actions 2-3 de Mark 3) comme première source d'entrée
+  `csv` existant (Mark 3 actions 2-3) comme première source d'entrée
   possible, ou upload direct ; pas d'exécution ni de scheduler dans cette
-  action (ça resterait une idée séparée, jamais engagée). Point resté
-  ouvert à l'époque, jamais tranché : où stocker la config de binding —
-  nouvelle classe du modèle dynamique (cohérence à chercher avec le
-  framework dashboard de Mark 3, qui a le même besoin de stocker de la
-  config applicative, pas des objets métier) ?
+  action (resterait une idée séparée, jamais engagée). Détail complet
+  toujours disponible dans `specifications/07-roadmap.md` §10.13 (jamais
+  supprimé). Point resté ouvert à l'époque, jamais tranché : où stocker
+  la config de binding — nouvelle classe du modèle dynamique (cohérence à
+  rechercher avec le framework dashboard de Mark 3, qui a le même besoin
+  de stocker de la config applicative, pas des objets métier) ?
+- **Correctif** : **non re-conçu ici** — démarche interactive requise
+  avant de formaliser, comme demandé par l'utilisateur. La conception
+  antérieure ci-dessus sert de point de départ à la discussion, pas de
+  spécification figée.
 - **Effort estimé à l'époque** : élevé (difficulté 4/4, fondation
-  réutilisable).
-- **Fichiers envisagés à l'époque** : rien n'a jamais été codé pour cette
-  action — tout reste à déterminer, y compris à la lumière de la démarche
-  interactive demandée au point 6.
+  réutilisable) — à réévaluer après la démarche interactive.
+- **Fichiers** : rien n'a jamais été codé pour cette action — tout reste à
+  déterminer, y compris à la lumière de la démarche interactive à venir.
+- **Statut** : ⬜ démarche interactive requise (pas encore conçu pour de
+  bon).
 
+## Récapitulatif d'avancement
 
+> Tableau à tenir à jour en même temps que le champ **Statut** de chaque
+> action ci-dessus.
 
+| # | Action | Statut |
+|---|--------|--------|
+| 1 | Optimisation de la configuration des agents et de la verbosité docs/plan | ⬜ à faire |
+| 2 | Ajout de Selenium pour les tests IHM | ⬜ à discuter |
+| 3 | Mode d'emploi illustré avec captures d'écran (modèles de démo) | ⬜ à faire |
+| 4 | Champ conditionnel (affichage indexé sur une autre valeur/calcul) | ⬜ démarche interactive requise |
+| 5 | Révélation d'un secret (bouton œil) + permissions de visibilité | ⬜ démarche interactive requise |
+| 6 | Sélection en cascade Salle → Bâtiment → Étage | ⬜ à faire |
+| 7 | Outil d'ingestion avec binding (reporté de Mark 3 action 11) | ⬜ démarche interactive requise |
