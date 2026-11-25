@@ -210,6 +210,52 @@
   l'accounting interne exact du harnais (le chiffre `subagent_tokens`
   vu dans les rapports de fin de tâche d'un agent peut différer).
 
+## 1d. [Raffinement] Dashboard personnalisé, suivi de la tâche en cours, suivi de la session principale
+
+> Demande utilisateur (2026-11-25), suite directe des actions 1b/1c —
+> plusieurs petits ajustements en continu pendant que la session
+> travaillait en parallèle.
+
+- **Problème/demandes** :
+  1. L'utilisateur a créé son propre dashboard dans l'UI Grafana
+     (« Claude Agents Activity Perso ») et a demandé de l'utiliser comme
+     dashboard provisionné à la place de celui généré automatiquement.
+  2. Avoir « quelque chose de visuel dès maintenant » plutôt que
+     d'attendre une rafale d'activité — demande d'un label nommant la
+     tâche de plan en cours.
+  3. Constat : aucun agent ne « bouge » dans les métriques quand
+     l'utilisateur pose une question en parallèle du worker — parce que
+     la session principale (pas un sous-agent) n'était pas suivie du
+     tout.
+  4. Demande finale : afficher l'étape en cours, sinon « en attente »
+     (pas « idle »).
+- **Correctif** :
+  1. Export du dashboard créé par l'utilisateur via l'API Grafana
+     (`/api/dashboards/uid/ag5cdhxrs7ojkf`), écrit comme nouveau fichier
+     de provisioning `grafana/dashboards/claude-agents-perso.json`
+     (ancien `claude-agents.json` supprimé) — adoption confirmée après
+     redémarrage de Grafana (`provisionedExternalId` correct), ancien
+     doublon disparu proprement.
+  2. Nouvelle métrique `claude_current_task{task="<description>"} 1`
+     (`tools/claude-agent-exporter/exporter.sh`) : description brute de
+     l'agent actif le plus pertinent (`orchestrateur` préféré s'il est
+     frais, sinon l'agent frais le plus récent), `"en attente"` sinon.
+     Nouveau panel `stat` (« Tâche en cours ») ajouté au dashboard.
+  3. Nouvelle série `claude_agent{agent="main"}` : surveille aussi le
+     transcript de la session principale elle-même (`*.jsonl` à la
+     racine d'un répertoire de projet, pas dans `subagents/`) — comble
+     le trou où la session principale travaille (répond, édite des
+     fichiers) sans qu'aucun sous-agent ne tourne en parallèle.
+  4. Libellé par défaut changé de `"idle"` à `"en attente"`.
+- **Effort** : faible (extensions ciblées du script existant + 1 export
+  de dashboard).
+- **Fichiers** : `tools/claude-agent-exporter/exporter.sh`,
+  `grafana/dashboards/claude-agents-perso.json` (remplace
+  `claude-agents.json`).
+- **Statut** : ✅ fait (2026-11-25). Toutes les métriques vérifiées en
+  conditions réelles (requêtes Prometheus directes), dashboard rechargé
+  et confirmé via l'API Grafana après chaque changement.
+
 ## 2. [Nouvelle fonctionnalité] Ajout de Selenium pour les tests IHM
 
 > Demande utilisateur (2026-11-25) — marquée « à discuter » par
@@ -290,7 +336,13 @@
 - **Fichiers** : `model/demo_vin.json` (nouveau), `tools/screenshot_demo.py`
   (nouveau, script générique de capture CDP réutilisé par 3b/3c),
   `doc/mode-emploi.md` (nouveau), `doc/demo-vin/configuration.png`,
-  `doc/demo-vin/navigation.png`, `doc/demo-vin/diagramme.png` (nouveaux).
+  `doc/demo-vin/navigation.png`, `doc/demo-vin/diagramme.png` (nouveaux). Le
+  commit touche aussi une trentaine de fichiers
+  `files/_class_icon_cache/*.svg` générés en effet de bord : mécanisme
+  préexistant de génération déterministe d'une icône par nom de classe,
+  déclenché par le rendu de la Sidebar/Configuration qui liste toutes les
+  classes du système (pas seulement celles du modèle de démo) — sans
+  impact, confirmé par l'analyse critique.
 - **Statut** : 🔄 en cours — implémentation faite (modèle chargé, 18 objets
   réels créés en base, 3 captures PNG réelles produites, doc rédigée) ;
   passage orchestrateur (testeur/pessimiste/candide/testeur-global) restant
