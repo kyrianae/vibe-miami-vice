@@ -61,7 +61,45 @@
 - **Fichiers** : `.claude/agents/*.md`, potentiellement
   `specifications/*.md`/`plan-mark4.md` lui-même si jugé trop dense à son
   tour.
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-25).
+  - **Configuration des agents** : audit fait — les 6 fichiers sont déjà
+    compacts (260 lignes au total, style caveman déjà appliqué, pas de
+    sur-périmètre détecté dans les outils déclarés). Le vrai levier de
+    coût identifié n'est pas la verbosité du prompt mais le choix de
+    modèle par rôle — confirmé disponible via le champ `model:` en
+    frontmatter d'agent. Décision utilisateur après proposition : garder
+    `sonnet` (défaut) pour `orchestrateur`/`worker`/`pessimiste`/`candide`
+    (jugement fin requis pour leur rôle — `pessimiste` a trouvé 2 vraies
+    failles de sécurité réelles pendant Mark 3, actions 21/21bis, un
+    modèle plus faible aurait un risque réel de les manquer) ; passer
+    `testeur`/`testeur-global` en `model: haiku` (rôle mécanique —
+    exécuter des commandes, comparer une sortie à un attendu, remplir un
+    tableau de résultats — pas de jugement de design à rendre). Appliqué
+    dans `.claude/agents/testeur.md` et `.claude/agents/testeur-global.md`.
+    **Non validé en conditions réelles à ce stade** (pas encore repassé
+    par un cycle orchestrateur complet depuis le changement) — à
+    surveiller sur les prochaines actions Mark 4 : si la qualité des
+    rapports `testeur`/`testeur-global` se dégrade (faux PASS, tests
+    superficiels), revenir à `sonnet` pour ces deux rôles.
+  - **Les 20% "general-purpose"** : ce n'est pas un fichier `.claude/
+    agents/` à éditer — c'est le type par défaut du SDK quand aucun
+    `subagent_type` n'est précisé à l'appel `Agent(...)`. Correctif
+    comportemental (pas de fichier modifié) : toujours nommer un
+    `subagent_type` concret parmi les 6 rôles existants quand la tâche
+    correspond, et sinon passer explicitement un `model` (souvent
+    `haiku`) sur l'appel `Agent(...)` pour une investigation ponctuelle
+    bornée plutôt que de laisser le modèle par défaut s'appliquer sans y
+    penser.
+  - **Verbosité documentation/plans** : déjà largement traitée par
+    l'action 24 de Mark 3 (`specifications/07-roadmap.md` 1605→181
+    lignes, catalogue fonctionnel compact dans `01-fonctionnelle.md`) et
+    par la clôture de Mark 3 elle-même (`plan-mark3.md`, 2800+ lignes
+    d'historique détaillé, déplacé en archive — les agents travaillant
+    sur Mark 4 ne le lisent plus par défaut, seul `plan-mark4.md`,
+    nettement plus court, et `resume.md`, juste le tableau). Pas de
+    nouveau correctif jugé nécessaire sur `specifications/*.md` à ce
+    stade — à réévaluer si la densité perçue revient une fois Mark 4
+    suffisamment avancé.
 
 ## 2. [Nouvelle fonctionnalité] Ajout de Selenium pour les tests IHM
 
