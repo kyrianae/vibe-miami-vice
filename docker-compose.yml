@@ -134,15 +134,14 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_USERS_DEFAULT_THEME: dark
-      # Business Text (marque Volkov Labs, publié sous l'id de catalogue
-      # grafana.com "marcusolsson-dynamictext-panel" — pas
-      # "volkovlabs-business-text-panel", qui n'existe pas dans le
-      # catalogue) : panel plus paramétrable que le "Text" standard pour
-      # afficher la tâche en cours (template Markdown/Handlebars sur le
-      # résultat de requête, plutôt qu'un champ texte figé). Version
-      # épinglée à 6.2.0 : les versions 6.2.3+ exigent Grafana >=12.3.0,
-      # incompatible avec l'image grafana/grafana:11.3.1 utilisée ici.
-      GF_INSTALL_PLUGINS: marcusolsson-dynamictext-panel 6.2.0
+      # Business Charts (Volkov Labs, id de catalogue
+      # "volkovlabs-echarts-panel") : panel ECharts pour un affichage plus
+      # visuel de la tâche en cours que le panel "Text"/"Table" standard.
+      # Remplace un essai précédent avec Business Text
+      # (marcusolsson-dynamictext-panel), abandonné (rendu vide côté
+      # navigateur). Version épinglée à 7.2.2 : 7.2.4+ exige Grafana
+      # >=12.3.0, incompatible avec grafana/grafana:11.3.1 utilisée ici.
+      GF_INSTALL_PLUGINS: volkovlabs-echarts-panel 7.2.2
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro

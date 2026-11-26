@@ -372,15 +372,12 @@
       },
       "id": 6,
       "options": {
-        "content": "{{#each series}}\n{{#each rows}}\n### 🛠 {{this.[task]}}\n**Agent :** `{{this.[agent]}}`\n{{/each}}\n{{/each}}",
-        "defaultContent": "_en attente..._",
-        "editor": {
-          "format": "auto",
-          "language": "handlebars"
-        },
-        "wrap": true
+        "editorMode": "code",
+        "getOption": "const theme = context.grafana.theme;\nconst textColor = theme.colors.text.primary;\nconst subtleColor = theme.colors.text.secondary;\n\nconst frame = context.panel.data.series[0];\nconst field = (name) => frame && frame.fields.find((f) => f.name === name);\nconst firstValue = (f) => {\n  if (!f) return undefined;\n  const v = f.values.buffer || f.values;\n  return v && v.length ? v[v.length - 1] : undefined;\n};\n\nconst task = firstValue(field('task')) || 'en attente';\nconst agent = firstValue(field('agent')) || 'none';\n\nconst agentIcons = {\n  worker: '🛠',\n  testeur: '✅',\n  pessimiste: '⚠️',\n  candide: '🔍',\n  orchestrateur: '🧭',\n  'testeur-global': '🧪',\n  main: '💬',\n  none: '💤',\n};\nconst agentColors = {\n  worker: '#5794F2',\n  testeur: '#73BF69',\n  pessimiste: '#F2495C',\n  candide: '#FFB357',\n  orchestrateur: '#B877D9',\n  'testeur-global': '#33A2E5',\n  main: '#8E8E8E',\n  none: '#666666',\n};\nconst icon = agentIcons[agent] || '•';\nconst color = agentColors[agent] || '#888888';\n\nreturn {\n  backgroundColor: 'transparent',\n  title: [\n    {\n      text: `{icon|${icon}}  {task|${task}}`,\n      left: 'center',\n      top: '38%',\n      textStyle: {\n        rich: {\n          icon: { fontSize: 26, padding: [0, 10, 0, 0] },\n          task: {\n            fontSize: 18,\n            fontWeight: 600,\n            color: textColor,\n            lineHeight: 24,\n          },\n        },\n        width: 360,\n        overflow: 'break',\n      },\n    },\n  ],\n  graphic: {\n    elements: [\n      {\n        type: 'text',\n        left: 'center',\n        top: '74%',\n        style: {\n          text: agent,\n          fontSize: 13,\n          fontWeight: 'bold',\n          fill: '#fff',\n          backgroundColor: color,\n          padding: [5, 14],\n          borderRadius: 14,\n        },\n      },\n      {\n        type: 'text',\n        left: 'center',\n        top: '88%',\n        style: {\n          text: 'claude_current_task — rafraîchi en continu',\n          fontSize: 10,\n          fill: subtleColor,\n        },\n      },\n    ],\n  },\n};\n",
+        "map": "",
+        "renderer": "canvas"
       },
-      "pluginVersion": "6.2.0",
+      "pluginVersion": "7.2.2",
       "targets": [
         {
           "datasource": {
@@ -402,7 +399,7 @@
         }
       ],
       "title": "Tâche en cours",
-      "type": "marcusolsson-dynamictext-panel"
+      "type": "volkovlabs-echarts-panel"
     },
     {
       "datasource": {
@@ -518,6 +515,6 @@
   "timezone": "browser",
   "title": "Claude Agents Activity Perso Copy",
   "uid": "fg5i5otexjcowd",
-  "version": 2,
+  "version": 4,
   "weekStart": ""
 }
