@@ -34,6 +34,31 @@ Usage :
     --token-file /chemin/vers/token.txt \\
     --page navigation --meta-class demo_vin --class bouteille \\
     --out doc/demo-vin/navigation.png
+
+  # --layer (sans --meta-class) : narrow par le filtre Layers de la Sidebar
+  # (chips sur Configuration/Navigation, combo multi-select sur Diagramme).
+  # Attention : purement additif (comportement IHM existant, non modifié
+  # ici) - une classe SANS layer reste toujours visible quel que soit le
+  # filtre (cf. schema.json, champ 'layers'), donc --layer seul ne suffit
+  # PAS à isoler une démo si d'autres classes du système n'ont aucun layer
+  # (cas réel de ce dépôt) : voir --only-classes ci-dessous pour ce besoin.
+  python3 tools/screenshot_demo.py \\
+    --token-file /chemin/vers/token.txt \\
+    --page navigation --layer demo \\
+    --out doc/demo-xxx/navigation.png
+
+  # --only-classes (page diagramme uniquement) : clique "Rien" (masque
+  # toutes les classes) puis ré-active uniquement les chips listées -
+  # utile quand les classes d'une même démo sont réparties sur plusieurs
+  # meta-classes (ex. demo_kafka + cmdb, correctif post-revue action 3b,
+  # plan-mark4.md) et qu'un simple --meta-class exclurait à tort les
+  # classes situées dans l'autre meta-classe (filtre selectedMetaClass dur,
+  # contrairement à --layer qui est additif, cf. ci-dessus).
+  python3 tools/screenshot_demo.py \\
+    --token-file /chemin/vers/token.txt \\
+    --page diagramme \\
+    --only-classes vm,type_donnee,base_donnees,bus_kafka,application,reverse_proxy \\
+    --out doc/demo-kafka/diagramme.png
 """
 import argparse
 import base64
@@ -114,13 +139,21 @@ def main():
     p.add_argument("--frontend-url", default="http://localhost:3000")
     p.add_argument("--token-file", required=True, help="Fichier texte contenant un access_token Keycloak brut")
     p.add_argument("--page", choices=["configuration", "navigation", "diagramme"], required=True)
-    p.add_argument("--meta-class", required=True, help="meta_class à sélectionner dans la Sidebar (badge-meta)")
+    p.add_argument("--meta-class", default=None, help="meta_class à sélectionner dans la Sidebar (badge-meta). Omis si --layer est utilisé à la place.")
     p.add_argument("--class", dest="cls", default=None,
                    help="Nom de classe à sélectionner en plus (page navigation uniquement, narrow la liste)")
+    p.add_argument("--layer", default=None,
+                   help="Layer à sélectionner dans le filtre Layers de la Sidebar (alternative à --meta-class quand les classes d'une démo sont réparties sur plusieurs meta-classes)")
+    p.add_argument("--attr", default=None,
+                   help="Page configuration uniquement : nom d'attribut sur lequel scroller en complément de --class (classe trop riche pour tenir dans le viewport, l'attribut visé n'est pas forcément dans les premières lignes)")
+    p.add_argument("--only-classes", default=None,
+                   help="Page diagramme uniquement : liste de classes séparées par des virgules à montrer exclusivement (clique 'Rien' puis ré-active ces chips), alternative à --meta-class quand les classes d'une démo sont réparties sur plusieurs meta-classes")
     p.add_argument("--out", required=True, help="Chemin du PNG de sortie")
     p.add_argument("--width", type=int, default=1280)
     p.add_argument("--height", type=int, default=900)
     args = p.parse_args()
+    if not args.meta_class and not args.layer and not args.only_classes:
+        p.error("--meta-class, --layer ou --only-classes requis")
 
     with open(args.token_file) as f:
         token = f.read().strip()
@@ -136,6 +169,12 @@ def main():
     # 1er chargement sur l'origine cible (nécessaire avant tout setItem).
     goto(cdp, args.frontend_url)
     print("set token:", evaluate(cdp, f"localStorage.setItem('miami-vice-auth-token', {json.dumps(token)}); 'ok'"))
+    # Filtre Layers persisté en localStorage (frontend/src/App.tsx
+    # SELECTED_LAYERS_STORAGE_KEY) : purgé à chaque run pour un état de
+    # départ déterministe, sinon un --layer ré-exécuté deux fois de suite
+    # (même profil Chrome persistant entre invocations) TOGGLE le filtre à
+    # tort (déjà sélectionné par le run précédent -> ce clic le désactive).
+    print("clear selected layers:", evaluate(cdp, "localStorage.removeItem('miami-vice-selected-layers'); 'ok'"))
 
     # Reload pour démarrer authentifié (Navbar lit getAuthToken() au montage).
     goto(cdp, args.frontend_url)
@@ -156,19 +195,48 @@ def main():
         raise RuntimeError(result)
     time.sleep(1.0)
 
-    result = evaluate(cdp, f"""
-    (function() {{
-      const badges = [...document.querySelectorAll('.sidebar .badge-meta')];
-      const b = badges.find(x => x.textContent.trim() === {json.dumps(args.meta_class)});
-      if (!b) return 'NOT_FOUND meta, available=' + badges.map(x=>x.textContent).join(',');
-      b.parentElement.click();
-      return 'clicked meta ' + {json.dumps(args.meta_class)};
-    }})()
-    """)
-    print("click meta:", result)
-    if isinstance(result, str) and result.startswith("NOT_FOUND"):
-        raise RuntimeError(result)
-    time.sleep(1.2)
+    if args.meta_class:
+        result = evaluate(cdp, f"""
+        (function() {{
+          const badges = [...document.querySelectorAll('.sidebar .badge-meta')];
+          const b = badges.find(x => x.textContent.trim() === {json.dumps(args.meta_class)});
+          if (!b) return 'NOT_FOUND meta, available=' + badges.map(x=>x.textContent).join(',');
+          b.parentElement.click();
+          return 'clicked meta ' + {json.dumps(args.meta_class)};
+        }})()
+        """)
+        print("click meta:", result)
+        if isinstance(result, str) and result.startswith("NOT_FOUND"):
+            raise RuntimeError(result)
+        time.sleep(1.2)
+
+    if args.layer:
+        if args.page == "diagramme":
+            result = evaluate(cdp, f"""
+            (function() {{
+              const sel = document.querySelector('.sidebar select[multiple]');
+              if (!sel) return 'NOT_FOUND layer select';
+              const opt = [...sel.options].find(o => o.value === {json.dumps(args.layer)});
+              if (!opt) return 'NOT_FOUND layer option, available=' + [...sel.options].map(o => o.value).join(',');
+              opt.selected = true;
+              sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+              return 'selected layer ' + {json.dumps(args.layer)};
+            }})()
+            """)
+        else:
+            result = evaluate(cdp, f"""
+            (function() {{
+              const spans = [...document.querySelectorAll('.sidebar span[title]')].filter(x => x.title.includes('filtre'));
+              const b = spans.find(x => x.textContent.trim() === {json.dumps(args.layer)});
+              if (!b) return 'NOT_FOUND layer chip, available=' + spans.map(x => x.textContent).join(',');
+              b.click();
+              return 'clicked layer ' + {json.dumps(args.layer)};
+            }})()
+            """)
+        print("select layer:", result)
+        if isinstance(result, str) and result.startswith("NOT_FOUND"):
+            raise RuntimeError(result)
+        time.sleep(1.2)
 
     if args.page == "configuration":
         # ConfigurationPage auto-expand la/les classe(s) de la meta-classe
@@ -191,6 +259,21 @@ def main():
             if isinstance(result, str) and result.startswith("NOT_FOUND"):
                 raise RuntimeError(result)
             time.sleep(0.8)
+
+            if args.attr:
+                result = evaluate(cdp, f"""
+                (function() {{
+                  const inputs = [...document.querySelectorAll('.main-content input')];
+                  const inp = inputs.find(x => x.value === {json.dumps(args.attr)});
+                  if (!inp) return 'NOT_FOUND attr row';
+                  inp.closest('div').scrollIntoView({{block: 'center'}});
+                  return 'scrolled to attr ' + {json.dumps(args.attr)};
+                }})()
+                """)
+                print("scroll to attr row:", result)
+                if isinstance(result, str) and result.startswith("NOT_FOUND"):
+                    raise RuntimeError(result)
+                time.sleep(0.8)
     elif args.cls:
         # Page navigation : pas besoin de narrower via la Sidebar (son arbre
         # meta_class est replié par défaut, le badge-class n'y est donc pas
@@ -209,6 +292,38 @@ def main():
         if isinstance(result, str) and result.startswith("NOT_FOUND"):
             raise RuntimeError(result)
         time.sleep(0.8)
+
+    if args.page == "diagramme" and args.only_classes:
+        result = evaluate(cdp, """
+        (function() {
+          const btns = [...document.querySelectorAll('.diagram-filter-btn')];
+          const hideAll = btns.find(x => x.textContent.trim() === 'Rien');
+          if (!hideAll) return 'NOT_FOUND bouton Rien';
+          hideAll.click();
+          return 'clicked Rien';
+        })()
+        """)
+        print("hide all classes:", result)
+        if isinstance(result, str) and result.startswith("NOT_FOUND"):
+            raise RuntimeError(result)
+        time.sleep(0.5)
+
+        for cls_name in args.only_classes.split(","):
+            cls_name = cls_name.strip()
+            result = evaluate(cdp, f"""
+            (function() {{
+              const chips = [...document.querySelectorAll('.diagram-chip')];
+              const b = chips.find(x => x.textContent.trim().startsWith({json.dumps(cls_name)})
+                && /^[0-9]/.test(x.textContent.trim().slice({len(cls_name)})));
+              if (!b) return 'NOT_FOUND chip, available=' + chips.map(x=>x.textContent.trim()).join(',');
+              b.click();
+              return 'enabled chip ' + {json.dumps(cls_name)};
+            }})()
+            """)
+            print("enable chip:", result)
+            if isinstance(result, str) and result.startswith("NOT_FOUND"):
+                raise RuntimeError(result)
+            time.sleep(0.3)
 
     if args.page == "diagramme":
         # Layout "force" (ECharts) : simulation physique itérative, laissée

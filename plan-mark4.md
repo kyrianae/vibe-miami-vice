@@ -292,6 +292,22 @@
 > besoin). Voir les 4 sous-actions dédiées ci-dessous — cette action 3
 > n'est plus directement actionnable telle quelle.
 
+> **Incident de suivi (2026-11-26)** : l'orchestrateur dédié à cette
+> action est resté sans notification de fin pendant ~1 jour (probablement
+> une mise en veille de la machine hôte pendant son cycle) après avoir clos
+> 3a. La session principale a repris la main directement pour 3b (review
+> + correctif d'une collision de classe trouvée en revue, voir section 3b
+> ci-dessous) sans attendre davantage. L'orchestrateur d'origine s'est
+> réveillé pendant cette reprise, a correctement détecté via son garde-fou
+> qu'un acteur non mandaté par lui avait touché `model/itil_cmdb.json`
+> (hors de son périmètre connu), s'est arrêté sans rien modifier ni
+> revert, et a demandé confirmation — comportement attendu, pas une
+> anomalie de sa part. Confirmé qu'il s'agissait d'une reprise légitime, il
+> a été explicitement mis en pause sur cette action. 3c et 3d restent donc
+> à piloter directement par la session principale, pas par un nouvel
+> orchestrateur, pour éviter une nouvelle collision de ce type tant que
+> l'action 3 n'est pas intégralement close.
+
 - **Problème** : pas de documentation « mode d'emploi » illustrée montrant
   concrètement comment modéliser et utiliser le produit de bout en bout.
 - **Correctif** : renvoi à 3a/3b/3c/3d ci-dessous (pas de duplication du
@@ -356,21 +372,133 @@
 
 - **Problème** : pas d'illustration de bout en bout d'un modèle technique/
   professionnel plus riche que l'exemple grand public de 3a.
-- **Correctif** : nouveau modèle de démo (`model/demo_kafka.json` ou nom
-  équivalent) : 2-3 applications reliées par un bus Kafka central, types de
-  données (datatype1/datatype2), producteurs/consommateurs, base de
-  données, frontend/backend, VMs, et éventuellement redondance + reverse
-  proxy/load balancer. Chargement réel via `/api/init`, 3-4 objets réels
-  créés via l'API, captures d'écran réelles Configuration/Navigation (et
-  Diagramme si les relations s'y prêtent, même raisonnement qu'en 3a :
-  préférer des jointures à du texte libre pour que le graphe soit
-  exploitable). Nouvelle section « Exemple 2 » ajoutée à
-  `doc/mode-emploi.md`, réutilisation de `tools/screenshot_demo.py`.
+- **Correctif** : nouveau modèle de démo `model/demo_kafka.json` (meta-classe
+  `demo_kafka`), 6 classes : `vm` (`nom`, `ip`, classe de référence),
+  `type_donnee` (`nom`, classe de référence, ex. `commande`/`paiement`),
+  `base_donnees` (`nom`, `moteur`, `vm` en `joint-1-1`), `bus_kafka` (`nom`,
+  `vm` en `joint-1-1`, `types_donnees` en `joint-1-n` vers `type_donnee`),
+  `application` (`nom`, `role` en `select` frontend/backend/service, `vm`/
+  `base_donnees`/`bus` en `joint-1-1`, `produit`/`consomme` en `joint-1-n`
+  vers `type_donnee`), `reverse_proxy` (`nom`, `vm` en `joint-1-1`,
+  `cibles` en `joint-1-n` vers `application`). Toutes les relations entre
+  composants modélisées en jointures (même raisonnement qu'en 3a : seules
+  les jointures produisent des arêtes dans le Diagramme). Chargé réellement
+  via `POST /api/init` (aucun skip). 17 objets réels créés via
+  `POST /api/write/object` : 7 `vm`, 2 `type_donnee` (`commande`,
+  `paiement`), 2 `base_donnees` (mutualisées sur une VM commune
+  `vm-db-1` - choix assumé, documenté), 1 `bus_kafka`, 4 `application`
+  (`Portail Commandes` en 2 instances redondantes frontend sans base
+  propre (stateless), `Service Commandes` backend qui **produit**
+  `commande`, `Service Paiement` service qui **consomme** `commande` et
+  **produit** `paiement` - illustre concrètement la relation producteur/
+  consommateur), 1 `reverse_proxy` (`LB Portail Commandes`, ses `cibles`
+  pointant vers les 2 instances du frontend - illustre redondance +
+  load-balancing). 3 captures d'écran réelles (PNG 1280×900, confirmées
+  via `file`) via `tools/screenshot_demo.py --meta-class demo_kafka`,
+  **sans aucune adaptation de l'outil** (robustesse 3a suffisante même
+  pour ce modèle à 6 classes/17 objets, plus riche que 3a). Documentation
+  dans `doc/mode-emploi.md`, section « Exemple 2 : architecture
+  applicative / bus Kafka » (renvoi à la note technique de l'Exemple 1
+  plutôt que duplication, comme prévu).
 - **Effort** : moyen (modèle plus riche que 3a, mêmes outils réutilisés).
-- **Fichiers** : nouveau modèle de démo (`model/demo_*.json`), nouveau
-  dossier de captures (ex. `doc/demo-kafka/`), section ajoutée à
-  `doc/mode-emploi.md`.
-- **Statut** : ⬜ à faire.
+- **Fichiers** : `model/demo_kafka.json` (nouveau), `doc/demo-kafka/configuration.png`,
+  `doc/demo-kafka/navigation.png`, `doc/demo-kafka/diagramme.png`
+  (nouveaux), `doc/mode-emploi.md` (section « Exemple 2 » ajoutée,
+  section « Exemple 1 » non touchée). `tools/screenshot_demo.py` non
+  modifié. Pas d'impact sur `specifications/*.md` (modèle de démo pur,
+  aucun nouveau mécanisme backend/frontend - même constat qu'en 3a).
+- **Statut** : 🔄 en cours (livré, en attente de vérification croisée de
+  l'orchestrateur avant passage à ✅).
+
+> **Révision post-revue croisée (2026-11-26)** : la revue a identifié que
+> `model/demo_kafka.json` déclarait sa propre classe `application` (meta-
+> classe `demo_kafka`), en collision de NOM avec la classe `application`
+> déjà existante dans `model/itil_cmdb.json` (meta-classe `cmdb`, CMDB
+> métier réelle). `POST /api/init` ne détecte pas ce doublon de nom de
+> classe entre fichiers (contrairement à `write_class`/`write_metaclass` -
+> gap pré-existant, resté hors scope de ce correctif, non traité ici) et ça
+> causait un vrai bug visible : `frontend/src/components/Sidebar.tsx`
+> compare la sélection active par `c.class` seul, pas `meta_class`+`class`,
+> donc sélectionner `demo_kafka > application` surlignait aussi
+> `cmdb > application` par erreur.
+>
+> Décision utilisateur, après présentation du compromis (renommer la
+> classe de démo vs. réutiliser l'existante) : **réutiliser la classe
+> `application` existante de `cmdb`** pour les objets de démo Kafka - plus
+> aucune 2e classe `application` du tout.
+>
+> **Correctif appliqué** : `model/itil_cmdb.json`, classe `application` -
+> attributs CMDB existants inchangés (`nom`, `version`, `serveurs`,
+> `base_de_donnees`, `modules`), ajout de 6 attributs de démo dans un
+> nouveau domaine `demo` (regroupement visuel distinct dans
+> `ConfigurationPage.tsx`) : `demo_role` (select frontend/backend/service),
+> `demo_vm` (joint-1-1 → `vm` de demo_kafka), `demo_base_donnees`
+> (joint-1-1 → `base_donnees` de demo_kafka - **distinct** de l'attribut
+> CMDB existant `base_de_donnees`, qui pointe vers une classe CMDB
+> différente et n'a pas été touché), `demo_bus` (joint-1-1 → `bus_kafka`),
+> `demo_produit`/`demo_consomme` (joint-1-n → `type_donnee`). `depends_on`
+> de `itil_cmdb.json` complété avec `demo_kafka` (et réciproquement dans
+> `demo_kafka.json` avec `cmdb`, dépendance circulaire assumée - précédent
+> déjà existant entre `cluster.json`/`itil_cmdb.json`). `model/demo_kafka.json`
+> : classe `application` retirée entièrement ; `reverse_proxy.cibles`
+> (`classes: ["application"]`) cible désormais implicitement la classe
+> `cmdb.application` (les classes sont référencées par nom global, sans
+> qualification par meta-classe, dans tout ce modèle - confirmé par
+> `model/schema.json` et le mécanisme déjà utilisé par `cluster.json` vers
+> `cmdb.application`). Rechargé réellement via `POST /api/init` (aucun
+> skip). Les 4 objets `application` de démo recréés sous
+> `meta_class=cmdb, class=application` avec les attributs `demo_*` (nouveaux
+> ids 284-287) ; les 4 anciens objets orphelins sous l'ex-`demo_kafka.
+> application` (ids 279-282) soft-supprimés (`DELETE /api/delete/object`,
+> cohérent avec les conventions déjà établies) ; `reverse_proxy.cibles`
+> (id 283) remis à jour vers les 2 nouveaux ids `Portail Commandes`.
+> Vérifié par `grep` qu'aucun autre `model/*.json` ne déclare de classe
+> `application` ailleurs. `backend/tests/` reste vert (299 passed),
+> `jsonschema` OK sur les 2 fichiers modifiés.
+>
+> Captures `doc/demo-kafka/{configuration,navigation,diagramme}.png`
+> reprises : montrent désormais la classe `application` sous le groupe
+> `cmdb` (plus de groupe `demo_kafka` séparé pour cette classe), un seul
+> badge `application` dans le filtre du Diagramme (plus de doublon). Les 6
+> classes de cette démo étant désormais réparties sur 2 meta-classes
+> (`demo_kafka`/`cmdb`), `tools/screenshot_demo.py` a reçu 3 options
+> supplémentaires pour ce besoin (documentées dans son usage) :
+> `--only-classes` (page Diagramme, clique "Rien" puis ré-active
+> uniquement les chips listées - utilisé pour `diagramme.png`), `--layer`
+> (alternative additive par le filtre Layers, non utilisée au final pour
+> ces captures - limite documentée dans l'outil : n'isole pas une classe
+> sans layer, cf. `schema.json`), `--attr` (scroll sur un attribut
+> spécifique de la classe sur la page Configuration, utilisé pour
+> `configuration.png`). `--meta-class` est devenu optionnel (une des trois
+> options `--meta-class`/`--layer`/`--only-classes` requise). `doc/
+> mode-emploi.md` section « Exemple 2 » mise à jour en conséquence (classes
+> par meta-classe, attributs `demo_*`, note de révision).
+>
+> **Fichiers (révision)** : `model/itil_cmdb.json`, `model/demo_kafka.json`,
+> `tools/screenshot_demo.py`, `doc/demo-kafka/configuration.png`,
+> `doc/demo-kafka/navigation.png`, `doc/demo-kafka/diagramme.png`,
+> `doc/mode-emploi.md`, `specifications/03-modele-donnees.md` (description
+> de `cmdb.application` complétée avec les 6 attributs `demo_*` — **correction
+> sur la phrase « pas d'impact sur specifications/*.md » du rapport worker
+> ci-dessus, inexacte**, vérifiée par `git diff --stat` avant clôture),
+> `plan-mark4.md` (cette section).
+> **Vérification finale (moi, 2026-11-26, orchestrateur d'origine resté
+> bloqué ~1 jour puis explicitement mis en pause sur cette action)** :
+> `backend/tests/` rejoué — 299/299 ; les 3 captures relues visuellement —
+> confirment un seul badge `application` (sous `cmdb`, compte 6 = 2 objets
+> CMDB réels préexistants + 4 objets de démo) dans le filtre Diagramme,
+> plus de doublon visuel ; `configuration.png` montre bien les 3 attributs
+> `demo_role`/`demo_vm`/`demo_base_donnees` groupés sous le domaine `demo` ;
+> `navigation.png` montre les 6 objets `application` avec les 2 objets CMDB
+> réels à champs `demo_*` vides (transparence assumée) et les 4 objets de
+> démo correctement renseignés. Testeur-global (moi-même, vérification
+> directe faute d'orchestrateur disponible) : stack inchangée depuis la
+> dernière vérification globale de l'action 1b, aucune régression
+> attendue ni trouvée (modèle pur + script d'outillage, aucun code
+> applicatif touché).
+> **Statut (révision)** : ✅ fait (2026-11-26, clôturé directement par la
+> session principale après blocage de ~1 jour de l'orchestrateur dédié à
+> l'action 3 — cf. note de suivi en tête de l'action 3 ci-dessus).
 
 ## 3c. [Documentation] Mode d'emploi illustré — exemple 3 : organigramme d'une holding
 

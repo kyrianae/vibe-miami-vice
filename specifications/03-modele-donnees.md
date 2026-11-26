@@ -325,7 +325,24 @@ classes `datacenter`/`serveur`/`application`/`service_metier`/
   `version`, `code_version` (string), `active` (`boolean`). Layers
   `infra`.
 - `application` : `nom`, `version`, `serveurs` (joint-1-n → `serveur`),
-  `base_de_donnees` (joint-1-1), `modules` 🆕 (joint-1-n → `module`).
+  `base_de_donnees` (joint-1-1), `modules` 🆕 (joint-1-n → `module`). 🆕
+  (plan-mark4.md action 3b, révision post-revue 2026-11-26) : 6 attributs
+  de démo ajoutés dans un domaine dédié `demo` (distinct de `details`/
+  `logique`/`lien` ci-dessus, regroupement visuel à part dans
+  `ConfigurationPage.tsx`), préfixés `demo_` pour rester visuellement non
+  ambigus avec les attributs CMDB métier réels — cette classe est
+  **réutilisée telle quelle** par le modèle de démo `model/demo_kafka.json`
+  (pas de classe `application` dupliquée sous `demo_kafka`, qui entrait en
+  collision de nom avec celle-ci) : `demo_role` (`select`
+  frontend/backend/service), `demo_vm` (joint-1-1 → `vm` de `demo_kafka`),
+  `demo_base_donnees` (joint-1-1 → `base_donnees` de `demo_kafka` —
+  distinct de l'attribut `base_de_donnees` ci-dessus, qui pointe vers la
+  classe CMDB `base_de_donnees`, elle-même inchangée), `demo_bus`
+  (joint-1-1 → `bus_kafka` de `demo_kafka`), `demo_produit`/`demo_consomme`
+  (joint-1-n → `type_donnee` de `demo_kafka`). `depends_on` de ce fichier
+  complété avec `demo_kafka` (dépendance circulaire assumée avec
+  `demo_kafka.json` → `cmdb`, même précédent que `cluster.json`↔
+  `itil_cmdb.json`).
 - `module` 🆕 : `nom`, `application` (joint-1-1). Layers `applicatif`.
 - `container` 🆕 : `nom`, `image` (string), `namespace_kubernetes`
   (joint-1-1). Layers `applicatif`/`infra`.

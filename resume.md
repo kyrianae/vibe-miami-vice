@@ -11,7 +11,7 @@
 | 1d | Dashboard personnalisé, tâche en cours, suivi session principale | ✅ fait |
 | 2 | Ajout de Selenium pour les tests IHM | ⬜ à discuter |
 | 3a | Mode d'emploi illustré — exemple 1 : bouteille de vin | ✅ fait |
-| 3b | Mode d'emploi illustré — exemple 2 : architecture applicative / Kafka | ⬜ à faire |
+| 3b | Mode d'emploi illustré — exemple 2 : architecture applicative / Kafka | ✅ fait |
 | 3c | Mode d'emploi illustré — exemple 3 : organigramme holding | ⬜ à faire |
 | 3d | Mode d'emploi illustré — assemblage final | ⬜ à faire |
 | 4 | Champ conditionnel (affichage indexé sur une autre valeur/calcul) | ⬜ démarche interactive requise |

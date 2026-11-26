@@ -138,3 +138,152 @@ suivants) pilote Chrome headless via le **Chrome DevTools Protocol**
 Ce script est générique (paramètres `--page`, `--meta-class`, `--class`,
 `--out`) et sera réutilisé tel quel pour les exemples 3b (architecture
 applicative / bus Kafka) et 3c (organigramme).
+
+## Exemple 2 : architecture applicative / bus Kafka
+
+Modèle de démonstration technique/professionnel, plus riche que l'exemple
+grand public de la section précédente : meta-classe `demo_kafka` (fichier
+[`model/demo_kafka.json`](../model/demo_kafka.json)), 5 classes modélisant
+une architecture applicative simple autour d'un bus Kafka central, **plus
+la classe `application` de la meta-classe `cmdb`** (fichier
+[`model/itil_cmdb.json`](../model/itil_cmdb.json), déjà existante pour la
+CMDB métier - voir note de révision ci-dessous) - encore une fois, les
+relations entre composants (application → VM, application → base de
+données, application → bus, bus → types de données, reverse proxy →
+applications) sont modélisées en **jointures** plutôt qu'en texte libre,
+pour la même raison qu'en Exemple 1 : seules les jointures produisent des
+arêtes exploitables dans le **Diagramme**.
+
+> **Révision post-revue croisée (2026-11-26)** : la version initiale de cet
+> exemple déclarait sa propre classe `application` sous la meta-classe
+> `demo_kafka`, qui entrait en collision de nom avec la classe `application`
+> déjà existante dans `model/itil_cmdb.json` (meta-classe `cmdb`) - deux
+> classes distinctes portant le même nom, chacune référencée uniquement par
+> son nom (pas de qualification par meta-classe) dans les jointures de tout
+> le modèle. `POST /api/init` ne détectait pas ce doublon (gap pré-existant,
+> hors scope de ce correctif) et le frontend (`Sidebar.tsx`) comparait la
+> sélection active par nom de classe seul, pas meta-classe + classe : en
+> pratique, sélectionner `demo_kafka > application` surlignait aussi
+> `cmdb > application` par erreur. Décision utilisateur après présentation
+> du compromis : plutôt que de renommer la classe de démo, **réutiliser la
+> classe `application` existante de `cmdb`** pour les objets de démo Kafka -
+> plus aucune 2e classe `application` du tout. Les attributs CMDB déjà en
+> place sur cette classe (`nom`, `version`, `serveurs`, `base_de_donnees`,
+> `modules`) sont inchangés ; les attributs nécessaires à cette démo ont été
+> ajoutés à côté, préfixés `demo_` et rangés dans un domaine dédié `demo`
+> (voir tableau ci-dessous) pour rester visuellement distincts des
+> attributs CMDB métier réels dans la page **Configuration**.
+
+### Les classes modélisées
+
+| Classe | Meta-classe | Rôle |
+|---|---|---|
+| `vm` | `demo_kafka` | Machine virtuelle d'hébergement (attributs `nom`, `ip`) - classe de référence, cible de jointure depuis la plupart des autres classes. |
+| `type_donnee` | `demo_kafka` | Type de donnée échangé sur le bus (attribut `nom`, ex. `commande`, `paiement`) - classe de référence. |
+| `base_donnees` | `demo_kafka` | Base de données d'une application (`nom`, `moteur`, `vm` en `joint-1-1`). |
+| `bus_kafka` | `demo_kafka` | Le bus Kafka central (`nom`, `vm` en `joint-1-1`, `types_donnees` en `joint-1-n` vers `type_donnee` - les types qui y transitent). |
+| `application` | `cmdb` | La classe principale, **partagée avec la CMDB métier réelle** (voir note de révision ci-dessus) : ses attributs CMDB (`nom`, `version`, `serveurs`, `base_de_donnees`, `modules`) plus les attributs de démo `demo_role` (`select` : `frontend`/`backend`/`service`), `demo_vm` en `joint-1-1`, `demo_base_donnees` en `joint-1-1`, `demo_bus` en `joint-1-1`, `demo_produit`/`demo_consomme` en `joint-1-n` vers `type_donnee` (relation producteur/consommateur). |
+| `reverse_proxy` | `demo_kafka` | Load balancer devant une ou plusieurs instances d'`application` (`nom`, `vm` en `joint-1-1`, `cibles` en `joint-1-n` vers `application`, désormais la classe `cmdb`). |
+
+Détail des attributs de démo ajoutés à la classe `application` (domaine
+`demo`, à côté des attributs CMDB existants inchangés) :
+
+| Domaine | Attribut | Type | Description |
+|---|---|---|---|
+| demo | `demo_role` | select (frontend/backend/service) | Distingue explicitement frontend et backend |
+| demo | `demo_vm` | joint-1-1 → `vm` (demo_kafka) | VM qui héberge l'application |
+| demo | `demo_base_donnees` | joint-1-1 → `base_donnees` (demo_kafka) | Base de données de l'application (absente pour un frontend stateless - choix assumé, voir plus bas). À ne pas confondre avec l'attribut CMDB existant `base_de_donnees` (avec "de"), qui pointe vers une classe CMDB différente (`base_de_donnees`) et n'est pas réutilisé ici. |
+| demo | `demo_bus` | joint-1-1 → `bus_kafka` (demo_kafka) | Bus Kafka auquel l'application est connectée |
+| demo | `demo_produit` | joint-1-n → `type_donnee` (demo_kafka) | Type(s) de donnée publiés sur le bus |
+| demo | `demo_consomme` | joint-1-n → `type_donnee` (demo_kafka) | Type(s) de donnée consommés depuis le bus |
+
+Les 5 classes de `demo_kafka` sont taguées avec le layer `demo`, comme en
+Exemple 1 ; la classe `application` (`cmdb`), partagée avec la CMDB métier
+réelle, ne l'est délibérément pas (un layer est un tag de **classe**, pas
+d'instance : le tagger aurait classé à tort les objets CMDB réels existants
+sous ce layer de démo).
+
+Choix assumé sur les bases de données : plutôt qu'une base par application
+sans exception, le frontend (`Portail Commandes`, stateless) n'a
+délibérément pas de `demo_base_donnees` propre, et les deux bases des
+applications backend/service sont hébergées sur une VM mutualisée
+(`vm-db-1`) - un choix de modélisation réaliste et justifié plutôt qu'une
+base par application de façon mécanique.
+
+Capture d'écran de la page **Configuration** montrant la classe
+`application` sous le groupe `cmdb` (pas un groupe `demo_kafka` séparé),
+avec ses attributs de démo `demo_role` (`select`) et `demo_vm`
+(`joint-1-1`, classe cible `vm` en surbrillance parmi toutes les classes du
+système) regroupés à part dans le domaine `demo` :
+
+![Configuration de la classe application](demo-kafka/configuration.png)
+
+### Les instances créées
+
+17 objets réels ont été créés via `POST /api/write/object` :
+
+- `vm` (7) : `vm-web-1`, `vm-web-2` (2 instances du frontend, redondance),
+  `vm-app-1`, `vm-app-2` (les 2 applications backend/service), `vm-kafka-1`
+  (le bus), `vm-db-1` (bases de données mutualisées), `vm-lb-1` (reverse
+  proxy).
+- `type_donnee` (2) : `commande`, `paiement`.
+- `base_donnees` (2) : `bd-commandes`, `bd-paiement`, toutes deux sur
+  `vm-db-1`.
+- `bus_kafka` (1) : `bus-kafka-1`, transportant `commande` et `paiement`.
+- `application` (4, sous `cmdb` - voir note de révision) :
+
+| Nom | Rôle | VM | Base de données | Bus | Produit | Consomme |
+|---|---|---|---|---|---|---|
+| Portail Commandes (instance 1) | frontend | vm-web-1 | — | — | — | — |
+| Portail Commandes (instance 2) | frontend | vm-web-2 | — | — | — | — |
+| Service Commandes | backend | vm-app-1 | bd-commandes | bus-kafka-1 | commande | — |
+| Service Paiement | service | vm-app-2 | bd-paiement | bus-kafka-1 | paiement | commande |
+
+  `Service Commandes` **produit** le type `commande` sur le bus ;
+  `Service Paiement` le **consomme** et **produit** à son tour `paiement` -
+  la relation producteur/consommateur illustrée concrètement par deux
+  applications distinctes reliées au même bus.
+- `reverse_proxy` (1) : `LB Portail Commandes` (sur `vm-lb-1`), ses
+  `cibles` pointant vers les 2 instances de `Portail Commandes` - illustre
+  la redondance + reverse proxy mentionnée en option dans le plan.
+
+Capture d'écran de la page **Navigation** montrant la table `application`
+sous `cmdb` : les 4 instances de démo (colonnes `demo_role`/`demo_vm`/
+`demo_base_donnees`/...) apparaissent au côté des objets CMDB réels
+préexistants de cette même classe (colonnes de démo vides pour ces
+derniers) - preuve visuelle qu'il n'y a plus qu'une seule classe
+`application` dans tout le système :
+
+![Navigation des instances de l'architecture Kafka](demo-kafka/navigation.png)
+
+### Le graphe des relations (Diagramme)
+
+Le **Diagramme**, filtré sur les 6 classes de cette démo (`vm`,
+`type_donnee`, `base_donnees`, `bus_kafka`, `application`, `reverse_proxy`,
+réparties sur 2 meta-classes `demo_kafka`/`cmdb`), matérialise les 19
+jointures entre les 17 objets de démo : les applications reliées à leur VM,
+leur base de données et le bus, le bus relié à ses 2 types de données, et
+le reverse proxy relié à ses 2 cibles redondantes. La barre de filtres en
+haut du Diagramme montre un seul badge `application`, sous le groupe
+`CMDB` (sans doublon), comptant les 4 objets de démo et les objets CMDB
+réels préexistants de cette classe (ces derniers apparaissent isolés dans
+le graphe, sans arête, n'ayant aucun attribut de démo renseigné) :
+
+![Graphe des relations de l'architecture Kafka](demo-kafka/diagramme.png)
+
+### Note technique
+
+Captures produites avec le même outil CDP headless que l'Exemple 1: voir
+la [note technique de l'Exemple
+1](#note-technique--captures-authentifiées-en-headless) ci-dessus, pas de
+duplication ici. Les classes de cette démo étant réparties sur 2
+meta-classes (`demo_kafka` et `cmdb`) depuis la révision post-revue
+ci-dessus, `tools/screenshot_demo.py` a reçu deux options supplémentaires
+pour ce cas (un simple `--meta-class` ne suffit plus à regrouper les 6
+classes dans une même capture) : `--only-classes` (page Diagramme,
+clique "Rien" puis ré-active uniquement les chips listées) et `--layer`
+(alternative additive par le filtre Layers, documentée dans l'outil avec
+sa limite : n'isole pas une classe sans layer). Capture Configuration via
+`--meta-class cmdb --class application --attr demo_vm` ; capture Navigation
+via `--meta-class cmdb --class application` ; capture Diagramme via
+`--only-classes vm,type_donnee,base_donnees,bus_kafka,application,reverse_proxy`.

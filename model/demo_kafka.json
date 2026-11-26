@@ -1,0 +1,109 @@
+{
+    "$schema": "schema.json",
+    "meta_class": "demo_kafka",
+    "depends_on": [
+        "cmdb"
+    ],
+    "classes": [
+        {
+            "class": "vm",
+            "displayname": "{{nom}}",
+            "layers": ["demo"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "ip",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "type_donnee",
+            "displayname": "{{nom}}",
+            "layers": ["demo"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "class": "base_donnees",
+            "displayname": "{{nom}}",
+            "layers": ["demo"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "details",
+                    "name": "moteur",
+                    "type": "string"
+                },
+                {
+                    "domain": "infra",
+                    "name": "vm",
+                    "type": "joint-1-1",
+                    "classes": ["vm"]
+                }
+            ]
+        },
+        {
+            "class": "bus_kafka",
+            "displayname": "{{nom}}",
+            "layers": ["demo"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "infra",
+                    "name": "vm",
+                    "type": "joint-1-1",
+                    "classes": ["vm"]
+                },
+                {
+                    "domain": "flux",
+                    "name": "types_donnees",
+                    "type": "joint-1-n",
+                    "classes": ["type_donnee"]
+                }
+            ]
+        },
+        {
+            "class": "reverse_proxy",
+            "displayname": "{{nom}}",
+            "layers": ["demo"],
+            "attributes": [
+                {
+                    "domain": "details",
+                    "name": "nom",
+                    "type": "string"
+                },
+                {
+                    "domain": "infra",
+                    "name": "vm",
+                    "type": "joint-1-1",
+                    "classes": ["vm"]
+                },
+                {
+                    "domain": "flux",
+                    "name": "cibles",
+                    "type": "joint-1-n",
+                    "classes": ["application"]
+                }
+            ]
+        }
+    ]
+}

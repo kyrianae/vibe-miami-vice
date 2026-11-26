@@ -4,7 +4,8 @@
     "depends_on": [
         "organisation",
         "cluster",
-        "localisation"
+        "localisation",
+        "demo_kafka"
     ],
     "classes": [
         {
@@ -224,6 +225,52 @@
                     "type": "joint-1-n",
                     "classes": [
                         "module"
+                    ]
+                },
+                {
+                    "domain": "demo",
+                    "name": "demo_role",
+                    "type": "select",
+                    "values": ["frontend", "backend", "service"]
+                },
+                {
+                    "domain": "demo",
+                    "name": "demo_vm",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "vm"
+                    ]
+                },
+                {
+                    "domain": "demo",
+                    "name": "demo_base_donnees",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "base_donnees"
+                    ]
+                },
+                {
+                    "domain": "demo",
+                    "name": "demo_bus",
+                    "type": "joint-1-1",
+                    "classes": [
+                        "bus_kafka"
+                    ]
+                },
+                {
+                    "domain": "demo",
+                    "name": "demo_produit",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "type_donnee"
+                    ]
+                },
+                {
+                    "domain": "demo",
+                    "name": "demo_consomme",
+                    "type": "joint-1-n",
+                    "classes": [
+                        "type_donnee"
                     ]
                 }
             ]
