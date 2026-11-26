@@ -32,11 +32,17 @@
 #     3: illustrated demo docs"), else the most recently modified fresh
 #     agent of any type. `agent` names which of the 7 types (6 subagent
 #     roles + "main") that task belongs to, so a Grafana table/panel can
-#     group or color by agent. "en attente"/"none" if nothing is fresh
-#     right now. Exists so the dashboard shows something readable
-#     immediately, not just a 0/1 grid — label cardinality grows over
-#     time as task text changes (acceptable at this project's scale, not
-#     meant for a high-churn environment).
+#     group or color by agent. If no subagent is fresh but the main
+#     session itself is (see `claude_agent{agent="main"}` above) — no
+#     dispatch, no `description` field to read — falls back to a generic
+#     "Session principale (interactif)" label rather than "en attente"
+#     (bug found 2026-11-26 : the dashboard showed "en attente" while the
+#     main session was visibly active, because this fallback only ever
+#     looked at subagent metadata). "en attente"/"none" only when
+#     NOTHING (subagent or main) is fresh. Exists so the dashboard shows
+#     something readable immediately, not just a 0/1 grid — label
+#     cardinality grows over time as task text changes (acceptable at
+#     this project's scale, not meant for a high-churn environment).
 #
 # Runs forever, rewriting the file every INTERVAL seconds (atomic
 # write: temp file + rename).
