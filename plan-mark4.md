@@ -502,24 +502,100 @@
 
 ## 3c. [Documentation] Mode d'emploi illustré — exemple 3 : organigramme d'une holding
 
-> Sous-action issue de la scission de l'action 3 (2026-11-25).
+> Sous-action issue de la scission de l'action 3 (2026-11-25). Pilotée
+> directement par la session principale (orchestrateur dédié à l'action 3
+> explicitement mis en pause, cf. incident documenté en tête de l'action 3).
 
 - **Problème** : pas d'illustration de bout en bout d'un modèle
   organisationnel (hiérarchie de personnes/sociétés).
-- **Correctif** : nouveau modèle de démo (`model/demo_organigramme.json` ou
-  nom équivalent) : organigramme d'une holding avec 2-3 sociétés et des
-  structures de 5 à 10 personnes chacune, sur 2-3 niveaux hiérarchiques.
-  Chargement réel via `/api/init`, objets réels créés via l'API
-  (sociétés + personnes + rattachements hiérarchiques, modélisés en
-  jointures), captures d'écran réelles Configuration/Navigation/Diagramme.
-  Nouvelle section « Exemple 3 » ajoutée à `doc/mode-emploi.md`,
-  réutilisation de `tools/screenshot_demo.py`.
-- **Effort** : moyen (volume d'objets plus important que 3a/3b : plusieurs
-  sociétés × 5-10 personnes).
-- **Fichiers** : nouveau modèle de démo (`model/demo_*.json`), nouveau
-  dossier de captures (ex. `doc/demo-organigramme/`), section ajoutée à
-  `doc/mode-emploi.md`.
-- **Statut** : ⬜ à faire.
+- **Correctif** : **aucun nouveau fichier de modèle** - par précaution
+  tirée directement de l'incident de collision de classe en 3b, vérifié
+  par `grep` sur tous les `model/*.json` que `societe`/`departement`/
+  `service_organisation`/`poste`/`personne_physique`/`role`/`groupe`/
+  `contact` ne sont déclarées nulle part ailleurs que dans
+  `model/organisation.json` (meta-classe `organisation`, livré Mark 3
+  action 17) - ces classes couvrant déjà exactement le besoin, réutilisées
+  telles quelles sans aucune modification de schéma. 71 objets réels créés
+  via `POST /api/write/object` (aucun appel à `/api/init`, schéma déjà
+  chargé) : 3 `societe` (Helveta Holding SA racine + 2 filiales Helveta
+  Technologies SA / Helveta Conseil SA via `holding` joint-1-1), 4
+  `departement` (1-2 par société), 26 `personne_physique` réparties sur 4
+  départements en 3 niveaux hiérarchiques chacun (direction → managers
+  d'équipe → collaborateurs, 5 à 8 personnes par département), 12
+  `service_organisation` (1 service racine + 2 sous-services par
+  département, chaîne `service_parent`), 26 `poste` (un par personne,
+  chaîne `poste_parent` reproduisant exactement la hiérarchie de reporting,
+  `service` reliant chaque poste à son service). 3 captures d'écran réelles
+  (PNG 1280×900, confirmées via `file`) via `tools/screenshot_demo.py
+  --meta-class organisation` : Configuration (classe `societe`, attribut
+  `holding` auto-référence), Navigation (table `poste` avec ses 3
+  jointures `titulaire`/`poste_parent`/`service` résolues - la hiérarchie
+  de reporting s'y lit directement), Diagramme (disposition Force, 75
+  objets/102 liens - la meta-classe `organisation` contenait déjà 4 objets
+  réels préexistants avant cette démo, documentés avec transparence comme
+  en 3b). Un seul ajustement à `tools/screenshot_demo.py` : nouvelle option
+  `--expand-class` (page Navigation) pour forcer l'expansion d'un groupe de
+  classe quand l'auto-expand de `NavigationPage.tsx` ne s'est pas appliqué
+  de façon fiable sur une meta-classe à 75 objets/8 classes (fonctionnait
+  pour 3a/3b, nettement plus petits). Documentation dans
+  `doc/mode-emploi.md`, section « Exemple 3 : organigramme d'une holding »
+  (renvoi à la note technique de l'Exemple 1, pas de duplication) - inclut
+  une note expliquant pourquoi la disposition « 🌳 Organigramme » (tree) du
+  Diagramme n'a pas été retenue : son algorithme désigne comme racine le(s)
+  nœud(s) sans arête entrante, générique et sans connaissance de la
+  sémantique des jointures de ce modèle - avec `poste_parent` orienté
+  enfant→parent, ce sont les postes de plus bas niveau qui deviennent
+  racines de l'arbre, pas la direction générale ; comportement générique de
+  l'IHM, pas un bug introduit ici.
+- **Effort** : moyen (volume d'objets plus important que 3a/3b : 71 objets
+  contre 17, mais aucune création de modèle - gain de temps sur la partie
+  schéma compensé par le volume de données et la construction de la
+  hiérarchie).
+- **Fichiers** : `doc/demo-organigramme/configuration.png`,
+  `doc/demo-organigramme/navigation.png`,
+  `doc/demo-organigramme/diagramme.png` (nouveaux),
+  `tools/screenshot_demo.py` (option `--expand-class` ajoutée),
+  `doc/mode-emploi.md` (section « Exemple 3 » ajoutée, sections
+  précédentes non touchées). Aucun fichier `model/*.json` modifié ou créé.
+  Pas d'impact sur `specifications/*.md` : `03-modele-donnees.md` §3.3
+  documente déjà `model/organisation.json` au niveau schéma (classes et
+  attributs, inchangés) - ces objets de démo sont des données d'instance,
+  pas un nouveau mécanisme, vérifié par cohérence avec le constat déjà fait
+  en 3a/3b.
+- **Statut** : ✅ fait (2026-11-26). Revue croisée (testeur 7/7 + analyse
+  combinée pessimiste/candide, pilotées directement) : **aucun point
+  bloquant**. Les 5 points d'incertitude assumés par le worker ont tous été
+  vérifiés réels et non trompeurs — en particulier, chiffres/liens
+  annoncés (75 objets, 102 liens, comptage par classe) confirmés exacts en
+  DB live, pixel pour pixel avec `diagramme.png` ; les 5 objets
+  préexistants (pas 4 comme documenté à l'origine — léger écart de
+  comptage sans conséquence, corrigé ici) confirmés intacts
+  (`valid_from`/`valid_to` inchangés) ; le point 2 (département/service
+  rattachés par convention de nommage, pas par jointure formelle) confirmé
+  être une limite honnêtement documentée dans le texte narratif, pas une
+  donnée trompeuse dans les captures elles-mêmes (la hiérarchie affichée,
+  elle, repose sur de vraies jointures vérifiées exhaustivement) ; le
+  choix Force vs Organigramme (point 3) confirmé techniquement justifié en
+  lisant le code `DiagramPage.tsx` (l'algorithme tree inverserait la
+  hiérarchie vu le sens enfant→parent de `poste_parent`), pas une
+  esquive. `backend/tests/` 299/299, aucune régression, aucun fichier
+  hors périmètre touché (vérifié `git diff`).
+  **Point de suivi non résolu dans 3c, mérite un futur ticket séparé** :
+  l'analyste a noté que l'auto-expand de `NavigationPage.tsx` (lignes
+  ~475-496) peut ne pas s'appliquer de façon fiable sur une meta-classe à
+  fort volume d'objets (75 ici) — contourné dans l'outil de capture par la
+  nouvelle option `--expand-class`, mais la cause racine (possible bug
+  réel affectant de vrais utilisateurs en prod sur une grosse
+  meta-classe, pas juste un artefact de l'outil CDP) n'a pas été
+  investiguée, volontairement hors du périmètre de cette action
+  documentaire. **Ajouté au plan comme nouvelle action 8** (voir
+  ci-dessous), pour ne pas perdre cette piste.
+  **Point mineur noté, non bloquant** : la lecture du volume par société
+  individuelle (ex. une filiale à 14 personnes cumulées sur ses 2
+  départements) dépasse seule la fourchette « 5 à 10 personnes » lue au
+  niveau société plutôt qu'au niveau département — le volume agrégé total
+  (26 personnes sur 3 sociétés) reste dans l'esprit de la demande, écart
+  jugé sans conséquence pour un exemple de documentation.
 
 ## 3d. [Documentation] Mode d'emploi illustré — assemblage final
 
@@ -661,6 +737,34 @@
   déterminer, y compris à la lumière de la démarche interactive à venir.
 - **Statut** : ⬜ démarche interactive requise (pas encore conçu pour de
   bon).
+
+## 8. [Dette technique / bug potentiel] Investiguer l'auto-expand de `NavigationPage.tsx` sur une meta-classe à fort volume
+
+> Trouvée par l'analyste combiné (pessimiste/candide) en revue de l'action
+> 3c (2026-11-26) — signalée comme point de suivi, volontairement non
+> traitée dans 3c (documentaire, hors scope).
+
+- **Problème** : l'auto-expand d'un groupe de classe dans
+  `frontend/src/pages/NavigationPage.tsx` (lignes ~475-496) ne s'est pas
+  appliqué de façon fiable lors de la capture d'écran de l'action 3c, sur
+  une meta-classe comptant 75 objets (`organisation`, dépendance probable
+  sur `filtered.map(id).join(',')`). Contourné dans
+  `tools/screenshot_demo.py` par une nouvelle option `--expand-class`
+  (clic explicite idempotent), mais la **cause racine n'a jamais été
+  investiguée** — risque réel que ce soit un bug affectant aussi de vrais
+  utilisateurs naviguant une meta-classe volumineuse en conditions
+  normales, pas seulement un artefact du pilotage headless CDP de l'outil
+  de capture.
+- **Correctif** : à déterminer après investigation — commencer par
+  reproduire manuellement (pas en headless) sur une meta-classe à fort
+  volume d'objets réels déjà en base (ex. `organisation` après l'action
+  3c, 75 objets ; ou `cmdb` après l'action 17 de Mark 3) pour confirmer
+  si le défaut existe réellement en usage normal ou si c'est bien
+  spécifique au contexte CDP/timing de l'outil de capture.
+- **Effort** : faible pour l'investigation, variable pour le correctif
+  selon ce qu'elle révèle.
+- **Fichiers** : `frontend/src/pages/NavigationPage.tsx`.
+- **Statut** : ⬜ à faire.
 
 > **Tableau récapitulatif** : plus dupliqué ici — voir [`resume.md`](resume.md)
 > à la racine du dépôt, tenu à jour en même temps que le champ **Statut**

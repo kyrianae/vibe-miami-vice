@@ -287,3 +287,119 @@ sa limite : n'isole pas une classe sans layer). Capture Configuration via
 `--meta-class cmdb --class application --attr demo_vm` ; capture Navigation
 via `--meta-class cmdb --class application` ; capture Diagramme via
 `--only-classes vm,type_donnee,base_donnees,bus_kafka,application,reverse_proxy`.
+
+## Exemple 3 : organigramme d'une holding
+
+Modèle organisationnel (hiérarchie de sociétés et de personnes), cette fois
+sans aucun nouveau fichier de modèle : les classes nécessaires existaient
+déjà intégralement dans [`model/organisation.json`](../model/organisation.json)
+(meta-classe `organisation`, livré Mark 3 action 17) - `societe`,
+`departement`, `service_organisation`, `poste`, `personne_physique`, plus
+`role`/`groupe`/`contact` (non utilisées pour cette démo). Pas de collision
+de nom trouvée avec un autre modèle (vérifié par `grep` sur tous les
+`model/*.json`, même démarche de prudence qu'en Exemple 2) : réutilisation
+directe, aucune classe de démo dupliquée créée.
+
+### Les classes réutilisées
+
+| Classe | Rôle dans cette démo |
+|---|---|
+| `societe` (`nom`, `holding` en `joint-1-1` vers `societe`) | La holding et ses filiales, reliées entre elles par auto-référence. |
+| `departement` (`nom`, `societe` en `joint-1-1`) | Un ou deux départements par société. |
+| `service_organisation` (`nom`, `responsable` en `joint-1-1` vers `personne_physique`, `service_parent` en `joint-1-1` vers `service_organisation`) | La hiérarchie de services au sein d'un département (direction générale → équipes), reliée en chaîne par `service_parent`. |
+| `poste` (`intitule`, `titulaire` en `joint-1-1` vers `personne_physique`, `poste_parent` en `joint-1-1` vers `poste`, `service` en `joint-1-1` vers `service_organisation`) | La hiérarchie individuelle de reporting (qui rapporte à qui), reliée en chaîne par `poste_parent` et rattachée au bon service. |
+| `personne_physique` (`nom`, `prenom`) | Les individus (classe de référence minimale, la hiérarchie se lit via `poste`/`service_organisation`). |
+
+À noter : `departement` n'a pas d'attribut de jointure direct vers
+`service_organisation` dans le modèle existant (seulement vers `societe`) -
+le rattachement d'un département à sa hiérarchie de services/postes se fait
+donc uniquement par convention de nommage (ex. département « Développement »
+↔ service racine « Direction R&D »), pas par une jointure formelle. Pas une
+lacune introduite par cette démo : c'est la structure déjà existante de
+`organisation.json`, non modifiée ici.
+
+Capture d'écran de la page **Configuration** montrant la classe `societe`
+et son attribut `holding` en `joint-1-1` (auto-référence, classe cible
+`societe` en surbrillance parmi toutes les classes du système) :
+
+![Configuration de la classe societe](demo-organigramme/configuration.png)
+
+### Les instances créées
+
+71 objets réels créés via `POST /api/write/object` (meta-classe
+`organisation`, modèle déjà chargé - aucun appel à `/api/init` nécessaire
+puisqu'aucune classe n'a été ajoutée ou modifiée) :
+
+- **3 `societe`** : Helveta Holding SA (racine), Helveta Technologies SA et
+  Helveta Conseil SA (2 filiales, `holding` → Helveta Holding SA).
+- **4 `departement`** : Direction Groupe (Holding), Développement et
+  Infrastructure (Technologies), Consulting (Conseil).
+- **26 `personne_physique`**, réparties sur les 4 départements en 3 niveaux
+  hiérarchiques chacun (direction → managers d'équipe → collaborateurs) :
+
+| Département | Société | Effectif | Direction | Managers | Collaborateurs |
+|---|---|---|---|---|---|
+| Direction Groupe | Helveta Holding SA | 5 | Jean Dupont | Claire Morel (Opérations), Marc Bovier (Finance) | Nina Keller, Hugo Favre |
+| Développement | Helveta Technologies SA | 8 | Sophie Richard | Karim Benali (Backend), Elena Castellano (Frontend) | Thomas Girard, Lucie Perrin, Nicolas Weber, Amélie Roux, Yanis Cherif |
+| Infrastructure | Helveta Technologies SA | 6 | David Meyer | Fatima Zahra (Réseau), Julien Oliveira (Cloud) | Paul Reichen, Léa Fontaine, Omar Haddad |
+| Consulting | Helveta Conseil SA | 7 | Isabelle Fournier | Antoine Blanc (Secteur Public), Chiara Rinaldi (Secteur Privé) | Grégoire Nussbaum, Valentine Schmid, Mehdi Amrani, Camille Duflot |
+
+- **12 `service_organisation`** : un service racine par département
+  (ex. « Direction Générale Groupe », « Direction R&D »...) et 2 sous-services
+  chacun (ex. « Opérations »/« Finance », « Équipe Backend »/« Équipe
+  Frontend »...), reliés par `service_parent`, `responsable` pointant vers la
+  personne correspondante.
+- **26 `poste`** (un par personne) : la chaîne `poste_parent` reproduit
+  exactement la hiérarchie du tableau ci-dessus (direction → manager →
+  collaborateur), chaque poste relié à son `service_organisation` via
+  l'attribut `service`.
+
+Transparence assumée (même précédent qu'en Exemple 2 avec `cmdb.application`) :
+la meta-classe `organisation` contenait déjà, avant cette démo, 1 `societe`
+(« FER-GE »), 1 `personne_physique` et 2 `contact` réels préexistants (données
+de test Mark 3 action 17) - ils apparaissent au côté des objets de démo dans
+les captures Navigation/Diagramme ci-dessous (compteurs `societe (4)` et
+`personne_physique (27)` au lieu de 3/26).
+
+Capture d'écran de la page **Navigation** montrant la table `poste` avec ses
+3 jointures résolues en displayname (`titulaire`, `poste_parent`, `service`) -
+la hiérarchie de reporting s'y lit directement, ligne par ligne :
+
+![Navigation des instances de poste](demo-organigramme/navigation.png)
+
+### Le graphe des relations (Diagramme)
+
+Le **Diagramme**, filtré sur la meta-classe `organisation` (disposition
+« Force », comme en Exemples 1 et 2), matérialise les 102 liens entre les 75
+objets (holding → filiales, départements → sociétés, hiérarchie de services
+via `service_parent`, hiérarchie de postes via `poste_parent`, postes/services
+→ personnes via `titulaire`/`responsable`) :
+
+![Graphe des relations de l'organigramme](demo-organigramme/diagramme.png)
+
+La disposition alternative « 🌳 Organigramme » (tree, `DiagramPage.tsx`) n'a
+délibérément pas été retenue pour cette capture : son algorithme détermine la
+racine d'un arbre comme le(s) nœud(s) sans arête entrante, générique et sans
+connaissance de la sémantique des jointures de ce modèle précis - avec les
+jointures `poste_parent` orientées de l'enfant vers le parent, ce sont les
+postes de plus bas niveau (sans aucune arête entrante) qui se retrouvent
+racines de l'arbre, pas la direction générale en haut de la hiérarchie
+réelle. Un comportement générique de l'IHM, pas un bug introduit par cette
+démo - la disposition « Force » reste donc la plus fidèle ici, comme pour les
+2 exemples précédents.
+
+### Note technique
+
+Captures produites avec le même outil CDP headless que les Exemples 1 et 2 :
+voir la [note technique de l'Exemple
+1](#note-technique--captures-authentifiées-en-headless) ci-dessus, pas de
+duplication. Un seul ajustement a été nécessaire à `tools/screenshot_demo.py`
+pour cet exemple : une nouvelle option `--expand-class` (page Navigation),
+qui force l'expansion du groupe d'une classe (clic idempotent sur l'en-tête,
+seulement si le chevron affiche encore `▼`) quand l'auto-expand de
+`NavigationPage.tsx` ne s'est pas appliqué de façon fiable sur une
+meta-classe à beaucoup d'objets/classes (`organisation`, 75 objets sur 8
+classes, contre 4-17 objets pour les Exemples 1/2). Capture Configuration via
+`--meta-class organisation --class societe` ; capture Navigation via
+`--meta-class organisation --class poste --expand-class poste` ; capture
+Diagramme via `--meta-class organisation` (disposition Force par défaut).

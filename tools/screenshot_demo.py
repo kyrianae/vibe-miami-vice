@@ -59,6 +59,21 @@ Usage :
     --page diagramme \\
     --only-classes vm,type_donnee,base_donnees,bus_kafka,application,reverse_proxy \\
     --out doc/demo-kafka/diagramme.png
+
+  # --expand-class (page navigation uniquement) : NavigationPage.tsx
+  # auto-expand en principe tous les groupes au chargement (effet sur
+  # filtered.map(id).join(',')), mais ce n'est pas fiable pour une
+  # meta-classe à beaucoup d'objets/classes (ex. organisation, 75 objets/8
+  # classes - action 3c, plan-mark4.md) : le groupe visé est resté
+  # collapsed (chevron ▼) malgré --class. --expand-class force un clic sur
+  # l'en-tête du groupe (toggle), mais seulement si le chevron affiche
+  # encore ▼ au moment du clic (idempotent, ne collapse jamais un groupe
+  # déjà expand par l'auto-expand - sûr à combiner avec --class même quand
+  # l'auto-expand fonctionne, comme en 3a/3b).
+  python3 tools/screenshot_demo.py \\
+    --token-file /chemin/vers/token.txt \\
+    --page navigation --meta-class organisation --class poste --expand-class poste \\
+    --out doc/demo-organigramme/navigation.png
 """
 import argparse
 import base64
@@ -148,6 +163,8 @@ def main():
                    help="Page configuration uniquement : nom d'attribut sur lequel scroller en complément de --class (classe trop riche pour tenir dans le viewport, l'attribut visé n'est pas forcément dans les premières lignes)")
     p.add_argument("--only-classes", default=None,
                    help="Page diagramme uniquement : liste de classes séparées par des virgules à montrer exclusivement (clique 'Rien' puis ré-active ces chips), alternative à --meta-class quand les classes d'une démo sont réparties sur plusieurs meta-classes")
+    p.add_argument("--expand-class", default=None,
+                   help="Page navigation uniquement : force l'expansion du groupe de cette classe (clic idempotent sur l'en-tête si le chevron affiche encore ▼) - utile quand l'auto-expand de NavigationPage.tsx n'a pas eu l'effet attendu (meta-classe à beaucoup d'objets/classes)")
     p.add_argument("--out", required=True, help="Chemin du PNG de sortie")
     p.add_argument("--width", type=int, default=1280)
     p.add_argument("--height", type=int, default=900)
@@ -292,6 +309,27 @@ def main():
         if isinstance(result, str) and result.startswith("NOT_FOUND"):
             raise RuntimeError(result)
         time.sleep(0.8)
+
+    if args.page == "navigation" and args.expand_class:
+        result = evaluate(cdp, f"""
+        (function() {{
+          const badges = [...document.querySelectorAll('.main-content .badge-class')];
+          const b = badges.find(x => x.textContent.trim() === {json.dumps(args.expand_class)});
+          if (!b) return 'NOT_FOUND class group, available=' + badges.map(x=>x.textContent).join(',');
+          const header = b.closest('h2').parentElement;
+          const chevron = header.querySelector('span[style*="font-size: 14px"]') ||
+            [...header.querySelectorAll('span')].find(s => s.textContent === '▼' || s.textContent === '▲');
+          if (chevron && chevron.textContent.trim() === '▼') {{
+            header.click();
+            return 'expanded ' + {json.dumps(args.expand_class)};
+          }}
+          return 'already expanded (or chevron not found) ' + {json.dumps(args.expand_class)};
+        }})()
+        """)
+        print("expand class group:", result)
+        if isinstance(result, str) and result.startswith("NOT_FOUND"):
+            raise RuntimeError(result)
+        time.sleep(1.0)
 
     if args.page == "diagramme" and args.only_classes:
         result = evaluate(cdp, """
