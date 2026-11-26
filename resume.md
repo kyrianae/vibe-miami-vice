@@ -13,7 +13,7 @@
 | 3a | Mode d'emploi illustré — exemple 1 : bouteille de vin | ✅ fait |
 | 3b | Mode d'emploi illustré — exemple 2 : architecture applicative / Kafka | ✅ fait |
 | 3c | Mode d'emploi illustré — exemple 3 : organigramme holding | ✅ fait |
-| 3d | Mode d'emploi illustré — assemblage final | ⬜ à faire |
+| 3d | Mode d'emploi illustré — assemblage final | ✅ fait |
 | 4 | Champ conditionnel (affichage indexé sur une autre valeur/calcul) | ⬜ démarche interactive requise |
 | 5 | Révélation d'un secret (bouton œil) + permissions de visibilité | ⬜ démarche interactive requise |
 | 6 | Sélection en cascade Salle → Bâtiment → Étage | ⬜ à faire |

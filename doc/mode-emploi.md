@@ -1,17 +1,42 @@
 # Mode d'emploi illustré
 
 > Documentation construite action par action (plan-mark4.md action 3,
-> scindée en 3a/3b/3c/3d). Chaque section ci-dessous illustre, avec des
-> captures d'écran réelles de l'IHM, comment modéliser une classe
-> d'objets puis créer/consulter des instances, sur un exemple concret
-> différent à chaque fois. L'introduction et la mise en cohérence
-> d'ensemble (3d) seront complétées une fois les 3 exemples livrés.
+> scindée en 3a/3b/3c/3d).
+
+## Introduction
+
+Ce document montre concrètement, par l'exemple, comment modéliser et
+utiliser le produit Miami Vice de bout en bout : définir une ou plusieurs
+classes d'objets dans le modèle dynamique, créer des instances réelles via
+l'API backend, puis les consulter dans les trois vues principales de
+l'IHM — **Configuration** (`ConfigurationPage.tsx`), **Navigation**
+(`NavigationPage.tsx`) et **Diagramme** (`DiagramPage.tsx`).
+
+Trois exemples suivent, de complexité croissante :
+
+1. **Exemple 1 — bouteille de vin** : cas grand public, pensé pour être
+   compréhensible sans connaissance préalable du produit.
+2. **Exemple 2 — architecture applicative / bus Kafka** : cas
+   technique/professionnel, plus riche, qui réutilise au passage une
+   classe CMDB existante plutôt que d'en dupliquer une.
+3. **Exemple 3 — organigramme d'une holding** : cas organisationnel, qui
+   ne crée aucun nouveau modèle et réutilise intégralement un modèle
+   existant (`model/organisation.json`).
+
+Les captures d'écran de ces trois exemples sont produites en pilotant
+Chrome headless via le Chrome DevTools Protocol, une contrainte liée à
+l'authentification de l'IHM (jeton en `localStorage`) détaillée dans la
+[note technique de l'Exemple
+1](#note-technique--captures-authentifiées-en-headless) ; elle n'est pas
+répétée dans les sections suivantes.
 
 Chaque exemple suit le même déroulé :
 
-1. Un modèle de démonstration est défini dans un fichier
-   `model/demo_*.json` (chargé via `POST /api/init`, comme n'importe quel
-   autre fichier du dossier `model/`).
+1. Une ou plusieurs classes sont définies dans un modèle de démonstration
+   — en général un nouveau fichier `model/demo_*.json` (chargé via
+   `POST /api/init`, comme n'importe quel autre fichier du dossier
+   `model/`), ou, quand des classes existantes suffisent (Exemple 3),
+   aucun nouveau fichier.
 2. Des instances réelles sont créées via l'API backend
    (`POST /api/write/object`).
 3. Des captures d'écran réelles montrent le résultat : la/les classe(s)
@@ -403,3 +428,28 @@ classes, contre 4-17 objets pour les Exemples 1/2). Capture Configuration via
 `--meta-class organisation --class societe` ; capture Navigation via
 `--meta-class organisation --class poste --expand-class poste` ; capture
 Diagramme via `--meta-class organisation` (disposition Force par défaut).
+
+## Conclusion
+
+Ces trois exemples couvrent trois contextes d'usage très différents — un
+produit grand public (bouteille de vin), une architecture technique
+(application/bus Kafka) et une organisation d'entreprise (holding,
+sociétés, postes) — et montrent qu'un même outil, sans aucun mécanisme
+spécifique à ajouter, permet de modéliser puis d'exploiter les trois.
+
+Un principe transversal, illustré dans chacune des trois sections :
+préférer une **jointure** (`joint-1-1`/`joint-1-n`) à un simple attribut
+texte libre dès qu'une relation entre objets a un sens métier. Seule une
+jointure devient une arête exploitable dans la page **Diagramme** ; une
+chaîne de caractères, même descriptive, n'y produit jamais de lien.
+
+L'évolution entre l'Exemple 2 et l'Exemple 3 illustre un second principe :
+réutiliser une classe/un modèle existant plutôt que d'en dupliquer un,
+chaque fois que c'est possible. L'Exemple 2 a révisé son approche initiale
+pour réutiliser la classe `application` déjà fournie par la CMDB
+(`model/itil_cmdb.json`) plutôt que d'en créer une seconde en collision de
+nom ; l'Exemple 3 va plus loin et ne crée aucun nouveau fichier de modèle,
+réutilisant intégralement les classes déjà présentes dans
+`model/organisation.json`. Dans les deux cas, le réflexe gagnant est le
+même : vérifier (`grep` sur `model/*.json`) qu'une classe répondant déjà
+au besoin n'existe pas avant d'en créer une nouvelle.

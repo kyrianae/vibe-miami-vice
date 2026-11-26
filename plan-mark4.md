@@ -315,7 +315,13 @@
 - **Effort** : moyen à élevé (plusieurs modèles de démo complets + captures
   d'écran réelles pour chacun) — réparti sur les 4 sous-actions.
 - **Fichiers** : voir chaque sous-action.
-- **Statut** : 🔀 scindée (2026-11-25) — voir 3a-3d.
+- **Statut** : 🔀 scindée (2026-11-25) — voir 3a-3d, **toutes closes**
+  (2026-11-26). Un incident de suivi a eu lieu en cours de route (voir
+  note en tête de section ci-dessus) : l'orchestrateur dédié bloqué ~1
+  jour, reprise directe par la session principale pour 3b/3c/3d. Une
+  collision de classe réelle trouvée et corrigée en 3b (voir cette
+  section), un point de suivi séparé ouvert en action 8 suite à la revue
+  de 3c.
 
 ## 3a. [Documentation] Mode d'emploi illustré — exemple 1 : bouteille de vin
 
@@ -616,7 +622,21 @@
   nouvelle capture).
 - **Fichiers** : `doc/mode-emploi.md`, potentiellement
   `specifications/*.md`.
-- **Statut** : ⬜ à faire.
+- **Statut** : ✅ fait (2026-11-26). Introduction et conclusion rédigées
+  dans `doc/mode-emploi.md`, relues directement par la session principale
+  (pilotage direct, sans orchestrateur, sans cycle testeur/analyste
+  complet vu la nature purement éditoriale et le faible risque de cette
+  action — relecture jugée suffisante). Introduction : objectif du
+  document, annonce des 3 exemples par complexité croissante, renvoi
+  unique vers la note technique headless. Conclusion : synthèse des 3
+  contextes d'usage, principe transversal jointure > texte libre, principe
+  de réutilisation illustré par l'évolution 3b→3c (`grep` avant de créer
+  une classe). Relecture de cohérence confirmée : terminologie homogène
+  entre les 3 sections (vérifié directement), ancre interne vers la note
+  technique de l'Exemple 1 confirmée fonctionnelle (slugify vérifié
+  caractère par caractère par le worker), tous les chemins d'image/modèle
+  référencés existent sur disque. `specifications/*.md` : rien à
+  synchroniser (déjà à jour depuis 3b). **Action 3 entière (3a-3d) close.**
 
 ## 4. [Nouvelle fonctionnalité] Champ conditionnel : affichage indexé sur une autre valeur ou un calcul
 
