@@ -4,3 +4,6 @@
 frontend/tsconfig.tsbuildinfo
 frontend/dist/
 frontend/node_modules/
+frontend/test-results/
+frontend/playwright-report/
+frontend/tests/e2e/.auth/

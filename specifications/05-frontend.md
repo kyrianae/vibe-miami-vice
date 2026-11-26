@@ -737,3 +737,45 @@ aucune restriction RBAC). Consomme `GET /api/search` (détail complet :
   `SearchAttributeFacetCount`).
 
 Détail complet et suivi : `plan-mark3.md` action 21.
+
+## 6.15 Tests IHM Playwright (`frontend/tests/e2e/`, ajout 2026-11-26, `plan-mark4.md` action 2)
+
+Premier passage de tests automatisés de l'IHM (inexistant avant cette
+action — jusque-là, seules vérifications frontend : `tsc -b`/`vite build`
+et rendu DOM statique ponctuel). Outil : **Playwright** (pas Selenium,
+alternative plus légère choisie explicitement par l'utilisateur — install
+npm seule, pas de driver binaire externe). Portée : smoke test large, un
+test par page principale (Navigation/Configuration/Diagramme/Dashboard/
+Recherche) — charge sans erreur console + un élément clé visible, pas de
+scénario bout-en-bout profond.
+
+- **Fichiers** : `frontend/playwright.config.ts` (config, `testDir`,
+  `globalSetup`, `storageState`, 1 worker volontaire), `frontend/tests/
+  e2e/global-setup.ts` (login), `frontend/tests/e2e/helpers.ts`
+  (`collectConsoleErrors`/`gotoPage`), un `*.spec.ts` par page,
+  `frontend/tests/e2e/README.md` (commande d'exécution réelle détaillée).
+  `@playwright/test` ajouté en devDependency (`frontend/package.json`),
+  script `npm run test:e2e`.
+- **Authentification** : `global-setup.ts` reproduit le pattern déjà
+  utilisé par `tools/screenshot_demo.py` (mode d'emploi illustré, action
+  3a/3b/3c) — password grant Keycloak direct (client public
+  `miami-vice-direct`, `testuser`/`testuser123`), token injecté en
+  `localStorage` (clé `miami-vice-auth-token`, `frontend/src/api.ts`),
+  capturé comme `storageState` Playwright réutilisable par tous les tests.
+- **Navigation** : l'app étant une SPA sans routeur (`App.tsx`, state React
+  `page`), chaque test clique le bouton correspondant dans
+  `components/Navbar.tsx` (`gotoPage`), jamais une URL directe.
+- **Exécution réelle** : le conteneur `frontend` (`node:20-alpine`, musl)
+  ne peut pas lancer les navigateurs Playwright (pas de glibc, confirmé en
+  pratique) — exécution via un conteneur Playwright officiel séparé
+  (Debian/glibc), réseau host, détail et commande exacte dans `frontend/
+  tests/e2e/README.md`. `baseURL`/URLs Keycloak en `127.0.0.1` explicite
+  (pas `localhost`) : la résolution dual-stack de `localhost` combinée à
+  la rafale de requêtes parallèles de la page Diagramme
+  (`DiagramPage.tsx`, `Promise.all` sur des dizaines de `GET /api/read/
+  object/<id>`) déclenchait `ERR_NETWORK_CHANGED` de façon systématique
+  dans ce conteneur — éliminé en forçant l'IPv4.
+- **Vérifié réellement** (pas seulement compilé) : 5/5 tests passants,
+  reproduit sur 3 exécutions consécutives.
+
+Détail complet et suivi : `plan-mark4.md` action 2.

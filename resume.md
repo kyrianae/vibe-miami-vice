@@ -9,7 +9,7 @@
 | 1b | Monitoring visuel de l'activité des agents Claude via Prometheus | ✅ fait |
 | 1c | Métrique de tokens consommés par agent | ✅ fait |
 | 1d | Dashboard personnalisé, tâche en cours, suivi session principale | ✅ fait |
-| 2 | Ajout de Selenium pour les tests IHM | ⬜ à discuter |
+| 2 | Ajout de Selenium pour les tests IHM | ✅ fait (Playwright, 5 pages, smoke tests verts) |
 | 3a | Mode d'emploi illustré — exemple 1 : bouteille de vin | ✅ fait |
 | 3b | Mode d'emploi illustré — exemple 2 : architecture applicative / Kafka | ✅ fait |
 | 3c | Mode d'emploi illustré — exemple 3 : organigramme holding | ✅ fait |

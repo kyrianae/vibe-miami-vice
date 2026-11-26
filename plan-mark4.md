@@ -258,23 +258,99 @@
 
 ## 2. [Nouvelle fonctionnalité] Ajout de Selenium pour les tests IHM
 
-> Demande utilisateur (2026-11-25) — marquée « à discuter » par
-> l'utilisateur lui-même : pas encore une décision ferme d'implémenter,
-> à confirmer avant de lancer le cycle complet.
+> Demande utilisateur (2026-11-25) — marquée « à discuter » initialement,
+> décisions tranchées par l'utilisateur depuis : outil **Playwright**
+> (pas Selenium, alternative plus légère explicitement choisie — install
+> npm seule, pas de driver binaire externe), portée de ce premier passage
+> **smoke test large** (un test par page principale, charge sans erreur
+> console + un élément clé visible, pas de scénario bout-en-bout profond).
 
 - **Problème** : aucun test IHM automatisé/scripté dans le projet
   aujourd'hui (confirmé à plusieurs reprises pendant Mark 3 — les
   vérifications frontend se limitent à `tsc -b`/`vite build` et, quand
   l'environnement le permet, un rendu DOM statique via Chrome headless,
   jamais un scénario de clics réels scripté).
-- **Correctif** : à discuter avec l'utilisateur avant de concevoir quoi
-  que ce soit — portée exacte (quels parcours couvrir en priorité),
-  outil (Selenium nommément demandé, à confirmer vs. une alternative déjà
-  plus légère comme Playwright si pertinent pour ce projet), intégration
-  CI éventuelle.
-- **Effort** : à évaluer après discussion.
-- **Fichiers** : à déterminer.
-- **Statut** : ⬜ à discuter (pas encore à faire).
+- **Correctif** : `@playwright/test` ajouté en devDependency
+  (`frontend/package.json`, script `npm run test:e2e`). Nouveau dossier
+  `frontend/tests/e2e/` : `global-setup.ts` (authentification — reproduit
+  le pattern déjà utilisé par `tools/screenshot_demo.py`, password grant
+  Keycloak direct `testuser`/`testuser123`, client `miami-vice-direct`,
+  token injecté en `localStorage` puis capturé comme `storageState`
+  Playwright réutilisable), `helpers.ts` (`collectConsoleErrors`/
+  `gotoPage` — navigation via le menu `Navbar.tsx`, pas d'URL directe,
+  app SPA sans routeur), 5 `*.spec.ts` (un par page : Navigation/
+  Configuration/Diagramme/Dashboard/Recherche), `README.md` (commande
+  d'exécution réelle détaillée). `playwright.config.ts` à la racine de
+  `frontend/`.
+- **Effort** : moyen (infra de test neuve + 2 problèmes d'environnement
+  réels résolus en cours de route, voir ci-dessous).
+- **Fichiers** : `frontend/package.json`, `frontend/playwright.config.ts`
+  (nouveau), `frontend/tests/e2e/{global-setup.ts,helpers.ts,
+  navigation.spec.ts,configuration.spec.ts,diagramme.spec.ts,
+  dashboard.spec.ts,recherche.spec.ts,README.md}` (nouveaux), `.gitignore`
+  (`frontend/test-results/`, `frontend/playwright-report/`,
+  `frontend/tests/e2e/.auth/`), `specifications/05-frontend.md` (nouvelle
+  section §6.15).
+- **Statut** : ✅ fait (2026-11-26). Outil Playwright, 5 pages couvertes
+  (Navigation/Configuration/Diagramme/Dashboard/Recherche), suite verte
+  5/5. 1 itération de correction post-revue : sélecteur
+  `navigation.spec.ts` rendu indépendant du contenu de la base (ne
+  dépendait plus d'une donnée de dev précise) + note ajoutée dans
+  `frontend/tests/e2e/README.md` sur la limite de couverture de
+  `diagramme.spec.ts`. Revalidé OK, testeur-global au vert.
+  - Historique détaillé de l'implémentation et des 2 bugs d'environnement
+    résolus (`ERR_NETWORK_CHANGED`, flakiness workers) conservé ci-dessous.
+  - **Exécution réelle, pas seulement compilation** : le conteneur
+    `frontend` (`node:20-alpine`, musl) ne peut pas lancer les navigateurs
+    Playwright (confirmé en pratique : `spawn ... ENOENT` au lancement de
+    Chromium — limite connue, documentée, Playwright ne supporte pas
+    Alpine). Exécution réelle via un conteneur Playwright officiel séparé
+    (`mcr.microsoft.com/playwright:v1.65.1-noble`, version alignée sur
+    `@playwright/test` installé), ponctuel, réseau host, montant
+    `frontend/` — commande exacte dans `frontend/tests/e2e/README.md`.
+  - **2 bugs d'environnement réels trouvés et corrigés en cours de route**
+    (pas de simples sélecteurs fragiles) :
+    1. `ERR_NETWORK_CHANGED` systématique (pas flaky, 3/3) sur le test
+       Diagramme — cause confirmée par test isolé avant/après : résolution
+       dual-stack de `localhost` (`::1`+`127.0.0.1`) combinée à la rafale
+       de dizaines de `GET /api/read/object/<id>` en parallèle que
+       `DiagramPage.tsx` envoie déjà (`Promise.all`, code applicatif non
+       modifié). Corrigé en forçant `127.0.0.1` explicitement dans
+       `playwright.config.ts`/`global-setup.ts` (`baseURL`, URLs Keycloak)
+       — élimine le problème à 100 %, aucun changement côté application.
+    2. Flakiness `dashboard.spec.ts` (timeout intermittent) sous 2
+       workers Playwright — cause : le serveur de dev Vite (single
+       process) ciblé devient contentieux sous 2 Chromium headless en
+       parallèle. Corrigé par `workers: 1` dans `playwright.config.ts`
+       (suite volontairement séquentielle, overhead de parallélisation
+       non nécessaire pour 5 tests).
+  - **Pollution pré-existante de la base de dev trouvée (pas causée par
+    cette action)** : classe orpheline `testeur_dup_rt/compte_rt_dup`
+    (attribut `pw` déclaré deux fois, types `secret` et `string`), absente
+    de tout `model/*.json` versionné, déclenche un vrai avertissement
+    React ("two children with the same key") dès le premier rendu de
+    `NavigationPage` (page par défaut au chargement) — reproduit sur
+    toutes les pages testées, pas seulement Navigation. Pas un bug
+    applicatif (`write_class` valide normalement l'unicité des noms
+    d'attribut, cf. action 3b) — origine non déterminée (écrite par un
+    autre chemin ou directement en base, avant ce garde-fou). Suppression
+    via l'API (`DELETE /api/delete/object/187` puis `.../class/
+    testeur_dup_rt/compte_rt_dup` puis `.../metaclass/testeur_dup_rt`)
+    **tentée pendant cette action et bloquée par le classifieur
+    d'autorisation de l'environnement** (DELETE jugé destructif,
+    confirmation utilisateur requise) — non appliquée. Filtrée
+    explicitement et documentée dans `helpers.ts`
+    (`isKnownPreexistingDuplicateKeyWarning`, matching ciblé sur le
+    gabarit + le mot `pw` + la pile `NavigationPage`, pas un filtre
+    générique qui masquerait un futur vrai doublon de clé) le temps du
+    nettoyage manuel — commandes exactes dans `frontend/tests/e2e/
+    README.md`. **Nécessite une décision utilisateur** : confirmer le
+    nettoyage (3 appels DELETE ci-dessus) ou laisser le filtre en place.
+  - `docker compose exec frontend npm run build` : toujours 3 erreurs
+    `tsc` préexistantes dans `DiagramPage.tsx` (confirmées identiques
+    avant/après cette action, dette déjà documentée ailleurs — action 6),
+    aucune nouvelle erreur introduite par l'ajout de la dépendance
+    Playwright.
 
 ## 3. [Documentation] Mode d'emploi illustré avec captures d'écran, basé sur des modèles de démonstration
 
