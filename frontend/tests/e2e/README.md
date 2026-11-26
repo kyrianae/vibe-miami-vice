@@ -77,18 +77,3 @@ l'artefact dual-stack déjà corrigé par `127.0.0.1` ci-dessus) ne ferait
 donc pas échouer ce test : le canvas reste visible même avec un graphe
 vide ou partiel. Non corrigé ici — changer ce comportement de
 `DiagramPage.tsx` est hors périmètre de cette suite de smoke tests.
-
-## Point de suivi connu
-
-Un test a révélé une pollution pré-existante de la base de dev partagée :
-classe orpheline `testeur_dup_rt/compte_rt_dup` (attribut `pw` déclaré deux
-fois), hors de tout `model/*.json` versionné, qui déclenche un vrai
-avertissement React ("two children with the same key") dès le chargement.
-Filtré explicitement dans `helpers.ts` (`isKnownPreexistingDuplicateKeyWarning`)
-le temps d'un nettoyage manuel :
-
-```
-DELETE /api/delete/object/187
-DELETE /api/delete/class/testeur_dup_rt/compte_rt_dup
-DELETE /api/delete/metaclass/testeur_dup_rt
-```

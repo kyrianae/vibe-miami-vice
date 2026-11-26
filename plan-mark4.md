@@ -346,6 +346,15 @@
     nettoyage manuel — commandes exactes dans `frontend/tests/e2e/
     README.md`. **Nécessite une décision utilisateur** : confirmer le
     nettoyage (3 appels DELETE ci-dessus) ou laisser le filtre en place.
+  - **Mise à jour (2026-11-26)** : pollution nettoyée côté base par
+    l'utilisateur lui-même (objets 187/188, classe et métaclasse
+    `testeur_dup_rt`/`compte_rt_dup` supprimés via l'API, hors de ce
+    worker — confirmé 404 sur `GET /api/read/testeur_dup_rt`). Filtre
+    `isKnownPreexistingDuplicateKeyWarning` retiré de `helpers.ts`
+    (plus de pollution à masquer), section « Point de suivi connu »
+    retirée de `frontend/tests/e2e/README.md`. Suite relancée sans le
+    filtre (même conteneur Playwright officiel, réseau host) : 5/5
+    toujours verts, aucun avertissement React résiduel.
   - `docker compose exec frontend npm run build` : toujours 3 erreurs
     `tsc` préexistantes dans `DiagramPage.tsx` (confirmées identiques
     avant/après cette action, dette déjà documentée ailleurs — action 6),
