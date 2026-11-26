@@ -24,17 +24,19 @@
 #     `subagents/`. Covers the gap where the main session is actively
 #     reading/editing/answering while no subagent happens to be running.
 #
-#   claude_current_task{task="<description>"} 1
+#   claude_current_task{task="<description>", agent="<type>"} 1
 #     Single row naming the plan task currently in flight — the raw
 #     `description` field of the freshest active agent (preferring an
 #     `orchestrateur` instance if one is fresh, since its description
 #     usually names the plan action directly, e.g. "Orchestrate action
 #     3: illustrated demo docs"), else the most recently modified fresh
-#     agent of any type. "en attente" if nothing is fresh right now. Exists so
-#     the dashboard shows something readable immediately, not just a
-#     0/1 grid — label cardinality grows over time as task text changes
-#     (acceptable at this project's scale, not meant for a high-churn
-#     environment).
+#     agent of any type. `agent` names which of the 7 types (6 subagent
+#     roles + "main") that task belongs to, so a Grafana table/panel can
+#     group or color by agent. "en attente"/"none" if nothing is fresh
+#     right now. Exists so the dashboard shows something readable
+#     immediately, not just a 0/1 grid — label cardinality grows over
+#     time as task text changes (acceptable at this project's scale, not
+#     meant for a high-churn environment).
 #
 # Runs forever, rewriting the file every INTERVAL seconds (atomic
 # write: temp file + rename).
@@ -90,7 +92,7 @@ while true; do
   now=$(date +%s)
   w=0; te=0; pe=0; ca=0; orc=0; tg=0
   tok_w=0; tok_te=0; tok_pe=0; tok_ca=0; tok_orc=0; tok_tg=0
-  best_desc=""; best_is_orch=0; best_mtime=0
+  best_desc=""; best_is_orch=0; best_mtime=0; best_label=""
 
   for meta in $(find "$PROJECTS_DIR" -name 'agent-*.meta.json' 2>/dev/null); do
     jsonl="${meta%.meta.json}.jsonl"
@@ -127,6 +129,7 @@ while true; do
         best_desc="$desc"
         best_is_orch="$is_orch"
         best_mtime="$mtime"
+        best_label="$label"
       fi
     fi
 
@@ -160,8 +163,10 @@ while true; do
 
   if [ -z "$best_desc" ]; then
     task_label="en attente"
+    task_agent="none"
   else
     task_label=$(escape_label "$best_desc")
+    task_agent="$best_label"
   fi
 
   tmp="${OUT_FILE}.tmp.$$"
@@ -183,9 +188,9 @@ while true; do
     echo "claude_agent_tokens_total{agent=\"candide\"} $tok_ca"
     echo "claude_agent_tokens_total{agent=\"orchestrateur\"} $tok_orc"
     echo "claude_agent_tokens_total{agent=\"testeur-global\"} $tok_tg"
-    echo "# HELP claude_current_task Plan task currently in flight (raw agent description, 'idle' if none fresh). Label cardinality grows over time as task text changes."
+    echo "# HELP claude_current_task Plan task currently in flight (raw agent description, 'en attente'/'none' if idle), labeled with which agent type it belongs to. Label cardinality grows over time as task text changes."
     echo "# TYPE claude_current_task gauge"
-    echo "claude_current_task{task=\"$task_label\"} 1"
+    echo "claude_current_task{task=\"$task_label\",agent=\"$task_agent\"} 1"
   } > "$tmp"
   mv "$tmp" "$OUT_FILE"
 
