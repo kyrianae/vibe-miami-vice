@@ -254,6 +254,216 @@ function AutosuggestInput({ value, onChange, onCommit, onCancel, metaClass, cls,
   );
 }
 
+// --- Sélection en cascade (plan-mark4.md action 6) ---
+//
+// Mécanisme générique configuré au niveau du modèle (`cascade` sur une
+// définition d'attribut joint-1-1, model/schema.json) : un tableau ordonné
+// de noms d'attributs joint-1-1 à remonter depuis la classe cible de
+// l'attribut. Exemple (model/itil_cmdb.json, materiel.salle) : attribut
+// `salle` (joint-1-1 -> classe 'salle') avec `cascade: ["etage",
+// "batiment"]` - 'salle' porte elle-même un attribut joint-1-1 'etage'
+// (-> 'etage'), qui porte lui-même un attribut joint-1-1 'batiment'
+// (-> 'batiment'). La chaîne complète remontée :
+//   levelClasses = ['salle', 'etage', 'batiment']   (index 0 = classe cible)
+//   linkAttrs    = ['etage', 'batiment']             (attribut de liaison vers le niveau supérieur)
+// La valeur réellement stockée reste un simple joint-1-1 vers l'objet
+// final choisi (ex. l'id de la salle) - la cascade n'est qu'une aide de
+// sélection IHM, aucun changement de format de stockage.
+interface CascadeChain {
+  levelClasses: string[];
+  linkAttrs: string[];
+}
+
+function computeCascadeChain(attr: AttributeDefinition, classes: ClassInfo[]): CascadeChain | null {
+  if (attr.type !== 'joint-1-1') return null;
+  if (!attr.cascade || attr.cascade.length === 0) return null;
+  if (!attr.classes || attr.classes.length === 0) return null;
+  const levelClasses: string[] = [attr.classes[0]];
+  const linkAttrs: string[] = [];
+  for (const linkName of attr.cascade) {
+    const curCls = levelClasses[levelClasses.length - 1];
+    const curDef = classes.find((c) => c.class === curCls);
+    const linkAttrDef = curDef?.attributes.find((a) => a.name === linkName && a.type === 'joint-1-1');
+    if (!linkAttrDef || !linkAttrDef.classes || linkAttrDef.classes.length === 0) {
+      // Chaîne mal formée (nom d'attribut inexistant/pas joint-1-1 sur la
+      // classe précédente) : repli silencieux sur le sélecteur simple côté
+      // appelant (cf. rendu conditionnel), pas d'erreur bloquante - garde-fou
+      // frontend, le schéma ne valide pas strictement cette cohérence
+      // (cf. model/schema.json, description du champ 'cascade').
+      return null;
+    }
+    linkAttrs.push(linkName);
+    levelClasses.push(linkAttrDef.classes[0]);
+  }
+  return { levelClasses, linkAttrs };
+}
+
+// Sélecteur en cascade générique : affiche d'abord un <select> pour le
+// SOMMET de la chaîne (dernier niveau, ex. 'batiment'), puis un <select>
+// par niveau en redescendant, chacun filtré aux candidats dont l'attribut
+// de liaison pointe vers le choix du niveau parent déjà fait - jusqu'à la
+// classe cible finale (niveau 0, ex. 'salle'). Seul le <select> du niveau 0
+// déclenche `onChange`/`onBottomBlur` (commit de la valeur réellement
+// stockée) ; les niveaux supérieurs ne font que narrower la liste du niveau
+// suivant, sans écrire quoi que ce soit côté backend.
+function CascadeJointSelect({
+  chain, objects, detailCache, setDetailCache, getCandidateLabel, value, onChange,
+  bottomAutoFocus, onBottomBlur, onBottomEscape, disabled,
+}: {
+  chain: CascadeChain;
+  objects: ObjectSummary[];
+  detailCache: Record<number, ObjectDetail>;
+  setDetailCache: React.Dispatch<React.SetStateAction<Record<number, ObjectDetail>>>;
+  getCandidateLabel: (o: ObjectSummary) => string;
+  value: string;
+  onChange: (v: string) => void;
+  bottomAutoFocus?: boolean;
+  onBottomBlur?: () => void;
+  onBottomEscape?: () => void;
+  disabled?: boolean;
+}) {
+  const levelCount = chain.levelClasses.length;
+  const [selections, setSelections] = useState<(number | '')[]>(() => new Array(levelCount).fill(''));
+
+  // Préremplissage (édition d'un objet existant) : remonte la chaîne depuis
+  // la valeur déjà stockée (classe cible) en lisant successivement les
+  // attributs de liaison de chaque objet rencontré - fetch les détails
+  // manquants au besoin. Dépendance volontairement limitée à
+  // value/chain (pas detailCache) : le fetch est géré directement dans cet
+  // effet, une dépendance sur detailCache créerait une boucle de re-render.
+  useEffect(() => {
+    let cancelled = false;
+    async function resolve() {
+      const sels: (number | '')[] = new Array(levelCount).fill('');
+      if (value) {
+        const startId = Number(value);
+        sels[0] = startId;
+        let curId: number | null = startId;
+        for (let i = 0; i < chain.linkAttrs.length; i++) {
+          if (curId === null) break;
+          const id: number = curId;
+          let detail: ObjectDetail | undefined = detailCache[id];
+          if (!detail) {
+            try {
+              detail = await apiReadObject(id);
+            } catch {
+              break;
+            }
+            if (cancelled) return;
+            const loaded: ObjectDetail = detail;
+            setDetailCache((prev) => ({ ...prev, [loaded.id]: loaded }));
+          }
+          const attrVal = detail.attributes.find((a) => a.name === chain.linkAttrs[i]);
+          const v = attrVal && attrVal.values.length > 0 ? attrVal.values[0] : undefined;
+          if (v && typeof v === 'object' && 'joint_id' in v) {
+            const nextId: number = v.joint_id;
+            sels[i + 1] = nextId;
+            curId = nextId;
+          } else {
+            curId = null;
+          }
+        }
+      }
+      if (!cancelled) setSelections(sels);
+    }
+    resolve();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, chain.levelClasses.join(','), chain.linkAttrs.join(',')]);
+
+  // Préchargement des détails de tous les objets des classes de la chaîne
+  // (nécessaire pour filtrer un niveau par l'attribut de liaison de son
+  // parent) - même esprit que loadCandidatesForDef ci-dessus.
+  useEffect(() => {
+    const targetClasses = new Set(chain.levelClasses);
+    const toLoad = objects.filter((o) => targetClasses.has(o.class) && !detailCache[o.id]);
+    if (toLoad.length === 0) return;
+    Promise.allSettled(toLoad.map((o) => apiReadObject(o.id))).then((results) => {
+      const newEntries: Record<number, ObjectDetail> = {};
+      results.forEach((r) => { if (r.status === 'fulfilled') newEntries[r.value.id] = r.value; });
+      if (Object.keys(newEntries).length > 0) setDetailCache((prev) => ({ ...prev, ...newEntries }));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chain.levelClasses.join(','), objects.length]);
+
+  const handleLevelChange = (level: number, raw: string) => {
+    const newId: number | '' = raw ? Number(raw) : '';
+    setSelections((prev) => {
+      const next = [...prev];
+      next[level] = newId;
+      for (let i = 0; i < level; i++) next[i] = '';
+      return next;
+    });
+    if (level === 0) {
+      onChange(newId === '' ? '' : String(newId));
+    } else {
+      onChange('');
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {[...Array(levelCount).keys()].reverse().map((level) => {
+        const cls = chain.levelClasses[level];
+        const isTop = level === levelCount - 1;
+        const isBottom = level === 0;
+        let candidates: ObjectSummary[];
+        let levelDisabled = !!disabled;
+        if (isTop) {
+          candidates = objects.filter((o) => o.class === cls);
+        } else {
+          const parentId = selections[level + 1];
+          if (!parentId) {
+            // Correctif plan-mark4.md action 6 (revue croisée) : un parent
+            // non résolu (maillon intermédiaire du dessus non renseigné, ex.
+            // un 'etage' réel sans 'batiment') ne doit pas verrouiller ce
+            // niveau si sa propre valeur est déjà connue (préremplissage) -
+            // sinon le <select> apparaît vide ET désactivé alors que
+            // `selections[level]` contient un id réel (juste aucune <option>
+            // ne matche, candidates étant vide). Repli : liste non filtrée
+            // de la classe (comme le niveau sommet), toujours modifiable.
+            // Seul le cas "rien de connu ici non plus" (aucune sélection,
+            // aucun parent) reste verrouillé - comportement normal d'un
+            // niveau en cascade sans rien au-dessus pour le filtrer.
+            if (selections[level] !== '') {
+              candidates = objects.filter((o) => o.class === cls);
+            } else {
+              candidates = [];
+              levelDisabled = true;
+            }
+          } else {
+            const linkAttrName = chain.linkAttrs[level];
+            candidates = objects.filter((o) => {
+              if (o.class !== cls) return false;
+              const d = detailCache[o.id];
+              if (!d) return false;
+              const attrVal = d.attributes.find((a) => a.name === linkAttrName);
+              const v = attrVal && attrVal.values.length > 0 ? attrVal.values[0] : undefined;
+              return !!v && typeof v === 'object' && 'joint_id' in v && v.joint_id === parentId;
+            });
+          }
+        }
+        return (
+          <select
+            key={cls}
+            value={selections[level] === '' ? '' : String(selections[level])}
+            disabled={levelDisabled}
+            autoFocus={isBottom && bottomAutoFocus}
+            onChange={(e) => handleLevelChange(level, e.target.value)}
+            onBlur={isBottom ? onBottomBlur : undefined}
+            onKeyDown={isBottom ? (e) => { if (e.key === 'Escape' && onBottomEscape) onBottomEscape(); } : undefined}
+            style={{ width: '100%', padding: '4px 6px', fontSize: 13 }}
+            title={cls}
+          >
+            <option value="">-- {cls} --</option>
+            {candidates.map((c) => <option key={c.id} value={c.id}>{getCandidateLabel(c)}</option>)}
+          </select>
+        );
+      })}
+    </div>
+  );
+}
+
 interface NavigationPageProps {
   selectedMetaClass: string | null;
   selectedClass: string | null;
@@ -1236,18 +1446,30 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
 
             {selectedClassDef && selectedClassDef.attributes.map((attr) => {
               if (attr.type === 'joint-1-1') {
-                const candidates = getCandidates(attr, editingObjectId);
                 const selected = jointValues[attr.name] || [];
+                const cascadeChain = computeCascadeChain(attr, classes);
                 return (
                   <div className="form-group" key={attr.name}>
                     <label>{attr.name} <span style={{ color: 'var(--color-text-muted)' }}>(joint 1:1 — {attr.domain})</span></label>
-                    <select
-                      value={selected[0] ?? ''}
-                      onChange={(e) => setJointValues({ ...jointValues, [attr.name]: e.target.value ? [Number(e.target.value)] : [] })}
-                    >
-                      <option value="">-- Aucun --</option>
-                      {candidates.map((c) => <option key={c.id} value={c.id}>{getCandidateLabel(c)}</option>)}
-                    </select>
+                    {cascadeChain ? (
+                      <CascadeJointSelect
+                        chain={cascadeChain}
+                        objects={objects}
+                        detailCache={detailCache}
+                        setDetailCache={setDetailCache}
+                        getCandidateLabel={getCandidateLabel}
+                        value={selected[0] != null ? String(selected[0]) : ''}
+                        onChange={(v) => setJointValues({ ...jointValues, [attr.name]: v ? [Number(v)] : [] })}
+                      />
+                    ) : (
+                      <select
+                        value={selected[0] ?? ''}
+                        onChange={(e) => setJointValues({ ...jointValues, [attr.name]: e.target.value ? [Number(e.target.value)] : [] })}
+                      >
+                        <option value="">-- Aucun --</option>
+                        {getCandidates(attr, editingObjectId).map((c) => <option key={c.id} value={c.id}>{getCandidateLabel(c)}</option>)}
+                      </select>
+                    )}
                     {renderQuickCreateButton(attr, 'modal')}
                   </div>
                 );
@@ -1554,15 +1776,33 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
             {jointEdit.attrDef.type === 'joint-1-1' ? (
               <div className="form-group">
                 <label>{jointEdit.attrName} <span style={{ color: 'var(--color-text-muted)' }}>(joint 1:1)</span></label>
-                <select
-                  value={jointEdit.selected[0] ?? ''}
-                  onChange={(e) => setJointEdit({ ...jointEdit, selected: e.target.value ? [Number(e.target.value)] : [] })}
-                >
-                  <option value="">-- Aucun --</option>
-                  {getCandidates(jointEdit.attrDef, jointEdit.objectId).map((c) => (
-                    <option key={c.id} value={c.id}>{getCandidateLabel(c)}</option>
-                  ))}
-                </select>
+                {(() => {
+                  const cascadeChain = computeCascadeChain(jointEdit.attrDef, classes);
+                  if (!cascadeChain) {
+                    return (
+                      <select
+                        value={jointEdit.selected[0] ?? ''}
+                        onChange={(e) => setJointEdit({ ...jointEdit, selected: e.target.value ? [Number(e.target.value)] : [] })}
+                      >
+                        <option value="">-- Aucun --</option>
+                        {getCandidates(jointEdit.attrDef, jointEdit.objectId).map((c) => (
+                          <option key={c.id} value={c.id}>{getCandidateLabel(c)}</option>
+                        ))}
+                      </select>
+                    );
+                  }
+                  return (
+                    <CascadeJointSelect
+                      chain={cascadeChain}
+                      objects={objects}
+                      detailCache={detailCache}
+                      setDetailCache={setDetailCache}
+                      getCandidateLabel={getCandidateLabel}
+                      value={jointEdit.selected[0] != null ? String(jointEdit.selected[0]) : ''}
+                      onChange={(v) => setJointEdit({ ...jointEdit, selected: v ? [Number(v)] : [] })}
+                    />
+                  );
+                })()}
                 {renderQuickCreateButton(jointEdit.attrDef, 'jointEdit')}
               </div>
             ) : (
@@ -1764,6 +2004,30 @@ export default function NavigationPage({ selectedMetaClass, selectedClass, readO
                             }
 
                             if (isInlineEditing && isJoint11) {
+                              // Cascade (plan-mark4.md action 6) : même
+                              // mécanisme que le formulaire modal ci-dessus,
+                              // branché aussi ici (rappel explicite du plan -
+                              // l'édition inline de cellule avait déjà été
+                              // oubliée 2 fois par le passé, actions 7/19).
+                              const cascadeChain = attrDef ? computeCascadeChain(attrDef, classes) : null;
+                              if (cascadeChain) {
+                                return (
+                                  <td key={name} style={{ padding: 2 }}>
+                                    <CascadeJointSelect
+                                      chain={cascadeChain}
+                                      objects={objects}
+                                      detailCache={detailCache}
+                                      setDetailCache={setDetailCache}
+                                      getCandidateLabel={getCandidateLabel}
+                                      value={inlineEdit.value}
+                                      onChange={(v) => setInlineEdit({ ...inlineEdit, value: v })}
+                                      bottomAutoFocus
+                                      onBottomBlur={saveInlineEdit}
+                                      onBottomEscape={() => setInlineEdit(null)}
+                                    />
+                                  </td>
+                                );
+                              }
                               const candidates = getCandidates({ classes: attrDef?.classes, name: attrDef?.name }, obj.id);
                               return (
                                 <td key={name} style={{ padding: 2 }}>

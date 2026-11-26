@@ -484,7 +484,8 @@
                     "type": "joint-1-1",
                     "classes": [
                         "salle"
-                    ]
+                    ],
+                    "cascade": ["etage", "batiment"]
                 }
             ]
         },

@@ -276,6 +276,72 @@ de la valeur courante d'un de ses attributs (ex. un `serveur` de
   `attribute_value.value_string` (§3.2ter) ; `layer_map` ne vit que dans
   `definition.data` (le schéma), jamais dans une ligne d'instance.
 
+## 3.2septies Extensions Mark 4 : champ `cascade` — sélection en cascade générique (ajout 2026-11-26, action 6)
+
+**Nouveau champ optionnel `"cascade"`** (tableau ordonné de strings) sur une
+définition d'attribut de type `"joint-1-1"` (`model/schema.json`). Motivation
+(besoin `materiel.salle` → `salle.etage` → `etage.batiment`, §3.3
+ci-dessous) : chaque jointure de la chaîne se sélectionnait jusqu'ici
+indépendamment dans `NavigationPage.tsx` (pas de narrowing successif) —
+choisir un `materiel` imposait de connaître directement l'id de la `salle`
+exacte parmi TOUTES les salles du système, sans pouvoir d'abord filtrer par
+bâtiment puis par étage.
+
+- **Mécanisme générique, configuré au niveau du modèle** — pas spécifique à
+  la chaîne salle/bâtiment/étage : n'importe quel attribut `joint-1-1`
+  déclarant `cascade` bénéficie du même sélecteur en cascade (ex.
+  réutilisable pour `baie_serveur`/`datacenter` si une chaîne équivalente
+  existait).
+- Le tableau liste, dans l'ordre, les noms d'attributs `joint-1-1` à
+  **remonter** depuis la classe cible de CET attribut (`attr.classes[0]`).
+  Exemple réel du dépôt (`model/itil_cmdb.json`, classe `materiel`,
+  attribut `salle` — joint-1-1 → classe `salle`) :
+  `"cascade": ["etage", "batiment"]` — la classe `salle` porte elle-même un
+  attribut joint-1-1 `etage` (→ classe `etage`), qui porte lui-même un
+  attribut joint-1-1 `batiment` (→ classe `batiment`). Chaîne complète
+  reconstruite côté frontend : `salle` (niveau 0, classe cible) → `etage`
+  (niveau 1) → `batiment` (niveau 2, sommet).
+- **Non vérifié strictement** par le schéma JSON : pas de contrainte `allOf`
+  croisée validant que chaque nom existe réellement comme attribut
+  `joint-1-1` de la classe précédente de la chaîne — même niveau de
+  validation documentaire que `layer_map`/`autosuggest` (§3.2sexies/
+  §3.2quinquies). Une chaîne mal formée (nom d'attribut inexistant, pas
+  `joint-1-1`, ou classe cible sans attribut correspondant) est simplement
+  ignorée côté frontend : repli silencieux sur le sélecteur `<select>` plat
+  déjà existant (`computeCascadeChain` retourne `null`,
+  `NavigationPage.tsx`).
+- **Pure aide de sélection IHM** : la valeur réellement stockée reste un
+  simple pointeur `joint-1-1` vers l'objet final choisi (ex. l'id de la
+  `salle`) — **aucun changement de format de stockage**
+  (`attribute_value.joint_id`, §3.2), aucune nouvelle colonne SQL, aucune
+  logique backend. `cascade` ne vit que dans `definition.data` (le schéma),
+  jamais dans une ligne d'instance — même statut que `layer_map`.
+- **Rendu IHM** (`NavigationPage.tsx`, détail complet : §6.10bis de
+  [05-frontend.md](05-frontend.md)) : sélecteur du SOMMET de la chaîne en
+  premier (dernier élément de `cascade`, ex. `batiment`, liste tous les
+  objets de la classe), puis un sélecteur par niveau en redescendant,
+  chacun filtré aux candidats dont l'attribut de liaison pointe vers le
+  choix du niveau parent — jusqu'à la classe cible finale (ex. `salle`).
+  Branché dans le formulaire de création/édition ET dans l'édition inline de
+  cellule (rappel explicite du plan : point oublié 2 fois par le passé aux
+  actions 7/19 de Mark 3). En édition d'un objet existant, toute la chaîne
+  est pré-remplie en remontant depuis la valeur déjà stockée.
+- **Vigilance suppression** (point explicitement signalé par l'utilisateur) :
+  vérifié réellement via l'API (pas seulement en lisant le code) — supprimer
+  un élément intermédiaire de la chaîne (ex. un `batiment`) ne fait que
+  fermer (`valid_to = now()`) l'unique `attribute_value` qui pointe
+  DIRECTEMENT vers lui (ici `etage.batiment`, qui devient vide) ; les objets
+  `etage`/`salle`/`materiel` eux-mêmes ne sont jamais supprimés ni
+  corrompus, car leurs propres jointures (`salle.etage`, `materiel.salle`)
+  ne référencent pas l'objet supprimé mais l'objet intermédiaire toujours
+  existant. Le mécanisme de suppression en cascade déjà en place
+  (`backend/routes/routes_write.py`, `delete_object`, §3.2 — scopé tenant)
+  convient donc **tel quel** à ce nouveau cas d'usage, aucune modification
+  backend nécessaire.
+- Validation `model/schema.json` : propriété `"cascade"` documentée
+  (`type: array`, `items: string`), sans contrainte stricte — même esprit
+  que `layer_map`/`separator` déjà acceptés à ce niveau.
+
 ## 3.3 Fichiers de modèle fournis
 
 **`model/organisation.json`** — meta-classe `organisation` (action 17,
@@ -370,8 +436,9 @@ classes `datacenter`/`serveur`/`application`/`service_metier`/
   `poste`/`imprimante`/`peripherique` — classe générique+`type` retenue
   plutôt qu'une classe par type de matériel), `numero_serie`,
   `personne_affectee` (joint-1-1 → `personne_physique`), `salle`
-  (joint-1-1 → `salle` de `model/localisation.json` ci-dessous). Layers
-  `infra`/`physique`.
+  (joint-1-1 → `salle` de `model/localisation.json` ci-dessous, porte
+  `cascade: ["etage", "batiment"]` depuis plan-mark4.md action 6 — §3.2septies
+  ci-dessous). Layers `infra`/`physique`.
 - `service_metier`, `fournisseur`, `contrat_support` : classes
   préexistantes, inchangées par l'action 17.
 

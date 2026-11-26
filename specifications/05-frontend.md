@@ -456,6 +456,70 @@ réordonnancement d'attributs/classes pouvait faire atterrir une saisie en
 cours sur le mauvais attribut (bug trouvé en revue croisée, corrigé en
 itération 2 de l'action 13).
 
+## 6.10bis Sélection en cascade (`NavigationPage.tsx`/`ConfigurationPage.tsx`, ajout 2026-11-26, `plan-mark4.md` action 6)
+
+Mécanisme générique (détail complet du champ modèle : §3.2septies de
+[03-modele-donnees.md](03-modele-donnees.md)) activé quand un attribut
+`joint-1-1` porte un `cascade` non vide.
+
+**`ConfigurationPage.tsx`** : bloc chips ORDONNÉ sous le sélecteur « Classes
+cibles » existant, visible uniquement pour `attr.type === 'joint-1-1'` (même
+pattern input + bouton « Ajouter » que `values`/`layer_map`, §6.10, mais avec
+boutons monter/descendre ▲▼ en plus — l'ordre porte le sens de la chaîne à
+remonter). État `cascadeDrafts` (saisie en cours, indexé `classIdx-attrIdx`),
+réinitialisé aux mêmes points que `selectValueDrafts`
+(`moveAttribute`/`removeAttribute`/`removeClass`, même raison : éviter la
+désynchronisation d'index). **Limite connue assumée** : pas de validation
+croisée que chaque nom saisi existe réellement comme attribut `joint-1-1` de
+la classe précédente de la chaîne — une chaîne mal formée est simplement
+ignorée côté `NavigationPage.tsx` (repli sur le sélecteur simple), aucune
+erreur bloquante à la sauvegarde.
+
+**`NavigationPage.tsx`** : `computeCascadeChain(attr, classes)` reconstruit la
+chaîne de classes/attributs de liaison à partir de `attr.cascade`, en
+résolvant successivement l'attribut `joint-1-1` nommé sur la classe
+précédente (retourne `null` si la chaîne est mal formée — repli automatique
+sur le `<select>` plat déjà existant, pas de crash). `CascadeJointSelect`
+(composant dédié) affiche un `<select>` par niveau, du SOMMET (dernier
+élément de `cascade`) vers la classe cible finale (niveau 0) :
+- Seul le niveau 0 (classe cible, ex. `salle`) déclenche `onChange`/
+  `onBlur` — c'est la seule valeur réellement committée (le format stocké
+  reste un simple `joint-1-1`, voir §3.2septies). Les niveaux supérieurs ne
+  font que *narrower* localement la liste de candidats du niveau suivant.
+- Chaque niveau intermédiaire est filtré aux objets de sa classe dont
+  l'attribut de liaison vers le niveau parent pointe vers le choix déjà fait
+  à ce niveau parent (désactivé/vide tant que le parent n'est pas choisi
+  **et qu'aucune valeur n'est déjà connue à ce niveau** — voir correctif
+  post-revue ci-dessous).
+- **Correctif post-revue croisée (2026-11-26)** : un parent non résolu
+  (maillon intermédiaire du dessus sans sa propre jointure renseignée en
+  base — cas réel, ex. un `etage` sans `batiment`, `batiment` n'étant pas
+  `required` dans `model/localisation.json`) ne verrouille plus le niveau
+  en dessous si celui-ci a déjà une valeur connue (issue du préremplissage) :
+  ce niveau bascule alors en liste NON filtrée (tous les candidats de la
+  classe, comme le niveau sommet) plutôt que `[]`+désactivé — l'admin voit
+  et peut changer la valeur réellement stockée, au lieu d'un `<select>`
+  vide et verrouillé ne correspondant à aucune `<option>`. Seul un niveau
+  sans aucune valeur connue ET sans parent choisi reste `[]`+désactivé
+  (comportement cascade normal).
+- Préchargement des détails (`apiReadObject`) de tous les objets des classes
+  de la chaîne au montage (même esprit que `loadCandidatesForDef`) :
+  nécessaire pour lire l'attribut de liaison de chaque candidat lors du
+  filtrage d'un niveau.
+- **Préremplissage en édition** : un effet dédié remonte la chaîne depuis la
+  valeur déjà stockée (objet cible) en lisant successivement les attributs
+  de liaison de chaque objet rencontré (fetch les détails manquants au
+  besoin) — jamais de sélection vide repartie de zéro pour un objet
+  existant.
+- Branché aux **trois** endroits de sélection joint-1-1 : le formulaire
+  modal (création/édition), la modale `jointEdit` (techniquement inatteignable
+  pour `joint-1-1` aujourd'hui — `handleCellClick` route ce type vers
+  l'édition inline, pas vers cette modale — mise à jour par cohérence/
+  défense en profondeur plutôt que laissée en incohérence avec le reste),
+  et surtout l'**édition inline de cellule** (`isInlineEditing && isJoint11`)
+  — rappel explicite du plan : point oublié 2 fois par le passé (actions
+  7/19 de Mark 3, select/boolean).
+
 ## 6.11 Page Dashboard (`pages/DashboardPage.tsx`, ajout 2026-11-23, `plan-mark3.md` actions 10a-10d)
 
 4e page de l'application (`App.tsx`, type `Page` élargi à `'configuration'

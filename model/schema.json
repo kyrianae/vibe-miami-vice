@@ -113,6 +113,13 @@
                                         }
                                     },
                                     "description": "Layer dynamique piloté par un attribut 'select' (plan-mark3.md action 18, specifications/07-roadmap.md §10.15), optionnel. Clés censées être un sous-ensemble de 'values' (non vérifié strictement par ce schéma) ; chaque clé associe la valeur select correspondante à une liste de layers (même taxonomie que ClassDefinition.layers, action 14). La seule présence de ce champ marque l'attribut comme pilotant le layer effectif de l'objet - pas de flag booléen séparé. Layer effectif d'un objet = union du 'layers' statique de sa classe et des layer_map[valeur_courante] de ses attributs select concernés (calcul 100% frontend, NavigationPage.tsx/DiagramPage.tsx). Sans objet pour les autres types."
+                                },
+                                "cascade": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "description": "Sélection en cascade (plan-mark4.md action 6), optionnel, réservé au type 'joint-1-1'. Tableau ORDONNÉ de noms d'attributs 'joint-1-1' à remonter depuis la classe cible de CET attribut ('classes[0]'). Exemple : attribut 'salle' (joint-1-1 -> 'salle') avec cascade: ['etage', 'batiment'] signifie que la classe 'salle' porte elle-même un attribut joint-1-1 'etage' (-> classe 'etage'), qui porte elle-même un attribut joint-1-1 'batiment' (-> classe 'batiment') - la chaîne complète que l'IHM remonte pour proposer un sélecteur en cascade (du sommet 'batiment' jusqu'à la classe cible 'salle'). Purement une aide de sélection côté IHM (NavigationPage.tsx) : la valeur réellement stockée reste un simple joint-1-1 vers l'objet final choisi, aucun changement de format de stockage. Non vérifié strictement par ce schéma (pas de contrainte allOf croisée validant que chaque nom existe bien comme attribut joint-1-1 de la classe précédente de la chaîne - même niveau de validation que 'layer_map'/'autosuggest' ci-dessus) - une chaîne mal formée est simplement ignorée côté frontend (repli sur le sélecteur simple). Sans objet pour les autres types."
                                 }
                             },
                             "additionalProperties": false,

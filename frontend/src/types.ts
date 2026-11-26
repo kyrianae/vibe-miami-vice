@@ -27,6 +27,15 @@ export interface AttributeDefinition {
   // type 'string') : dropdown d'autocomplétion basé sur GET /api/suggest/...
   // au lieu du champ texte générique. Sans objet pour les autres types.
   autosuggest?: boolean;
+  // Sélection en cascade (plan-mark4.md action 6, réservé au type
+  // 'joint-1-1') : tableau ordonné de noms d'attributs joint-1-1 à remonter
+  // depuis la classe cible de CET attribut (`classes[0]`) - ex. `salle`
+  // (-> classe 'salle') avec `cascade: ['etage', 'batiment']` : 'salle' a
+  // elle-même un attribut joint-1-1 'etage' (-> 'etage'), qui a lui-même un
+  // attribut joint-1-1 'batiment' (-> 'batiment'). Pure aide de sélection
+  // IHM (NavigationPage.tsx) : la valeur stockée reste un simple joint-1-1
+  // vers l'objet final choisi. Absent/vide = sélecteur simple inchangé.
+  cascade?: string[];
 }
 
 export interface ClassDefinition {

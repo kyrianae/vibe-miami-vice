@@ -205,6 +205,7 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
     });
     // Indices classes/attributs décalés : purge brouillons select pour éviter désync.
     setSelectValueDrafts({});
+    setCascadeDrafts({});
   };
 
   const toggleClass = (idx: number) => {
@@ -238,6 +239,7 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
     }));
     // Indices attributs décalés : purge brouillons select pour éviter désync.
     setSelectValueDrafts({});
+    setCascadeDrafts({});
   };
 
   const moveAttribute = (classIdx: number, attrIdx: number, dir: -1 | 1) => {
@@ -251,6 +253,7 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
     }));
     // Indices attributs permutés : purge brouillons select pour éviter désync.
     setSelectValueDrafts({});
+    setCascadeDrafts({});
   };
 
   // --- Joint classes management (aussi utilisé par 'datasource', même
@@ -300,6 +303,42 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
     updateAttribute(classIdx, attrIdx, patch);
   };
 
+  // --- Cascade management (plan-mark4.md action 6, réservé au type
+  // 'joint-1-1') : même pattern chips que `values` ci-dessus (saisie en
+  // cours par ligne d'attribut tant que non validée par "Ajouter"), mais
+  // ORDONNÉ (boutons monter/descendre, l'ordre porte le sens de la chaîne à
+  // remonter - cf. CascadeJointSelect, NavigationPage.tsx). Limite connue
+  // assumée : pas de validation croisée que chaque nom saisi existe
+  // vraiment comme attribut joint-1-1 de la classe précédente de la chaîne
+  // (idéal mais pas fait ici, cf. rapport worker) - une chaîne mal formée
+  // est simplement ignorée côté NavigationPage.tsx (repli sélecteur simple).
+  const [cascadeDrafts, setCascadeDrafts] = useState<Record<string, string>>({});
+  const cascadeDraftKey = (classIdx: number, attrIdx: number) => `${classIdx}-${attrIdx}`;
+
+  const addCascadeAttr = (classIdx: number, attrIdx: number, attr: AttributeDefinition) => {
+    const key = cascadeDraftKey(classIdx, attrIdx);
+    const val = (cascadeDrafts[key] || '').trim();
+    setCascadeDrafts((prev) => ({ ...prev, [key]: '' }));
+    if (!val) return;
+    const current = attr.cascade || [];
+    if (current.includes(val)) { addToast('error', `Attribut "${val}" déjà présent dans la cascade`); return; }
+    updateAttribute(classIdx, attrIdx, { cascade: [...current, val] });
+  };
+
+  const removeCascadeAttr = (classIdx: number, attrIdx: number, attr: AttributeDefinition, val: string) => {
+    const next = (attr.cascade || []).filter((v) => v !== val);
+    updateAttribute(classIdx, attrIdx, { cascade: next.length > 0 ? next : undefined });
+  };
+
+  const moveCascadeAttr = (classIdx: number, attrIdx: number, attr: AttributeDefinition, idx: number, dir: -1 | 1) => {
+    const current = attr.cascade || [];
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= current.length) return;
+    const next = [...current];
+    [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+    updateAttribute(classIdx, attrIdx, { cascade: next });
+  };
+
   // --- Layer map management (plan-mark3.md action 18, specifications/
   // 07-roadmap.md §10.15) : un sélecteur de layers par valeur de `values`,
   // réutilisation telle quelle du pattern déjà en place pour `cls.layers`
@@ -329,6 +368,12 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
             const clean: AttributeDefinition = { domain: a.domain, name: a.name, type: a.type };
             if (a.type === 'joint-1-1' || a.type === 'joint-1-n' || a.type === 'datasource') {
               clean.classes = a.classes || [];
+            }
+            // cascade (plan-mark4.md action 6) : réservé au type joint-1-1,
+            // persisté uniquement si non vide - même convention que
+            // separator (csv)/layer_map (select) ci-dessous.
+            if (a.type === 'joint-1-1' && a.cascade && a.cascade.length > 0) {
+              clean.cascade = a.cascade;
             }
             if (a.type === 'select') {
               const cleanValues = a.values || [];
@@ -762,6 +807,53 @@ export default function ConfigurationPage({ selectedMetaClass, authInfo }: Confi
                                   >{cn}</button>
                                 ))}
                               </div>
+                              {attr.type === 'joint-1-1' && (
+                                // Cascade (plan-mark4.md action 6) : chaîne
+                                // ORDONNÉE d'attributs joint-1-1 à remonter
+                                // depuis la classe cible ci-dessus (ex.
+                                // 'etage' puis 'batiment' pour un attribut
+                                // 'salle') - sélecteur en cascade côté
+                                // NavigationPage.tsx. Pas de validation
+                                // croisée que ces noms existent vraiment
+                                // (limite connue assumée, cf. rapport worker).
+                                <div style={{ marginTop: 8 }}>
+                                  <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                                    Cascade <span>(optionnel - chaîne ordonnée d'attributs joint-1-1 à remonter depuis la classe cible)</span> :
+                                  </div>
+                                  <div style={{ display: 'flex', gap: 4 }}>
+                                    <input type="text"
+                                      value={cascadeDrafts[cascadeDraftKey(classIdx, attrIdx)] || ''}
+                                      onChange={(e) => {
+                                        const key = cascadeDraftKey(classIdx, attrIdx);
+                                        setCascadeDrafts((prev) => ({ ...prev, [key]: e.target.value }));
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') { e.preventDefault(); addCascadeAttr(classIdx, attrIdx, attr); }
+                                      }}
+                                      placeholder="nom d'attribut joint-1-1 (ex: etage)" style={{ ...smallInput, fontSize: 11 }} />
+                                    <button type="button" onClick={() => addCascadeAttr(classIdx, attrIdx, attr)}
+                                      style={{
+                                        ...iconBtn, fontSize: 11, padding: '4px 8px',
+                                        border: '1px solid var(--color-border)', borderRadius: 4, whiteSpace: 'nowrap',
+                                      }}
+                                    >Ajouter</button>
+                                  </div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                                    {(attr.cascade || []).map((v, i) => (
+                                      <div key={`${v}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
+                                        <span style={{ minWidth: 14, color: 'var(--color-text-muted)' }}>{i + 1}.</span>
+                                        <span style={{ flex: 1, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-bg)' }}>{v}</span>
+                                        <button type="button" onClick={() => moveCascadeAttr(classIdx, attrIdx, attr, i, -1)}
+                                          disabled={i === 0} style={{ ...iconBtn, fontSize: 10, padding: 0 }} title="Monter">▲</button>
+                                        <button type="button" onClick={() => moveCascadeAttr(classIdx, attrIdx, attr, i, 1)}
+                                          disabled={i === (attr.cascade || []).length - 1} style={{ ...iconBtn, fontSize: 10, padding: 0 }} title="Descendre">▼</button>
+                                        <button type="button" onClick={() => removeCascadeAttr(classIdx, attrIdx, attr, v)}
+                                          style={{ ...iconBtn, fontSize: 10, padding: 0 }} title="Retirer">✕</button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ) : attr.type === 'select' ? (
                             // Liste fixe de valeurs autorisées (attr.values).

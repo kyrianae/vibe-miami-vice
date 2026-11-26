@@ -16,6 +16,6 @@
 | 3d | Mode d'emploi illustré — assemblage final | ✅ fait |
 | 4 | Champ conditionnel (affichage indexé sur une autre valeur/calcul) | ⬜ démarche interactive requise |
 | 5 | Révélation d'un secret (bouton œil) + permissions de visibilité | ⬜ démarche interactive requise |
-| 6 | Sélection en cascade Salle → Bâtiment → Étage | ⬜ à faire |
+| 6 | Sélection en cascade Salle → Bâtiment → Étage | ✅ fait |
 | 7 | Outil d'ingestion avec binding (reporté de Mark 3 action 11) | ⬜ démarche interactive requise |
 | 8 | Investiguer l'auto-expand de NavigationPage.tsx sur grosse meta-classe | ⬜ à faire |

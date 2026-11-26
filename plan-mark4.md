@@ -784,22 +784,79 @@
   étage filtré sur ce bâtiment, puis une salle filtrée sur cet étage) —
   aujourd'hui chaque jointure se sélectionne indépendamment dans
   `NavigationPage.tsx`, sans narrowing successif.
-- **Correctif** : à concevoir à l'implémentation — sélecteur en cascade
-  générique ou spécifique à cette chaîne salle/bâtiment/étage (à trancher
-  selon la réutilisabilité souhaitée pour d'autres chaînes similaires du
-  modèle, ex. `baie_serveur`/`datacenter`). **Point de vigilance
-  explicitement signalé par l'utilisateur** : attention au comportement à
-  la suppression d'un élément de la chaîne (supprimer un bâtiment doit
-  avoir un comportement défini et assumé sur ses étages/salles
-  rattachés — cohérence à vérifier avec le mécanisme de suppression en
-  cascade déjà existant par ailleurs dans le projet, ex.
-  `test_delete_object_cascade_scoped_to_tenant_for_tenant_admin`).
+- **Correctif retenu (2026-11-26, conception tranchée par l'utilisateur)** :
+  mécanisme **générique, configuré au niveau du modèle (schéma)**, pas
+  spécifique à salle/bâtiment/étage. Nouveau champ optionnel `"cascade"`
+  (tableau ordonné de strings) sur une définition d'attribut `joint-1-1`
+  (`model/schema.json`, §3.2septies de `specifications/03-modele-donnees.md`)
+  : liste les noms d'attributs `joint-1-1` à remonter depuis la classe cible
+  de cet attribut. Démo activée sur `model/itil_cmdb.json`,
+  `materiel.salle` : `"cascade": ["etage", "batiment"]`.
+  `ConfigurationPage.tsx` : éditeur de chips ordonné (ajout/retrait/
+  réordonnancement) sous le sélecteur de classes cibles, réservé au type
+  `joint-1-1`. `NavigationPage.tsx` : nouveau composant `CascadeJointSelect`
+  + `computeCascadeChain` — sélecteur du sommet de la chaîne (ex.
+  `batiment`) vers la classe cible finale (ex. `salle`), chaque niveau
+  filtré par le choix du niveau parent ; branché dans le formulaire modal
+  ET l'édition inline de cellule (rappel explicite du plan - oublié 2 fois
+  par le passé aux actions 7/19) ; préremplissage de toute la chaîne en
+  édition d'un objet existant. La valeur stockée reste un simple
+  `joint-1-1` vers l'objet final — aucun changement de format de stockage.
+  **Vigilance suppression** : testé réellement via l'API (création
+  bâtiment/étage/salle/matériel puis suppression du bâtiment) — le
+  mécanisme de suppression en cascade existant
+  (`backend/routes/routes_write.py`, `delete_object`) ferme uniquement
+  l'unique `attribute_value` pointant DIRECTEMENT vers l'objet supprimé
+  (`etage.batiment` devient vide) ; les objets `etage`/`salle`/`materiel`
+  restent intacts (leurs propres jointures ne référencent pas l'objet
+  supprimé). **Comportement déjà en place confirmé suffisant, aucune
+  modification backend nécessaire.**
 - **Effort** : moyen (UI de sélection en cascade + vérification du
   comportement de suppression en chaîne).
-- **Fichiers** : `frontend/src/pages/NavigationPage.tsx`, potentiellement
-  `backend/routes/routes_write.py` (`delete_object`) si le comportement de
-  suppression en cascade doit être adapté.
-- **Statut** : ⬜ à faire.
+- **Fichiers** : `model/schema.json`, `model/itil_cmdb.json`,
+  `frontend/src/types.ts`, `frontend/src/pages/ConfigurationPage.tsx`,
+  `frontend/src/pages/NavigationPage.tsx`,
+  `specifications/03-modele-donnees.md`, `specifications/05-frontend.md`.
+  `backend/routes/routes_write.py` : vérifié par un test réel (API), **non
+  modifié** (comportement déjà correct).
+- **Statut** : ✅ fait (2026-11-26). Schéma générique `cascade` implémenté
+  en Configuration et Navigation (formulaire + inline) ; bug post-revue
+  (niveau intermédiaire verrouillé à tort) confirmé par pessimiste/candide
+  et corrigé ; revalidé OK 8/8 par testeur ; tests backend 299 passed
+  inchangés.
+- **Correctif post-revue croisée (2026-11-26, bug confirmé pessimiste/
+  candide)** : `CascadeJointSelect` (`frontend/src/pages/NavigationPage.tsx`,
+  composant lignes ~309-460) verrouillait à tort un niveau intermédiaire de
+  la chaîne (ex. `etage` dans `materiel.salle` → `["etage","batiment"]`)
+  quand le maillon du dessus n'avait pas sa propre jointure renseignée (cas
+  réel, pas théorique : `etage.batiment` n'est pas `required` dans
+  `model/localisation.json`). Avant fix : `parentId` vide (`batiment` non
+  résolu) ⇒ `candidates = []` + `levelDisabled = true` pour le niveau
+  `etage`, alors que `selections[etage]` contenait bien un id réel issu du
+  préremplissage — le `<select>` apparaissait vide ET désactivé (aucune
+  `<option>` ne matchait la valeur sélectionnée), sans perte de donnée en
+  base (`materiel.salle` restait correct), mais admin bloqué/perdu en IHM.
+  Fix (calcul `candidates`/`levelDisabled`, bloc `else` non-top du render,
+  ~lignes 414-440) : si `parentId` est vide/null MAIS que
+  `selections[level]` contient déjà une valeur connue, le niveau bascule en
+  liste NON filtrée (tous les candidats de la classe, comme le niveau
+  sommet) au lieu de `[]`+disabled — reste utilisable/modifiable. Seul le
+  cas "rien de connu à ce niveau non plus" (aucune sélection ET aucun
+  parent) reste `[]`+disabled, comportement normal d'un niveau de cascade
+  sans rien au-dessus pour le filtrer. Les niveaux strictement au-dessus
+  (plus proches du sommet) restent vides, cohérent (lien manquant, on ne
+  sait pas lequel choisir). **Testé réellement** : reproduction du bug par
+  simulation fidèle de la logique exacte du composant (candidates/
+  levelDisabled, scénario etage sans batiment, salle → etage, matériel →
+  salle) — confirmé AVANT fix (`etage`: candidates=[], disabled=true,
+  selectedValue=1 non matché) et confirmé corrigé APRÈS fix (`etage`:
+  candidates=[1], disabled=false, matché) ; chaîne complètement renseignée
+  non affectée (branche `else` avec `parentId` truthy inchangée). Tests
+  backend toujours verts (299 passed, aucun changement backend — correctif
+  purement frontend) ; `tsc -b --force` : 0 nouvelle erreur (3 erreurs
+  préexistantes dans `DiagramPage.tsx`, confirmées identiques avant/après
+  via comparaison avec HEAD, sans rapport avec cette action). Toujours en
+  attente de revue — statut d'ensemble inchangé.
 
 ## 7. [Nouvelle fonctionnalité] Outil d'ingestion avec binding
 
